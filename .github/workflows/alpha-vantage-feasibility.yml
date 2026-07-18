@@ -1,0 +1,52 @@
+name: Alpha Vantage feasibility
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: alpha-vantage-feasibility-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  historical-listings:
+    if: github.head_ref == 'agent/phase-0-4-data-feasibility'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+      SAMPLE_DIR: ${{ runner.temp }}/alpha-vantage-sample
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Require Alpha Vantage credential
+        run: test -n "$ALPHA_VANTAGE_API_KEY"
+      - name: Measure dated listing coverage
+        run: >-
+          python tools/historical_feasibility.py live-sample
+          --provider alpha_vantage
+          --as-of 2026-07-18
+          --output-dir "$SAMPLE_DIR"
+          --timeout 60
+      - name: Verify sanitized manifest
+        run: |
+          test -f "$SAMPLE_DIR/capture_manifest.json"
+          if grep -Fq "$ALPHA_VANTAGE_API_KEY" "$SAMPLE_DIR/capture_manifest.json"; then
+            echo "credential leak detected in manifest" >&2
+            exit 1
+          fi
+          grep -Fq "apikey=REDACTED" "$SAMPLE_DIR/capture_manifest.json"
+      - name: Upload metadata-only manifest
+        uses: actions/upload-artifact@v6
+        with:
+          name: alpha-vantage-feasibility-${{ github.run_id }}
+          path: ${{ runner.temp }}/alpha-vantage-sample/capture_manifest.json
+          if-no-files-found: error
+          retention-days: 1
