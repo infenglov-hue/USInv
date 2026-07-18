@@ -60,8 +60,10 @@ Phase 0 exposes these choices instead of burying them:
 - EDGAR contact identity for the required User-Agent.
 - Provider accounts/tokens (Alpaca, Alpha Vantage, optional Tiingo/FRED).
 - Historical evidence mode:
-  - `research`: affordable EODHD snapshot; old delisted adjustments may be
-    frozen vendor values and are labeled as such;
+  - `research`: affordable delisted-inclusive archive with explicit retention
+    rights; EODHD is only a candidate because its public expiry terms conflict
+    with the former one-month snapshot plan; old delisted adjustments may be
+    retained vendor values and are labeled as such;
   - `audit`: separately approved source with reconstructable actions and
     security history.
 - Storage/backup target for licensed and multi-gigabyte data.

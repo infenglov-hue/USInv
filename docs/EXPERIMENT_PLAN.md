@@ -10,8 +10,9 @@ DATA_SPEC §4.2 have been approved and hashed.
 ## 1. Data windows & splits
 
 - Fundamentals: FSDS 2009Q2+ (XBRL-complete from ~2011 for small caps).
-- Prices: EODHD snapshot (delisted-inclusive, 2000+) as the backtest archive;
-  Alpaca 2016+ as robustness cross-check.
+- Prices: the Phase-0-selected retention-permitted delisted-inclusive archive;
+  EODHD is a candidate only with written post-expiry retention rights. Alpaca
+  2016+ is the robustness cross-check.
 - Effective backtest window: **2012-01 → present** (first ~1y consumed by
   momentum/TTM warm-up).
 - **Purged static holdout protocol** (embargo = the maximum configured holding

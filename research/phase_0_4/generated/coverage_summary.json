@@ -1,0 +1,149 @@
+{
+  "coverage_counts": {
+    "alpha_vantage": {
+      "adjusted_close": {
+        "access_required": 36
+      },
+      "adjustment_method": {
+        "documented_partial": 36
+      },
+      "delisting_date": {
+        "documented": 36
+      },
+      "delisting_reason": {
+        "not_documented": 36
+      },
+      "dividends": {
+        "documented": 36
+      },
+      "historical_exchange_security_type": {
+        "documented_partial": 36
+      },
+      "identifier_mapping": {
+        "not_documented": 36
+      },
+      "listing_date": {
+        "documented": 36
+      },
+      "open_close_semantics": {
+        "not_documented": 36
+      },
+      "raw_ohlcv": {
+        "documented_partial": 36
+      },
+      "splits": {
+        "documented": 36
+      },
+      "ticker_validity_intervals": {
+        "not_documented": 36
+      }
+    },
+    "crsp": {
+      "adjusted_close": {
+        "documented_partial": 36
+      },
+      "adjustment_method": {
+        "documented": 36
+      },
+      "delisting_date": {
+        "documented": 36
+      },
+      "delisting_reason": {
+        "documented": 36
+      },
+      "dividends": {
+        "documented": 36
+      },
+      "historical_exchange_security_type": {
+        "documented": 36
+      },
+      "identifier_mapping": {
+        "documented_partial": 36
+      },
+      "listing_date": {
+        "documented": 36
+      },
+      "open_close_semantics": {
+        "documented_gap": 36
+      },
+      "raw_ohlcv": {
+        "documented_gap": 36
+      },
+      "splits": {
+        "documented": 36
+      },
+      "ticker_validity_intervals": {
+        "documented": 36
+      }
+    },
+    "eodhd": {
+      "adjusted_close": {
+        "documented": 35,
+        "observed": 1
+      },
+      "adjustment_method": {
+        "documented_partial": 36
+      },
+      "delisting_date": {
+        "documented_partial": 36
+      },
+      "delisting_reason": {
+        "not_documented": 36
+      },
+      "dividends": {
+        "documented_gap": 35,
+        "observed": 1
+      },
+      "historical_exchange_security_type": {
+        "documented_partial": 36
+      },
+      "identifier_mapping": {
+        "blocked": 1,
+        "documented_partial": 35
+      },
+      "listing_date": {
+        "documented_partial": 36
+      },
+      "open_close_semantics": {
+        "documented_partial": 36
+      },
+      "raw_ohlcv": {
+        "documented": 35,
+        "observed": 1
+      },
+      "splits": {
+        "documented_gap": 35,
+        "observed": 1
+      },
+      "ticker_validity_intervals": {
+        "documented_partial": 36
+      }
+    }
+  },
+  "gate_status": "blocked_pending_user_mode_and_provider_access",
+  "input_manifest_sha256": "d61234c928daecdf29fc229c1fad3919a380a9cd71720c19e7c4037b8bc318d6",
+  "matrix_row_count": 108,
+  "observations": [
+    "eodhd-demo-aapl-eod-2020",
+    "eodhd-demo-aapl-split-2020",
+    "eodhd-demo-aapl-dividends-2020",
+    "eodhd-demo-aapl-id-mapping-blocked",
+    "eodhd-demo-delisted-list-blocked",
+    "alpha-vantage-demo-delisted-2014-07-10",
+    "alpha-vantage-demo-active-2014-07-10-invalid"
+  ],
+  "provider_count": 3,
+  "schema_version": 1,
+  "security_count": 36,
+  "strata": {
+    "acquired": 4,
+    "active": 4,
+    "bankrupt": 4,
+    "multi_class": 4,
+    "otc_moved": 4,
+    "post_2018_delisted": 4,
+    "pre_2018_delisted": 4,
+    "reverse_split": 4,
+    "ticker_recycled": 4
+  }
+}

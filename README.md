@@ -34,6 +34,20 @@ For a fresh GitHub runner, store the same value as the repository secret
 `USINV_EDGAR_EMAIL`, then manually dispatch the `EDGAR smoke` workflow. Normal
 CI is offline and does not consume SEC requests.
 
+The account-free historical feasibility checks validate the 36-security sample,
+provider contracts and metadata-only evidence matrix; public demo responses are
+written only to the ignored artifacts directory:
+
+```powershell
+python tools/historical_feasibility.py validate
+python tools/historical_feasibility.py render
+python tools/historical_feasibility.py live-demo --provider all `
+  --output-dir artifacts/phase_0_4/public_demo
+```
+
+See [research/phase_0_4/README.md](research/phase_0_4/README.md) for the mixed
+demo findings and the user-gated full-sample commands.
+
 ## What this system is
 
 A long-only, small/mid-cap tilted, factor-composite stock picker for US equities
@@ -77,6 +91,7 @@ licensed data or secrets.
 | [docs/SOURCE_REGISTER.md](docs/SOURCE_REGISTER.md) | External contracts, primary links, evidence grade and recheck cadence |
 | [docs/LIVE_SYSTEMS_EVIDENCE.md](docs/LIVE_SYSTEMS_EVIDENCE.md) | Cautious live/model evidence map; priors only |
 | [docs/PROGRESS.md](docs/PROGRESS.md) | Current build state, verification and blockers |
+| [research/phase_0_4/README.md](research/phase_0_4/README.md) | Historical-provider feasibility probe, evidence matrix and decision boundary |
 
 ## The one-paragraph summary of the design
 
@@ -84,11 +99,12 @@ A two-speed data pipeline builds an as-first-filed point-in-time fundamentals
 store from SEC Financial Statement Data Sets (historical spine, 2009Q2+) plus
 nightly EDGAR `submissions`/`companyfacts` deltas (live edge), keyed on filing
 **acceptance timestamps**. A security master separates entity, share class and
-time-bounded ticker identity. Alpaca/Stooq/Tiingo support operations; a frozen
-~$20 EODHD snapshot provides affordable delisted-inclusive **research** history,
-while audit-grade evidence additionally requires reconstructable old corporate
-actions/security identity. A quality + value + momentum composite (Piotroski as
-junk veto), guarded by EDGAR-derived hard red
+time-bounded ticker identity. Alpaca/Stooq/Tiingo support operations; the
+affordable EODHD route remains a **research** candidate only if written retention
+rights are confirmed (the current public terms do not permit the old one-month-
+then-keep plan), while audit-grade evidence additionally requires
+reconstructable old corporate actions/security identity. A quality + value +
+momentum composite (Piotroski as junk veto), guarded by EDGAR-derived hard red
 flags (shells, ATM dilution, going concern, delisting-risk), selects ~15 equal-
 weight names monthly with a buy/hold rank band, an optional separately ranked
 0/3/5-slot large-cap extension, 20-25% trailing stops, and a

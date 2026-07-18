@@ -9,9 +9,12 @@ time; an unchecked claim is never treated as an API contract.
 The system has two explicitly different evidence modes. Reports MUST display
 the mode; code may never silently promote one to the other.
 
-- **Research mode:** affordable, frozen EODHD snapshot plus the free sources
-  below. It may use a frozen vendor adjusted-close series for a delisted
-  security when the underlying split/dividend event history is unavailable.
+- **Research mode:** an affordable, delisted-inclusive licensed archive plus
+  the free sources below. EODHD remains a candidate only if its final written
+  contract permits the required retention period; its public terms checked on
+  2026-07-18 do not permit the old one-month-then-keep plan. Research mode may
+  use a retained vendor adjusted-close series for a delisted security when the
+  underlying split/dividend event history is unavailable.
   Such rows carry `adjustment_quality='vendor_frozen'`. Research-mode results
   can reject a strategy or justify continued paper testing; they are not
   audit-grade evidence for committing capital.
@@ -303,18 +306,24 @@ prices for historical filters, is a tested hard failure.
   (5/min, 2yr), Alpha Vantage (25/day — but its free `LISTING_STATUS` delisted
   list IS used as an audit input, §6).
 
-### 4.2 Historical research layer — paid snapshot with a declared limitation
+### 4.2 Historical research layer — licensed archive with declared limitations
 
 The pure-$0 stack cannot produce a trustworthy delisted-inclusive small-cap
-backtest. The affordable default is a one-month EODHD "EOD Historical Data —
-All World" subscription (currently $19.99; re-check before purchase), frozen
-to Parquet and cancelled. The snapshot captures active and `delisted=1`
-symbol lists, raw OHLCV, adjusted close, and every available split/dividend
-event. The raw payload, request parameters, retrieval time, response hash and
-license note are archived in the local data store; vendor data are never
-committed to a public repository.
+backtest. EODHD "EOD Historical Data — All World" is an affordable candidate
+(displayed at $19.99/month on 2026-07-18), but it is no longer the approved
+default: the public terms checked the same day permit local storage during an
+active subscription and require deletion within one month after expiry. The
+previous plan to subscribe for one month, freeze to Parquet and cancel is
+therefore prohibited unless EODHD grants written post-termination retention
+rights. Phase 0.4 may instead select a different licensed archive.
 
-**Load-bearing vendor limitation:** EODHD's own coverage table says securities
+Whichever research source is selected must permit the required storage period
+and cover active/delisted symbol lists, raw OHLCV, adjusted close and every
+available split/dividend event. The raw payload, request parameters, retrieval
+time, response hash and license note are archived only for as long as the
+selected license permits; vendor data are never committed to a public repo.
+
+**Load-bearing EODHD limitation (if selected):** EODHD's own coverage table says securities
 delisted before 2018 have EOD data only; split/dividend/fundamental coverage is
 available for post-2018 delistings. Therefore the old statement "2000→2016
 adjustments are derived from EODHD actions" is false and is removed.
@@ -331,8 +340,9 @@ Research-mode treatment for pre-2018 delisted rows:
    quarantines the trade and reports both conservative-loss and exclusion
    sensitivities. Audit mode rejects the run instead.
 
-This is reproducible after freezing but not independently reconstructed; all
-research-mode performance pages must say so. If the feasibility spike shows
+This can be reproducible only under a license that permits retention, and it is
+not independently reconstructed; all research-mode performance pages must say
+so. If the feasibility spike shows
 material coverage loss or unstable adjusted data, stop and ask the user to
 choose: shorten the historical window, accept research-only evidence, or fund
 an audit-grade source. Do not market the $20 route as fully audit-grade.

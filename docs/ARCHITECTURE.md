@@ -76,7 +76,7 @@ usinv/
       alpaca.py              # primary EOD (raw + all adjustments)
       stooq.py               # bulk cross-check (adjusted-only!)
       tiingo.py              # splitFactor/divCash spot-checks
-      eodhd_snapshot.py      # one-time delisted-inclusive archive loader
+      historical_archive.py # Phase-0-selected, retention-permitted research loader
       actions.py             # split/dividend detection + 3-source reconcile
       adjust.py              # as-of-anchored factors + quality provenance
     macro/
