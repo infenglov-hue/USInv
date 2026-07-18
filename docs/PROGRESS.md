@@ -1,6 +1,41 @@
 # PROGRESS
 
-## 2026-07-18 — Phase 0.1 repository scaffold (PR pending)
+## 2026-07-18 — Phase 0.2 XNYS calendar contract (PR pending)
+
+### Done
+
+- Added a stdlib-facing, version-pinned XNYS calendar wrapper with exact
+  sessions, timezone-aware official opens/closes and half-day detection.
+- Added strict previous/next-session and T-1 signal/T fill mappings.
+- Added the fixed-anchor {2,4,6,13}-week rotation generator. Each anchor shifts
+  independently to the first full-session pair, so a holiday or half-day never
+  re-bases the following rotation.
+- Kept all weekday/holiday arithmetic inside `usinv/calendar.py`; financial
+  modules can consume session objects instead of inventing business days.
+
+### Verification
+
+- `ruff check .` and `ruff format --check .` — passed.
+- `pytest -q` — 22 passed, including the T-1-only mapping assertions.
+- Pre-commit hooks — passed on all files.
+- Built a wheel, installed it and all pinned/runtime dependencies into a clean
+  Python 3.12 environment, then repeated the Thanksgiving rotation check and
+  `usinv config-check` successfully.
+- Golden calendar coverage includes Good Friday, observed Independence Day,
+  Juneteenth cutover, 13:00 ET closes, both DST boundaries, MLK,
+  Memorial/Labor Day and the Thanksgiving T-1 half-day trap.
+
+### Remaining
+
+- Complete Phase 0.2 review/merge, then obtain user approval for Phase 0.3.
+- Phase 0.3 adds the polite, cached and throttled EDGAR client; it is not part
+  of this PR.
+
+### Blueprint deviations
+
+- None.
+
+## 2026-07-18 — Phase 0.1 repository scaffold (merged as `e276041`)
 
 ### Done
 
@@ -26,11 +61,10 @@
 - No market-data flow exists in this task, so the lookahead-test requirement is
   not yet applicable; it becomes mandatory as soon as a dated data API exists.
 
-### Remaining
+### Outcome
 
-- Complete Phase 0.1 review/merge, then obtain user approval for Phase 0.2.
-- Phase 0.2 implements the XNYS calendar contract; no financial data logic is
-  present yet.
+- PR #2 passed GitHub Actions, was user-approved and squash-merged.
+- Phase 0.2 was explicitly authorized and started from the updated `main`.
 
 ### Blueprint deviations
 
