@@ -1,0 +1,37 @@
+schema_version: 1
+contract: usinv_fsds_quarterly
+status: registered_not_executable_until_phase_1_4
+source: DATA_SPEC.md#15-quarterly-derivation
+
+direct_quarters:
+  forms: [10-Q, 10-Q/A]
+  preferred_qtrs: 1
+  fallback: ytd_difference
+
+q4:
+  formula: fiscal_year_value - sum(q1, q2, q3)
+  annual_forms: [10-K, 10-K/A]
+  annual_qtrs: 4
+  required_direct_quarter_count: 3
+  match_keys: [cik, tag, uom]
+  fiscal_window_months: 12
+
+availability:
+  field: accepted
+  aggregation: max
+  timezone: UTC
+
+quarantine:
+  - quarter_count_not_three
+  - fiscal_year_change_or_10_kt
+  - ipo_year_missing_quarters
+  - unit_mismatch
+  - concept_mismatch
+  - accounting_identity_failure
+
+excluded_forms: [20-F, 20-F/A, 40-F, 40-F/A]
+
+validation_classes:
+  nonnegative: [Revenue]
+  signed: [NetIncomeLoss, NetCashProvidedByUsedInOperatingActivities]
+  note: Never apply a blanket absolute-Q4-less-than-absolute-FY rule to signed concepts.

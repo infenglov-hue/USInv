@@ -67,15 +67,25 @@ level detail). ~500k reports, 120M+ facts. All data is **as filed**.
 
 ### 1.2 Ingestion tooling
 
-Use **secfsdstools** (HansjoergW, Apache-2.0, v2.4.3 Sep-2025 `[verify]`
-Python 3.12 compat — tested to 3.11) for zip management, parquet conversion,
-filters, Q4 derivation and its Balance/Income/CashFlow standardizers. Vendor
-(copy in-repo with attribution) the standardizer rule tables and Q4 logic we
-depend on — single-maintainer bus-factor. Use **edgartools** (dgunning, MIT,
-active) for the filing-centric live edge after fixture validation. Do NOT use
-python-xbrl (discontinued) or OpenEDGAR (abandoned 2022). We own the PIT dedup,
-tag chains beyond the standardizers, factor tables and historical security
-master; do not estimate their size before the feasibility spike.
+Pin **secfsdstools 2.4.3** (HansjoergW, Apache-2.0, released Sep-2025; Python
+≥3.10 with a Python 3.12 classifier) as the upstream schema and standardizer
+reference. Do not use its generic ZIP-to-Parquet transformer for the canonical
+raw store: the pinned implementation converts only SUB/PRE/NUM, omits TAG and
+casts NUM `value` to `float64`. USInv therefore validates its SUB/NUM/PRE column
+contract, owns the SEC TAG contract, streams all four tables to raw Parquet as
+strings, and creates a separate typed facts table with NUM
+`Decimal128(28,4)`. This preserves the official unscaled values exactly.
+
+The exact upstream Balance/Income/CashFlow standardizer source used for future
+mapping work is vendored with its Apache license, upstream commit and per-file
+SHA-256 hashes under
+`usinv/data/edgar/vendor/secfsdstools_2_4_3/`. The package contains no Q4
+derivation matching this blueprint, so the versioned executable contract is
+owned in `usinv/data/edgar/rules/quarterly_v1.yaml`; Phase 1.4 will implement it
+against golden fixtures. Use **edgartools** (dgunning, MIT, active) for the
+filing-centric live edge only after fixture validation. We own PIT dedup, tag
+chains beyond the standardizers, factor tables and the historical security
+master.
 
 ### 1.3 The PIT rule (as-first-filed)
 

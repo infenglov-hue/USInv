@@ -574,6 +574,14 @@ class FsdsArchiveClient:
                 self._verify_object(record)
         return len(unique)
 
+    def verify_record(self, record: FsdsArchiveRecord) -> Path:
+        """Verify one manifest-backed object and return its safe local path."""
+        with self._lock:
+            records = self._load_manifest()
+            if record not in records:
+                raise FsdsArchiveError("FSDS record is not present in this archive manifest")
+            return self._verify_object(record)
+
     def _headers(self, previous: FsdsArchiveRecord | None) -> dict[str, str]:
         headers = {
             "User-Agent": self.user_agent,

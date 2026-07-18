@@ -53,6 +53,21 @@ The manually dispatched `FSDS smoke` workflow exercises only the small
 headers-only `2009q1` package, then proves the local object can be reused without
 a second request. Normal CI remains fixture-only.
 
+After synchronization, convert an exact archived ZIP version into six
+hash-verified Parquet artifacts. Raw SUB/NUM/PRE/TAG values remain strings;
+typed facts preserve SEC NUM values as `Decimal128(28,4)` and attach the filing
+acceptance timestamp in UTC. Re-running the command verifies and reuses the
+same content-addressed result rather than silently rebuilding it:
+
+```powershell
+python -m usinv fsds-ingest --start 2009q1 --end 2026q1
+```
+
+Use `--archive-as-of <timezone-aware timestamp>` to reproduce the SEC archive
+version known at an earlier observation time. This boundary chooses the source
+ZIP only; fact availability is always enforced separately from each filing's
+`accepted` timestamp.
+
 The account-free historical feasibility checks validate the 36-security sample,
 provider contracts and metadata-only evidence matrix; public demo responses are
 written only to the ignored artifacts directory:

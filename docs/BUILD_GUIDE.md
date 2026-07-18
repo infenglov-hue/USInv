@@ -135,9 +135,16 @@ insufficient; discovering that before thousands of lines of code is the point.
    Normal sync skips a hash-verified existing object; an explicit refresh uses
    HTTP validators when available and appends unchanged/reprocessed evidence.
    Never overwrite a prior hash or assume an old ZIP remains unchanged.
-2. Ingest SUB/NUM/PRE/TAG into raw Parquet without transforming values.
-3. Join numeric facts to filing `accepted` timestamps.
-4. Filter consolidated statement facts according to the current FSDS contract.
+2. Validate the pinned SUB/NUM/PRE schema plus the official TAG schema, then
+   stream all four tables into raw Parquet as strings. The canonical path does
+   not call secfsdstools' generic converter because it omits TAG and casts NUM
+   values to floating point.
+3. Join numeric facts to filing `accepted` timestamps, converting the SEC
+   Eastern timestamp to UTC and NUM values to exact `Decimal128(28,4)` in a
+   separate typed table. Keep raw values alongside it as immutable evidence.
+4. Filter consolidated statement facts according to the current FSDS contract
+   (`coreg` and `segments` empty), always through a timezone-aware `as_of`
+   boundary. Never filter retroactive `prevrpt`.
 5. Create:
    - `facts_pit`: first-accepted value for the as-first-filed research view;
    - `facts_latest`: latest-known restated view, never accessible to signals.

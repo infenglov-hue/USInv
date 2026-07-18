@@ -62,7 +62,9 @@ usinv/
       client.py              # throttled (≤8 req/s), UA header, retry/backoff
       bulk.py                # FSDS zips + companyfacts.zip/submissions.zip,
                              #   versioned local archive (SEC reprocesses!)
-      fsds.py                # SUB/NUM/PRE/TAG ingestion (via secfsdstools)
+      fsds.py                # lossless SUB/NUM/PRE/TAG + typed filing/fact ingest
+      rules/                 # versioned quarterly derivation contracts
+      vendor/                # hash-locked upstream standardizer source snapshot
       filing_xbrl.py         # primary live edge incl. custom/dimensional facts
       companyfacts.py        # standard-taxonomy cross-check/backfill
       submissions.py         # filing index, acceptanceDateTime, formerNames
@@ -162,6 +164,15 @@ DuckDB database `data/usinv.duckdb` + Parquet archives. Main tables:
 Rules: `facts_pit` insert-only; `prices_raw` insert-only; every derived table
 carries the code version (`git describe`) that produced it.
 
+Before PIT dedup exists, each exact FSDS ZIP version has an immutable staging
+dataset at
+`data/sec/fsds_parquet/YYYYqN/<source_sha256>/`. It contains raw
+`sub/num/pre/tag.parquet`, `filings.parquet`, `facts_raw.parquet` and an ingest
+manifest with source hash, adapter/dependency versions, row counts, Arrow
+schemas and artifact hashes. Raw columns are strings; typed NUM facts are
+`Decimal128(28,4)`. A second run verifies every artifact before declaring a
+cache hit, while an SEC-reprocessed ZIP produces a different directory.
+
 ## 3.1 Evidence-mode boundary
 
 The architecture supports two modes defined in DATA_SPEC §0. `research` mode
@@ -173,7 +184,8 @@ delivery artifact. No code path may relabel research evidence as audit evidence.
 
 ## 4. Two-speed data pipeline
 
-- **Historical spine (rare, versioned):** FSDS quarterly ZIPs → parquet →
+- **Historical spine (rare, versioned):** FSDS quarterly ZIPs → lossless raw
+  Parquet + typed filing/fact Parquet →
   `facts_pit`. Archive the ZIPs in user-controlled storage — SEC has reprocessed
   the whole archive before (Dec 2024); never assume immutability.
   `data/sec/fsds/manifest.json` is an append-only logical ledger of checks;
@@ -181,6 +193,9 @@ delivery artifact. No code path may relabel research evidence as audit evidence.
   appends provenance but reuses the object; a changed hash creates a new object
   linked to the prior hash. `checked_at` selects a reproducible archive version
   only — fact eligibility still comes from each filing's SEC acceptance time.
+  The safe raw-fact reader admits only `accepted ≤ as_of` and consolidated
+  facts (`coreg` and `segments` both empty); it deliberately never filters
+  retroactive `prevrpt`. Phase 1.3 performs first-accepted PIT dedup.
 - **Live edge (nightly):** submissions delta → detect new 10-K/10-Q by
   `acceptanceDateTime` → archive/parse the filing's as-filed XBRL instance and
   presentation metadata → companyfacts cross-check → same dedup insert. When
