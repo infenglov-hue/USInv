@@ -18,7 +18,6 @@ jobs:
     timeout-minutes: 5
     env:
       ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
-      SAMPLE_DIR: ${{ runner.temp }}/alpha-vantage-sample
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -33,16 +32,17 @@ jobs:
           python tools/historical_feasibility.py live-sample
           --provider alpha_vantage
           --as-of 2026-07-18
-          --output-dir "$SAMPLE_DIR"
+          --output-dir "$RUNNER_TEMP/alpha-vantage-sample"
           --timeout 60
       - name: Verify sanitized manifest
         run: |
-          test -f "$SAMPLE_DIR/capture_manifest.json"
-          if grep -Fq "$ALPHA_VANTAGE_API_KEY" "$SAMPLE_DIR/capture_manifest.json"; then
+          manifest="$RUNNER_TEMP/alpha-vantage-sample/capture_manifest.json"
+          test -f "$manifest"
+          if grep -Fq "$ALPHA_VANTAGE_API_KEY" "$manifest"; then
             echo "credential leak detected in manifest" >&2
             exit 1
           fi
-          grep -Fq "apikey=REDACTED" "$SAMPLE_DIR/capture_manifest.json"
+          grep -Fq "apikey=REDACTED" "$manifest"
       - name: Upload metadata-only manifest
         uses: actions/upload-artifact@v6
         with:
