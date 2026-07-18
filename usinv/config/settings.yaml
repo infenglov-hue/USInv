@@ -1,0 +1,21 @@
+schema_version: 1
+evidence_mode: undecided
+execution_mode: paper
+paths:
+  data_dir: data
+  cache_dir: data/cache
+  artifacts_dir: artifacts
+timezones:
+  exchange: America/New_York
+  display: Europe/Istanbul
+edgar:
+  max_requests_per_second: 8
+  contact_env: USINV_EDGAR_EMAIL
+credential_env:
+  alpaca_key_id: ALPACA_KEY_ID
+  alpaca_secret_key: ALPACA_SECRET_KEY
+  alpha_vantage_key: ALPHA_VANTAGE_API_KEY
+  tiingo_token: TIINGO_TOKEN
+  fred_api_key: FRED_API_KEY
+  telegram_bot_token: TELEGRAM_BOT_TOKEN
+  telegram_chat_id: TELEGRAM_CHAT_ID

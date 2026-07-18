@@ -1,0 +1,27 @@
+holdings: 15
+weighting: equal
+large_cap_max_slots: 0
+cash_return: 0.0
+sector_cap_fraction: 0.27
+correlation:
+  enabled: true
+  threshold: 0.70
+  window_sessions: 252
+rotation:
+  weeks: 4
+  anchor_weekday: Monday
+bands:
+  entry_top_fraction: 0.10
+  hold_top_fraction: 0.25
+turnover:
+  window_sessions: 21
+  one_way_fraction: 0.50
+trailing_stop: percent_20
+execution:
+  cost_bps: 40
+  cost_sensitivity_bps: [0, 20, 40, 75]
+  buy_collar_fraction: 0.05
+  routine_sell_collar_fraction: 0.05
+  thesis_sell_collar_fraction: 0.10
+  exit_retry_sessions: 3
+  funding_model: settled_cash_only

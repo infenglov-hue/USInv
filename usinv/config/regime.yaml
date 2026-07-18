@@ -1,0 +1,34 @@
+default_overlay: O0
+overlays:
+  O0:
+    signal: none
+    evaluation: none
+    risk_off_exposure: 1.0
+    hysteresis_fraction: 0.0
+    credit_confirm: false
+    hy_oas_threshold_bps: 0
+    hy_oas_ma_sessions: 0
+  O1:
+    signal: spy_tr_200d_sma
+    evaluation: daily_eod
+    risk_off_exposure: 0.0
+    hysteresis_fraction: 0.02
+    credit_confirm: false
+    hy_oas_threshold_bps: 0
+    hy_oas_ma_sessions: 0
+  O2:
+    signal: spy_tr_10m_sma
+    evaluation: month_end
+    risk_off_exposure: 0.5
+    hysteresis_fraction: 0.0
+    credit_confirm: false
+    hy_oas_threshold_bps: 0
+    hy_oas_ma_sessions: 0
+  O3:
+    signal: spy_tr_200d_sma
+    evaluation: daily_eod
+    risk_off_exposure: 0.0
+    hysteresis_fraction: 0.02
+    credit_confirm: true
+    hy_oas_threshold_bps: 500
+    hy_oas_ma_sessions: 63
