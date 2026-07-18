@@ -135,13 +135,15 @@ O=OPS_SPEC, B=BUILD_GUIDE, S=SOURCE_REGISTER.
 
 ## Phase 5 — Frozen historical data + first real experiments (GATED)
 
-- 5.1 Acquire the Phase-0-selected historical mode. In research mode, freeze
-  the one-month EODHD snapshot: active+delisted symbol lists, raw OHLCV,
-  adjusted_close and every **available** split/dividend endpoint; preserve the
-  documented pre-2018 delisted-action gap and `vendor_frozen` quality labels.
+- 5.1 Acquire the Phase-0-selected historical mode. In research mode, acquire
+  the retention-permitted archive selected at Phase 0: active+delisted symbol
+  lists, raw OHLCV, adjusted_close and every **available** split/dividend
+  endpoint. If EODHD grants the required written retention rights and is
+  selected, preserve its documented pre-2018 delisted-action gap and
+  `vendor_frozen` quality labels.
   In audit mode, implement the separately approved source contract. Store
   licensed payloads in user-controlled storage, never the Git repo, then
-  execute the cancel/renewal checklist (D§0, §4.2; O§4).
+  execute the license/retention/renewal checklist (D§0, §4.2; O§4).
   **Gate:** price rows join through security validity windows (never bare
   ticker/CIK); recycled-ticker fixture resolves; unmatched/action-unresolved
   rows are counted; audit thresholds pass or the report is stamped RESEARCH.

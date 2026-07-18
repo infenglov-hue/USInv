@@ -1,6 +1,86 @@
 # PROGRESS
 
-## 2026-07-18 — Phase 0.3 polite EDGAR client (live gate pending)
+## 2026-07-18 — Phase 0.4 historical-data feasibility (research mode selected)
+
+### Feasibility assets
+
+- Added an isolated `tools/historical_feasibility.py` probe; no feasibility
+  code is imported by the production data package.
+- Registered 36 deliberately awkward securities, four per required stratum:
+  active, acquired, bankrupt, OTC-moved, ticker-recycled, multi-class,
+  reverse-split, pre-2018 delisted and post-2018 delisted.
+- Added a 108-row provider/security coverage matrix covering raw OHLCV,
+  open/close semantics, adjusted prices/method, splits, dividends, listing and
+  delisting lifecycle, historical exchange/type, identifiers and ticker
+  validity for EODHD, Alpha Vantage and CRSP.
+- Separated `documented`, sample-scoped `observed`, `observed_gap`, `blocked`
+  and `invalid`; provider marketing/docs cannot silently become measured
+  sample coverage.
+- Added credentialed full-sample commands for EODHD and Alpha Vantage. Secrets
+  are environment-only, URLs are redacted, date windows are bounded, and raw
+  payloads can be written only under ignored `artifacts/`/`data/` paths.
+- Archived permitted public-demo payloads locally under ignored artifacts and
+  committed only schema, row count, retrieval time, SHA-256 and validation
+  results.
+
+### Contract/live findings
+
+- EODHD public demo: AAPL OHLCV (3 rows), split (1) and dividends (4) passed
+  schema checks; ID mapping and the US delisted list both returned HTTP 403.
+- Alpha Vantage public demo: the 2014-07-10 delisted CSV returned 425 rows with
+  the documented seven columns, all `Delisted`, and no date later than the
+  requested cutoff. The same date's active demo returned `{}` and is recorded
+  invalid rather than treated as empty coverage.
+- Alpha Vantage personal-key probe: pacing the two calls by 15 seconds returned
+  valid seven-column snapshots with 14,207 active and 9,350 delisted rows. The
+  36-security sample matched 24 cases: active/acquired/ticker-recycled/
+  multi-class/reverse-split were each 4/4, bankrupt was 1/4, OTC-moved 0/4,
+  deliberately pre-2010 delisted 0/4 and post-2018 delisted 3/4. Two recycled
+  symbols matched both snapshots, directly confirming the permanent-identity
+  requirement.
+- CRSP's current official contract documents permanent security identifiers,
+  dated name/ticker/exchange history, detailed distributions and structured
+  delisting reason/return. Access is institutional/quote-based, and the
+  reviewed daily contract does not include an opening-price field.
+- EODHD displayed its personal EOD plan at $19.99/month with 100k calls/day,
+  but its current public terms require deletion within one month after expiry
+  and prohibit redistribution/display. No purchase was made.
+
+### Verification so far
+
+- `ruff check .` and `ruff format --check .` — passed.
+- `pytest -q` — 58 passed offline, including 15 Phase-0.4 tests.
+- All pre-commit hooks passed; all relative Markdown links resolve.
+- Public-demo and Alpha Vantage sample hashes/metadata are in
+  `research/phase_0_4/observations.json`; raw provider rows and credentials are
+  not in Git. The personal key remains only in GitHub Secrets.
+- The feasibility-specific tests cover the ≥30/strata gate, namespaced
+  security identities, complete capability schema, raw-artifact containment,
+  secret redaction, sample-only evidence promotion and a post-cutoff
+  look-ahead rejection.
+- Deterministic input manifest SHA-256:
+  `a25783cb38525cc46e4d69cd94b09f3295865048bed54d91c2bde106e60180d5`.
+- The user selected `research`; `usinv/config/settings.yaml` now records that
+  choice. This does not unlock live execution or permit a historical backtest
+  before the remaining archive gate passes. Current config SHA-256:
+  `fde336ca86211e8f4931c1d523c08c022513afe996050d74610fa492f356f5f7`.
+
+### Required to close Phase 0.4
+
+1. Resolve EODHD post-expiry retention in writing and then run its 36-security
+   probe, maintain the subscription for the required reproduction period, or
+   select another retention-permitted research archive.
+2. Import that archive's metadata-only observations, regenerate the matrix and
+   record missing-field consequences. No honest backtest claim before this.
+
+### BLUEPRINT-DEVIATION
+
+- The former one-month EODHD subscription → freeze forever → cancel plan
+  conflicts with the provider's public terms checked on 2026-07-18. D026 now
+  prohibits that route without written retention rights. This is a licensing
+  correction, not a performance-driven model change.
+
+## 2026-07-18 — Phase 0.3 polite EDGAR client (merged as `62438e0`)
 
 ### Done
 
@@ -35,12 +115,11 @@
   retrieval instants and full raw-response hashes; the 164 KB/3.75 MB payloads
   remain outside Git.
 
-### Required to close Phase 0.3
+### Outcome
 
-1. Run the two-request smoke test from a fresh GitHub runner through the
-   explicitly labeled PR workflow.
-2. Complete Phase 0.3 review/merge, then obtain user approval for the user-gated
-   Phase 0.4 historical-data feasibility spike.
+- Fresh GitHub runner smoke reproduced both local SEC response hashes.
+- PR #4 passed CI and the labeled live smoke, then was squash-merged.
+- The user authorized the free/no-account portion of Phase 0.4.
 
 ### Blueprint deviations
 
@@ -150,13 +229,13 @@
 
 ### Follow-on sequence
 
-1. Complete and review CODEX_TASKS 0.1-0.3 one PR at a time.
-2. Run the user-gated Phase 0.4 feasibility spike.
-3. Select historical evidence mode, storage target and provider/account inputs.
+1. Phases 0.1-0.3 are complete.
+2. Phase 0.4 selected research mode and measured Alpha Vantage membership.
+3. Resolve research-archive retention, storage and full-sample access.
 
 ### Current blockers
 
-- Historical mode cannot be selected honestly until the ≥30-security provider
-  coverage matrix is produced.
-- No provider credentials, EDGAR contact address, broker funding model or
-  licensed-data storage target have been registered yet.
+- The historical price/action archive and licensed storage target are not yet
+  selected; no backtest may start before their rights and sample gates pass.
+- Alpha Vantage and EDGAR secrets are registered and are not blockers. Broker
+  funding remains a later paper/live activation gate.

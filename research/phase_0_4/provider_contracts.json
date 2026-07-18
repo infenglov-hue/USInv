@@ -1,0 +1,236 @@
+{
+  "schema_version": 1,
+  "checked_on": "2026-07-18",
+  "coverage_fields": [
+    "raw_ohlcv",
+    "open_close_semantics",
+    "adjusted_close",
+    "adjustment_method",
+    "splits",
+    "dividends",
+    "listing_date",
+    "delisting_date",
+    "delisting_reason",
+    "historical_exchange_security_type",
+    "identifier_mapping",
+    "ticker_validity_intervals"
+  ],
+  "providers": [
+    {
+      "provider": "eodhd",
+      "evidence_route": "research_candidate",
+      "checked_on": "2026-07-18",
+      "contract_url": "https://eodhd.com/pricing",
+      "access": "Public demo covers selected active symbols. Full delisted-inclusive testing needs an account and the EOD Historical Data All World plan.",
+      "price_observation": "Personal monthly price displayed as USD 19.99; 100,000 calls/day, 1,000/minute and 30+ years are displayed for the EOD plan. Recheck immediately before purchase.",
+      "license_observation": "Personal non-commercial storage/analysis only; redistribution/display is prohibited, payments are non-refundable, and the published terms require deletion within one month after expiry.",
+      "verdict": "Plausible low-cost research archive, not audit-grade: pre-2018 delisted securities have EOD only and the identity/action gaps remain unobserved on the 36-security sample.",
+      "capabilities": {
+        "raw_ohlcv": {
+          "status": "documented",
+          "evidence_url": "https://eodhd.com/financial-apis/api-for-historical-data-and-volumes",
+          "limitation": "The endpoint documents daily OHLCV, but only AAPL was observed through the public demo."
+        },
+        "open_close_semantics": {
+          "status": "documented_partial",
+          "evidence_url": "https://eodhd.com/financial-apis/api-for-historical-data-and-volumes",
+          "limitation": "Open is labelled opening price and close is labelled unadjusted closing price; auction/SIP construction is not specified."
+        },
+        "adjusted_close": {
+          "status": "documented",
+          "evidence_url": "https://eodhd.com/financial-apis/api-for-historical-data-and-volumes",
+          "limitation": "Adjusted close is documented as split-and-dividend adjusted; it is never accepted as contemporaneous raw price."
+        },
+        "adjustment_method": {
+          "status": "documented_partial",
+          "evidence_url": "https://eodhd.com/financial-apis/api-for-historical-data-and-volumes",
+          "limitation": "The event classes are stated, but exact formula, revision policy and as-of anchoring are not documented."
+        },
+        "splits": {
+          "status": "documented_gap",
+          "evidence_url": "https://eodhd.com/financial-apis/delisted-stock-companies-data-2",
+          "limitation": "Documented for post-2018 delistings; pre-2018 delisted securities explicitly have EOD only."
+        },
+        "dividends": {
+          "status": "documented_gap",
+          "evidence_url": "https://eodhd.com/financial-apis/delisted-stock-companies-data-2",
+          "limitation": "Documented for post-2018 delistings; pre-2018 delisted securities explicitly have EOD only."
+        },
+        "listing_date": {
+          "status": "documented_partial",
+          "evidence_url": "https://eodhd.com/financial-apis/delisted-stock-companies-data-2",
+          "limitation": "Exchange symbol lists are documented, but the public demo did not permit sample-wide lifecycle validation."
+        },
+        "delisting_date": {
+          "status": "documented_partial",
+          "evidence_url": "https://eodhd.com/financial-apis/delisted-stock-companies-data-2",
+          "limitation": "Delisted discovery is documented; precise field coverage remains credential-gated for the sample."
+        },
+        "delisting_reason": {
+          "status": "not_documented",
+          "evidence_url": "https://eodhd.com/financial-apis/delisted-stock-companies-data-2",
+          "limitation": "The public contract describes delisted availability but does not promise a structured delisting reason."
+        },
+        "historical_exchange_security_type": {
+          "status": "documented_partial",
+          "evidence_url": "https://eodhd.com/financial-apis/delisted-stock-companies-data-2",
+          "limitation": "Current/delisted lists expose exchange and type filters, not a complete dated exchange/type history."
+        },
+        "identifier_mapping": {
+          "status": "documented_partial",
+          "evidence_url": "https://eodhd.com/financial-apis/id-mapping-api-cusip-isin-figi-lei-cik-%E2%86%94-symbol",
+          "limitation": "Symbol, ISIN, FIGI, LEI, CUSIP and CIK are documented, but validity dates are absent and the demo returned HTTP 403."
+        },
+        "ticker_validity_intervals": {
+          "status": "documented_partial",
+          "evidence_url": "https://eodhd.com/financial-apis-blog/symbol-change-history-api",
+          "limitation": "US rename history has old/new symbol and date, while recycled-symbol handling and complete historical coverage remain unverified."
+        }
+      }
+    },
+    {
+      "provider": "alpha_vantage",
+      "evidence_route": "historical_universe_candidate",
+      "checked_on": "2026-07-18",
+      "contract_url": "https://www.alphavantage.co/documentation/",
+      "access": "A free personal key is registered as a GitHub Actions secret and is documented at 25 requests/day. A paced credentialed probe returned valid active and delisted snapshots; no purchase was required.",
+      "price_observation": "No purchase is required for the listing-status feasibility check; adjusted daily price history is a separate premium function and is not the selected historical archive.",
+      "license_observation": "The published grant is personal and non-commercial unless otherwise agreed in writing; raw responses are therefore not committed or redistributed.",
+      "verdict": "Useful date-specific active/delisted universe input after 2010, with 24/36 awkward samples matched. It is not a security master: OTC and pre-2010 cases were absent, two recycled symbols matched both snapshots, and permanent identifiers, delisting reasons and explicit ticker validity intervals are absent.",
+      "capabilities": {
+        "raw_ohlcv": {
+          "status": "documented_partial",
+          "evidence_url": "https://www.alphavantage.co/support/",
+          "limitation": "Raw time series are documented elsewhere in the service but were outside this lifecycle probe and not sample-tested."
+        },
+        "open_close_semantics": {
+          "status": "not_documented",
+          "evidence_url": "https://www.alphavantage.co/documentation/",
+          "limitation": "The listing-status endpoint has no price fields and does not establish auction/open construction."
+        },
+        "adjusted_close": {
+          "status": "access_required",
+          "evidence_url": "https://www.alphavantage.co/documentation/",
+          "limitation": "Daily adjusted history is documented as premium and was not acquired or probed."
+        },
+        "adjustment_method": {
+          "status": "documented_partial",
+          "evidence_url": "https://www.alphavantage.co/support/",
+          "limitation": "Support states OHLCV adjustment for splits and cash dividends, but no as-of revision contract is stated."
+        },
+        "splits": {
+          "status": "documented",
+          "evidence_url": "https://www.alphavantage.co/documentation/",
+          "limitation": "A splits endpoint is documented but was not observed on this sample."
+        },
+        "dividends": {
+          "status": "documented",
+          "evidence_url": "https://www.alphavantage.co/documentation/",
+          "limitation": "A dividends endpoint is documented but was not observed on this sample."
+        },
+        "listing_date": {
+          "status": "documented",
+          "evidence_url": "https://www.alphavantage.co/documentation/",
+          "limitation": "The paced credentialed sample observed listing dates for 24/36 cases. Coverage was 0/4 for OTC-moved and 0/4 for the deliberately pre-2010 delisting cases."
+        },
+        "delisting_date": {
+          "status": "documented",
+          "evidence_url": "https://www.alphavantage.co/documentation/",
+          "limitation": "The paced credentialed sample observed a delisting date for 7/36 cases. A missing match is a measured gap, not proof that the security never existed."
+        },
+        "delisting_reason": {
+          "status": "not_documented",
+          "evidence_url": "https://www.alphavantage.co/documentation/",
+          "limitation": "The documented CSV schema has status and date but no reason."
+        },
+        "historical_exchange_security_type": {
+          "status": "documented_partial",
+          "evidence_url": "https://www.alphavantage.co/documentation/",
+          "limitation": "Exchange and assetType were observed for the same 24/36 matched cases, but changes between snapshots are not explicit events."
+        },
+        "identifier_mapping": {
+          "status": "not_documented",
+          "evidence_url": "https://www.alphavantage.co/documentation/",
+          "limitation": "The listing CSV has no CIK, ISIN, FIGI, CUSIP or permanent security identifier."
+        },
+        "ticker_validity_intervals": {
+          "status": "not_documented",
+          "evidence_url": "https://www.alphavantage.co/documentation/",
+          "limitation": "Date snapshots can support membership checks but do not directly link renamed or recycled tickers into validity intervals."
+        }
+      }
+    },
+    {
+      "provider": "crsp",
+      "evidence_route": "audit_candidate",
+      "checked_on": "2026-07-18",
+      "contract_url": "https://www.crsp.org/wp-content/uploads/guides/CRSP_US_Stock_%26_Indexes_Database_Guide_Flat_File_Format_2.0.pdf",
+      "access": "No self-serve individual price is published. CRSP states that its databases are delivered to academic institutions, government agencies and investment practitioners through a subscription request.",
+      "price_observation": "Quote/institutional access is required; no spend or sales contact was initiated.",
+      "license_observation": "Professional licensed source; payload access, retention and redistribution terms require a separate written contract review.",
+      "verdict": "Strong audit candidate for permanent security identity, corporate actions and delistings, but access is institutional and the documented daily file does not by itself supply a full opening-price OHLCV series.",
+      "capabilities": {
+        "raw_ohlcv": {
+          "status": "documented_gap",
+          "evidence_url": "https://www.crsp.org/wp-content/uploads/guides/CRSP_US_Stock_%26_Indexes_Database_Guide_Flat_File_Format_2.0.pdf",
+          "limitation": "Daily price/returns/volume are documented, but a daily opening field is not present in the reviewed CIZ contract."
+        },
+        "open_close_semantics": {
+          "status": "documented_gap",
+          "evidence_url": "https://www.crsp.org/wp-content/uploads/guides/CRSP_US_Stock_%26_Indexes_Database_Guide_Flat_File_Format_2.0.pdf",
+          "limitation": "DlyPrc is last regular-day trade or bid/ask average when unavailable; no opening-auction field is documented."
+        },
+        "adjusted_close": {
+          "status": "documented_partial",
+          "evidence_url": "https://www.crsp.org/wp-content/uploads/guides/CRSP_US_Stock_%26_Indexes_Database_Guide_Flat_File_Format_2.0.pdf",
+          "limitation": "Cumulative adjustment factors and returns are supplied rather than a vendor adjusted-close column."
+        },
+        "adjustment_method": {
+          "status": "documented",
+          "evidence_url": "https://www.crsp.org/wp-content/uploads/guides/CRSP_US_Stock_%26_Indexes_Database_Guide_Flat_File_Format_2.0.pdf",
+          "limitation": "Price/share factors, distributions and total/price/income returns are documented in detail."
+        },
+        "splits": {
+          "status": "documented",
+          "evidence_url": "https://www.crsp.org/wp-content/uploads/guides/CRSP_US_Stock_%26_Indexes_Database_Guide_Flat_File_Format_2.0.pdf",
+          "limitation": "Distribution events include factors for price and shares; actual sample coverage needs licensed access."
+        },
+        "dividends": {
+          "status": "documented",
+          "evidence_url": "https://www.crsp.org/wp-content/uploads/guides/CRSP_US_Stock_%26_Indexes_Database_Guide_Flat_File_Format_2.0.pdf",
+          "limitation": "Ex, declaration, record and payment dates plus amounts are documented; sample coverage needs licensed access."
+        },
+        "listing_date": {
+          "status": "documented",
+          "evidence_url": "https://www.crsp.org/wp-content/uploads/guides/CRSP_US_Stock_%26_Indexes_Database_Data_Descriptions_Guide.pdf",
+          "limitation": "Security begin/end dates and dated name-history records are documented."
+        },
+        "delisting_date": {
+          "status": "documented",
+          "evidence_url": "https://www.crsp.org/wp-content/uploads/guides/CRSP_US_Stock_%26_Indexes_Database_Guide_Flat_File_Format_2.0.pdf",
+          "limitation": "Delisting date, last price, next price, amount and delisting return are documented."
+        },
+        "delisting_reason": {
+          "status": "documented",
+          "evidence_url": "https://www.crsp.org/wp-content/uploads/guides/CRSP_US_Stock_%26_Indexes_Database_Guide_Flat_File_Format_2.0.pdf",
+          "limitation": "Structured action/status/reason/payment flags are documented."
+        },
+        "historical_exchange_security_type": {
+          "status": "documented",
+          "evidence_url": "https://www.crsp.org/wp-content/uploads/guides/CRSP_US_Stock_%26_Indexes_Database_Data_Descriptions_Guide.pdf",
+          "limitation": "Dated name-history records include exchange, security status, share class and share/type codes."
+        },
+        "identifier_mapping": {
+          "status": "documented_partial",
+          "evidence_url": "https://www.crsp.org/wp-content/uploads/guides/CRSP_US_Stock_%26_Indexes_Database_Data_Descriptions_Guide.pdf",
+          "limitation": "PERMNO/PERMCO and dated CUSIP/ticker history are documented; CIK, ISIN and FIGI are not promised."
+        },
+        "ticker_validity_intervals": {
+          "status": "documented",
+          "evidence_url": "https://www.crsp.org/wp-content/uploads/guides/CRSP_US_Stock_%26_Indexes_Database_Data_Descriptions_Guide.pdf",
+          "limitation": "Permanent security identifiers and dated name/ticker history are core fields; sample coverage needs licensed access."
+        }
+      }
+    }
+  ]
+}

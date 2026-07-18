@@ -1,0 +1,175 @@
+{
+  "schema_version": 1,
+  "raw_payload_policy": "Raw responses are archived only under gitignored local artifacts when permitted; ephemeral runner payloads are deleted. This file contains validation metadata and hashes, not provider rows.",
+  "observations": [
+    {
+      "observation_id": "eodhd-demo-aapl-eod-2020",
+      "provider": "eodhd",
+      "sample_id": "active_aapl",
+      "retrieved_at": "2026-07-18T15:36:58.819642Z",
+      "request_scope": "AAPL.US 2020-08-28 through 2020-09-01",
+      "http_status": 200,
+      "content_bytes": 361,
+      "row_count": 3,
+      "raw_sha256": "65b984010beeff927e23a681666bea84bb665f7fdcedaa55ae4336c14ebb0e72",
+      "raw_archive": "local_artifact_only",
+      "fields": {"raw_ohlcv": "observed", "adjusted_close": "observed"},
+      "notes": "Public demo returned non-empty JSON with date, open, high, low, close, adjusted_close and volume. Field presence does not prove auction/open construction or PIT-safe adjustment semantics."
+    },
+    {
+      "observation_id": "eodhd-demo-aapl-split-2020",
+      "provider": "eodhd",
+      "sample_id": "active_aapl",
+      "retrieved_at": "2026-07-18T15:36:59.992642Z",
+      "request_scope": "AAPL.US splits 2020-08-01 through 2020-09-30",
+      "http_status": 200,
+      "content_bytes": 52,
+      "row_count": 1,
+      "raw_sha256": "7965c8570969c004e5fa5067c02d45f8109a6390f7aab844a6775401066c4dc9",
+      "raw_archive": "local_artifact_only",
+      "fields": {"splits": "observed"},
+      "notes": "Public demo returned one split record with date and split fields."
+    },
+    {
+      "observation_id": "eodhd-demo-aapl-dividends-2020",
+      "provider": "eodhd",
+      "sample_id": "active_aapl",
+      "retrieved_at": "2026-07-18T15:37:00.875643Z",
+      "request_scope": "AAPL.US dividends 2020-01-01 through 2020-12-31",
+      "http_status": 200,
+      "content_bytes": 727,
+      "row_count": 4,
+      "raw_sha256": "52d1ec1314086aee44b39920cc11f74bb9c851ded4f2f2314419b42860251851",
+      "raw_archive": "local_artifact_only",
+      "fields": {"dividends": "observed"},
+      "notes": "Public demo returned ex-date, declaration, record and payment date, period, value, unadjustedValue and currency."
+    },
+    {
+      "observation_id": "eodhd-demo-aapl-id-mapping-blocked",
+      "provider": "eodhd",
+      "sample_id": "active_aapl",
+      "retrieved_at": "2026-07-18T15:37:01.758642Z",
+      "request_scope": "AAPL.US ID mapping",
+      "http_status": 403,
+      "content_bytes": 53,
+      "row_count": null,
+      "raw_sha256": "bee609daff180bf6ed65f0bd9b035b2e6636561f1dde89ac2c5ebc7b652f55f4",
+      "raw_archive": "local_artifact_only",
+      "fields": {"identifier_mapping": "blocked"},
+      "notes": "The public contract documents the endpoint but the public demo entitlement returned HTTP 403."
+    },
+    {
+      "observation_id": "eodhd-demo-delisted-list-blocked",
+      "provider": "eodhd",
+      "sample_id": null,
+      "retrieved_at": "2026-07-18T15:37:02.644642Z",
+      "request_scope": "US delisted common-stock list",
+      "http_status": 403,
+      "content_bytes": 9,
+      "row_count": null,
+      "raw_sha256": "78342a0905a72ce44da083dcb5d23b8ea0c16992ba2a82eece97e033d76ba3d3",
+      "raw_archive": "local_artifact_only",
+      "fields": {
+        "listing_date": "blocked",
+        "delisting_date": "blocked",
+        "historical_exchange_security_type": "blocked",
+        "ticker_validity_intervals": "blocked"
+      },
+      "notes": "The public demo cannot validate the delisted universe; full sample coverage requires account/plan access."
+    },
+    {
+      "observation_id": "alpha-vantage-demo-delisted-2014-07-10",
+      "provider": "alpha_vantage",
+      "sample_id": null,
+      "retrieved_at": "2026-07-18T15:37:03.523642Z",
+      "request_scope": "LISTING_STATUS date=2014-07-10 state=delisted",
+      "http_status": 200,
+      "content_bytes": 30150,
+      "row_count": 425,
+      "raw_sha256": "cccdae28ca4fd36b9a720f1acd6c22a07503da5eaa009be82b77b71e2481c0e4",
+      "raw_archive": "local_artifact_only",
+      "fields": {
+        "listing_date": "observed",
+        "delisting_date": "observed",
+        "historical_exchange_security_type": "observed"
+      },
+      "notes": "CSV schema matched symbol,name,exchange,assetType,ipoDate,delistingDate,status; all 425 statuses were Delisted and the maximum delisting date was 2014-07-09, before the requested cutoff."
+    },
+    {
+      "observation_id": "alpha-vantage-demo-active-2014-07-10-invalid",
+      "provider": "alpha_vantage",
+      "sample_id": null,
+      "retrieved_at": "2026-07-18T15:37:04.031642Z",
+      "request_scope": "LISTING_STATUS date=2014-07-10 state=active",
+      "http_status": 200,
+      "content_bytes": 2,
+      "row_count": 0,
+      "raw_sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "raw_archive": "local_artifact_only",
+      "fields": {
+        "listing_date": "invalid",
+        "historical_exchange_security_type": "invalid"
+      },
+      "notes": "The public demo returned an empty JSON object instead of the documented CSV; a personal free API key is required for a full active/delisted sample check."
+    }
+  ],
+  "sample_batches": [
+    {
+      "batch_id": "alpha-vantage-personal-listing-2026-07-18",
+      "provider": "alpha_vantage",
+      "retrieved_at": "2026-07-18T18:30:03.151722Z",
+      "request_scope": "LISTING_STATUS date=2026-07-18 active and delisted; 15-second inter-request interval; 36-security awkward sample",
+      "manifest_sha256": "5e2d6be6ef12588c2647a16e42833182aa68ad99c27c5abfd147ac8d6ffdeeda",
+      "capture_sha256s": [
+        "1cb4d2b71b138de2ca2484f5cf206d4ab655b88f35aa8369b23aed8dc4f5212c",
+        "f419f551a9a7c6d17542f11b3e44df9b80494e91cd572de3f63705464b4146de"
+      ],
+      "capture_row_counts": {"active": 14207, "delisted": 9350},
+      "raw_archive": "local_artifact_only",
+      "field_order": [
+        "listing_date",
+        "delisting_date",
+        "historical_exchange_security_type"
+      ],
+      "samples": {
+        "active_aapl": ["observed", "observed_gap", "observed"],
+        "active_msft": ["observed", "observed_gap", "observed"],
+        "active_cost": ["observed", "observed_gap", "observed"],
+        "active_mnst": ["observed", "observed_gap", "observed"],
+        "acquired_twtr": ["observed", "observed", "observed"],
+        "acquired_atvi": ["observed", "observed", "observed"],
+        "acquired_vmw": ["observed", "observed_gap", "observed"],
+        "acquired_splk": ["observed", "observed", "observed"],
+        "bankrupt_bbbyq": ["observed", "observed_gap", "observed"],
+        "bankrupt_sivbq": ["observed_gap", "observed_gap", "observed_gap"],
+        "bankrupt_revq": ["observed_gap", "observed_gap", "observed_gap"],
+        "bankrupt_yellq": ["observed_gap", "observed_gap", "observed_gap"],
+        "otc_fnma": ["observed_gap", "observed_gap", "observed_gap"],
+        "otc_fmcc": ["observed_gap", "observed_gap", "observed_gap"],
+        "otc_lkncy": ["observed_gap", "observed_gap", "observed_gap"],
+        "otc_didiy": ["observed_gap", "observed_gap", "observed_gap"],
+        "recycled_gm": ["observed", "observed_gap", "observed"],
+        "recycled_s": ["observed", "observed", "observed"],
+        "recycled_czr": ["observed", "observed", "observed"],
+        "recycled_life": ["observed", "observed_gap", "observed"],
+        "multiclass_brkb": ["observed", "observed_gap", "observed"],
+        "multiclass_goog": ["observed", "observed_gap", "observed"],
+        "multiclass_fox": ["observed", "observed_gap", "observed"],
+        "multiclass_nws": ["observed", "observed_gap", "observed"],
+        "reverse_ge": ["observed", "observed_gap", "observed"],
+        "reverse_c": ["observed", "observed_gap", "observed"],
+        "reverse_aig": ["observed", "observed_gap", "observed"],
+        "reverse_bkng": ["observed", "observed_gap", "observed"],
+        "pre2018_enrnq": ["observed_gap", "observed_gap", "observed_gap"],
+        "pre2018_lehmq": ["observed_gap", "observed_gap", "observed_gap"],
+        "pre2018_bsc": ["observed_gap", "observed_gap", "observed_gap"],
+        "pre2018_cfc": ["observed_gap", "observed_gap", "observed_gap"],
+        "post2018_jcpnq": ["observed_gap", "observed_gap", "observed_gap"],
+        "post2018_chkaq": ["observed", "observed", "observed"],
+        "post2018_wll": ["observed", "observed", "observed"],
+        "post2018_cbl": ["observed", "observed_gap", "observed"]
+      },
+      "notes": "Credentialed GitHub Actions probe returned valid seven-column CSVs for both snapshots after pacing requests. Twenty-four of 36 samples matched; 12 did not. Two recycled symbols matched both snapshots, proving symbol-only joins are unsafe. Raw CSVs remained on the ephemeral runner and were not uploaded; only this metadata manifest was retained locally."
+    }
+  ]
+}

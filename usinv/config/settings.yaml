@@ -1,5 +1,5 @@
 schema_version: 1
-evidence_mode: undecided
+evidence_mode: research
 execution_mode: paper
 paths:
   data_dir: data
