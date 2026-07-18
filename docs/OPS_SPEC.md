@@ -33,54 +33,83 @@
 | ~03:00 | 20:00 T-1 | US session + after-hours done; vendor EOD final |
 | 08:00 | 01:00 | **nightly-data job**: EDGAR submissions delta → companyfacts edge → Alpaca bars (end ≤ now−15min ⇒ SIP) → actions reconcile → macro pulls → freshness gates |
 | 09:00 | 02:00 | scoring + (on rotation days) selection; snapshot artifact published; Telegram summary |
-| morning | — | user reviews at leisure — no overnight work, ever |
-| ≤16:28 | ≤09:28 | user stages LOO orders at broker (manual; signals-only system) |
-| 16:30 | 09:30 | opening auction fills; ledger records assumed vs (optional) actual fill |
+| morning | — | user may review at leisure; production does not wait for a login or approval |
+| ~13:17 / retry ~14:43 | 06:17 / retry 07:43 | daily decision job; on rotation days create paper orders or, after the explicit live-capital enablement gate, submit broker LOO orders |
+| ≤16:28 | ≤09:28 | automated preflight confirms fresh evidence, settled funding, collars and broker acknowledgements; otherwise no new buy is sent |
+| 16:30 | 09:30 | opening auction fills |
+| ~16:47 / retry ~17:13 | 09:47 / retry 10:13 | fill reconciliation updates the canonical remote ledger and publishes delivery |
 
 The whole design needs **no real-time market data** (LOO auction orders need no
 live quote) — that is deliberate and load-bearing for the $0 budget.
 
 ## 3. GitHub Actions workflows
 
-GitHub cron is UTC-fixed while ET observes DST — a single cron drifts 1h
-against the exchange twice a year (the §1 trap). Mitigation: schedule each
-job at BOTH candidate UTC hours; the job's first step computes current ET and
-exits 0 immediately if it is the wrong instance.
+GitHub Actions supports timezone-aware schedules, so every production cron
+sets `timezone: "America/New_York"` directly. Cron is still not an SLA: high
+load can delay or drop a scheduled run. Each critical operation therefore has
+a primary time and an off-the-hour retry. Both acquire the same durable
+`(operation, business_date, mode)` idempotency key; the retry exits quickly if
+the primary already committed. A monitor outside GitHub receives success
+heartbeats and can alert or call `workflow_dispatch` when both triggers miss.
 
-| Workflow | Schedule (cron in UTC, dual-hour + ET guard) | Job |
+| Workflow | Schedule (ET, timezone-aware) | Job |
 |---|---|---|
 | `ci.yml` | on PR | ruff + pytest + artifact-guard |
-| `nightly-data.yml` | nightly ~01:00 ET | the §2 pipeline; red on any freshness/coverage gate |
-| `rotation.yml` | rotation Mondays ~02:00 ET (+ manual dispatch) | selection + snapshot publish + notify |
+| `nightly-data.yml` | 01:17 ET; retry 02:43 ET | the §2 pipeline; red on any freshness/coverage gate; heartbeat on committed success |
+| `decision.yml` | sessions 06:17 ET; retry 07:43 ET | daily exit/preflight; rotation-day selection; paper order write or explicitly enabled live LOO submission |
+| `fill-reconcile.yml` | sessions 09:47 ET; retry 10:13 ET | broker/paper fill reconciliation, ledger commit, snapshot publish and notify |
 | `weekly-audit.yml` | weekend | full metrics audit artifact, cost stresses, coverage report |
 | `fsds-refresh.yml` | quarterly + dispatch | new FSDS drop ingest, edge-vs-spine mismatch report |
 
-Lessons from MobileInv encoded: GitHub cron is not an SLA (jobs may start late
-or never — add a next-morning retry and a "stale artifact" banner rather than
-pretending); state restore must be size-budgeted (keep runtime DB small, bulk
-archives in Releases/state repo, checksum-split if >2GB); every workflow ends
-with a machine-readable health line consumed by the monitor.
+Every workflow uses a concurrency group and a hard timeout. Data and broker
+writes are transactional; broker requests carry deterministic client-order
+IDs. Retries must be safe after failure at every step. Historical experiments
+and multi-GB restores do not run in scheduled production Actions.
 
 ## 4. Repos & artifacts
 
 - `USInv` (this repo): code + blueprint + small reference data. Public or
   private — user's call.
-- `USInv-state` (private, created in Phase 1): DuckDB/Parquet archives, FSDS
-  zip mirror, EODHD snapshot. Git LFS or chunked+checksummed files.
+- Historical/licensed state: separately controlled storage plus a tested backup
+  target. A Git repository stores only manifests, schemas, hashes and small
+  open reference files—not EODHD payloads, multi-GB Parquet or mutable DuckDB
+  binaries. Optional object storage is a separate user decision with cost,
+  encryption, retention and license review. Git LFS is not assumed free or
+  suitable.
+- Scheduled runtime state: a compact canonical ledger/database plus object
+  pointers in durable remote storage. A fresh GitHub-hosted runner must be able
+  to restore, transact and publish without the developer PC. Actions artifacts
+  are delivery/debug outputs, never the only state copy. Restore/upload size
+  and duration are measured before enabling cron.
 - Delivery artifact: `snapshot.json` (versioned schema, documented in
   `delivery/snapshot.py`): as-of dates, universe stats, top-N with per-factor
   ranks + red-flag status + entry references, held positions with stops,
   regime state, NAV series tail, freshness/coverage health block, config hash.
-  Published via gh-pages (or Releases) + a minimal static `web/` viewer
-  (plain HTML/JS reading snapshot.json — explicitly NOT the MobileInv PWA;
-  can be pretty later, correct first).
-- Secrets: `ALPACA_KEY_ID/SECRET`, `TIINGO_TOKEN`, `FRED_API_KEY`,
-  `TELEGRAM_BOT_TOKEN/CHAT_ID` in Actions secrets.
+  Published to an independent installable, responsive `web/` PWA that reads
+  `snapshot.json` but performs no portfolio calculation of its own. The PWA is
+  the primary product surface: portfolio/cash state, per-name factor reasons,
+  regime, performance, order status and freshness/coverage evidence. It keeps
+  the last verified snapshot available offline with a prominent stale banner.
+  It contains derived signals and small display tails only; it never
+  republishes licensed bulk price/vendor data or broker secrets. Delivery is
+  private/authenticated by default; any public deployment requires a redacted
+  snapshot contract and license review.
+- Secrets: `ALPACA_KEY_ID/SECRET`, `TIINGO_TOKEN`, `FRED_API_KEY`, remote-state
+  credentials and `TELEGRAM_BOT_TOKEN/CHAT_ID` in repository/organization
+  Actions secrets. GitHub Free private repositories cannot rely on environment
+  secrets. Provider accounts/tokens,
+  the EDGAR contact address, historical-data mode, backup target and broker
+  account/funding model are explicit user decisions before their first
+  dependent phase—not deferred to Phase 5.
 
 ## 5. Monitoring
 
-- Telegram bot (Phase 7): rotation summary, exit alerts (stop/thesis-break
+- Telegram bot (Phase 6.3): rotation summary, exit alerts (stop/thesis-break
   fired), red health lines (freshness gate, job failure, stale artifact).
+- Independent heartbeat monitor: every critical committed stage pings success;
+  a missed primary+retry window alerts without depending on GitHub Actions to
+  notice its own absence. Optional external dispatch uses a least-privilege
+  token and invokes the same idempotent workflow.
 - Paper-forward ledger integrity: weekly job re-verifies NAV continuity and
   that the frozen config hash hasn't drifted (any drift = loud alert).
 - Every published number carries its config hash + code SHA (reproducibility).

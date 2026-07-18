@@ -6,9 +6,9 @@ after each merge (SHA, done, remaining, verification). Deviations from the
 blueprint are marked `BLUEPRINT-DEVIATION` and surfaced, never silent.
 
 Spec references: A=ARCHITECTURE, D=DATA_SPEC, M=MODEL_SPEC, E=EXPERIMENT_PLAN,
-O=OPS_SPEC.
+O=OPS_SPEC, B=BUILD_GUIDE, S=SOURCE_REGISTER.
 
-## Phase 0 — Scaffold (2-3 PRs)
+## Phase 0 — Contracts, scaffold and feasibility (4 PRs)
 
 - 0.1 Repo scaffold: `pyproject.toml` (py3.12), package tree stubs, ruff +
   pytest + pre-commit, `ci.yml`, `.gitignore` (data/, .env), config loader
@@ -25,6 +25,15 @@ O=OPS_SPEC.
   config, retry/backoff on 403/429, local response cache.
   **Gate:** live smoke test fetches one submissions JSON + one companyfacts
   JSON politely; recorded fixtures for offline tests.
+- 0.4 **Historical-data feasibility spike (USER-GATED before any purchase):**
+  implement a throwaway/isolated probe, not production ingestion, over the
+  stratified ≥30-security sample in D§0. Archive provider capability metadata
+  and permitted sample responses; build the coverage matrix for OHLCV,
+  actions, listing lifecycle and identity. Verify the EODHD plan/price/license,
+  Alpha Vantage historical listing output and any candidate audit-grade source.
+  **Gate:** user selects `research` or `audit` mode and approves any spend;
+  `docs/PROGRESS.md` records the decision, missing fields and consequences.
+  No claim of an "honest backtest" is allowed before this gate.
 
 ## Phase 1 — Fundamentals spine (4-5 PRs)
 
@@ -44,9 +53,12 @@ O=OPS_SPEC.
   offset FY, one restater, one custom-tag-revenue small cap, one quarantine
   case); coverage report over the FULL concept table of D§1.4 on a sample
   quarter (core concepts ≥90%, secondary ≥75%).
-- 1.5 Ticker map (`tickers.py`): 5-layer resolution incl. delisted recovery;
-  unmapped-CIK log (D§3). Submissions live-edge ingest (`submissions.py`,
-  `companyfacts.py`) with fy/fp-trap-safe period derivation (D§2).
+- 1.5 Historical security master (`securities.py`): entity/security/symbol
+  tables, validity intervals, collision quarantine and evidence confidence
+  (D§3). Current SEC tickers are live-edge only. Filing-centric live-edge
+  ingest (`submissions.py`, `filing_xbrl.py`) archives as-filed XBRL including
+  custom/dimensional facts; `companyfacts.py` is a standard-taxonomy cross-
+  check with fy/fp-trap-safe period derivation (D§2).
   **Gate:** retrospective parity test — ingest an ALREADY-PUBLISHED past
   quarter via the API path and diff against that quarter's FSDS data
   (mismatches logged + explained); do NOT wait for the next quarterly SEC
@@ -55,15 +67,20 @@ O=OPS_SPEC.
 ## Phase 2 — Prices & universe (4 PRs)
 
 - 2.1 Price provider ABC + Alpaca (`base.py`, `alpaca.py`): raw+all bars,
-  end≤now−15min, canonical parquet, insert-only `prices_raw` (D§4.1, §4.3).
+  end≤now−15min, security-keyed canonical parquet, insert-only `prices_raw`
+  with bar-definition metadata (D§4.0-4.3).
   **Day-one empirical check:** Alpaca corporate-actions endpoint availability
   on the free tier — record the answer in PROGRESS.md (D§5).
 - 2.2 Stooq bulk + Tiingo spot-check providers; action detector + 3-source
-  reconciliation + `adjust.py` (raw never touched) (D§5).
-  **Gate:** synthetic split/dividend fixtures; a real recent reverse-split
-  name reconciles across sources; ex-date=record-date convention encoded.
-- 2.3 Universe builder (`universe.py`) + `universe_snapshots` with per-filter
-  audit trail (D§6); FF12/FF49 SIC mapping (`scoring/sectors.py`). Note:
+  reconciliation + as-of-anchored `adjust.py` (raw never touched) (D§4.0, §5).
+  **Gate:** synthetic split/dividend fixtures; future reverse split cannot
+  change a historical $2 filter or stop; a real recent reverse-split name
+  reconciles across sources; declared ex-date is consumed without a record-
+  date formula; unresolved adjustments are rejected in audit mode.
+- 2.3 Date-specific Alpha Vantage listing ingest + universe builder
+  (`universe.py`) + `universe_snapshots` with per-filter audit trail and §3
+  mapping coverage gates (D§3, §6); FF12/FF49 SIC mapping
+  (`scoring/sectors.py`). Note:
   hygiene filter (D§6 step 7) is a **pass-through stub** in this phase — wired
   for real in 3.1; the `universe_snapshots` schema reserves its audit columns
   now.
@@ -76,7 +93,8 @@ O=OPS_SPEC.
 ## Phase 3 — Hygiene & signals (4 PRs)
 
 - 3.1 Hygiene gates (`hygiene/*`): shells (SIC-ever + cover-page flag), ATM
-  dilution chain, going-concern full-text (NOTE: the raw phrase query matches
+  dilution chain with issuance corroboration (a 424B5 alone never proves
+  selling), going-concern full-text (NOTE: the raw phrase query matches
   ASU 2014-15 boilerplate and negations — "no substantial doubt", "alleviated"
   — a negation/alleviation heuristic is REQUIRED, not optional), delisting-
   clock, suspensions (M§3). **Gate:** each gate has a known-positive and
@@ -107,44 +125,73 @@ O=OPS_SPEC.
   **Gate:** a hand-computable 3-stock toy backtest matches a spreadsheet to
   the cent; cost model applied inside the loop, not post-hoc; a synthetic
   delisting fixture exercises both termination branches.
-- 4.4 Walk-forward + fragility + grid runner (`walkforward.py`,
-  `fragility.py`, `experiments.py`) reading `experiment_grid.yaml` (E§1-4).
-  **Gate:** purge/embargo verified by construction tests; grid runner resumes
-  after interruption; every cell output carries config hash + code SHA.
+- 4.4 Locked static splits + optional TRAIN-only rolling diagnostics +
+  fragility + grid runner (`splits.py`, `fragility.py`, `experiments.py`)
+  reading `experiment_grid.yaml` (E§1-4). Implement all three search stages,
+  exact run-count deduplication and metric-specific plateau tolerances.
+  **Gate:** purge/embargo verified by construction tests; TEST runner refuses
+  an unregistered config/unlock; grid runner resumes after interruption; every
+  cell carries config hash, data-manifest hash and code SHA.
 
-## Phase 5 — Honest data + first real experiments (GATED: user approval)
+## Phase 5 — Frozen historical data + first real experiments (GATED)
 
-- 5.1 EODHD one-month snapshot (~$20 — the sanctioned paid item, D001): bulk
-  pull of raw OHLCV + adjusted_close + **splits + dividends endpoints**,
-  parquet archive into state repo, cancel checklist (D§4.2).
-  **Gate:** ticker↔CIK join uses ticker_map validity windows (never bare
-  ticker); a recycled-ticker collision fixture (one ticker, two CIKs, two
-  eras) resolves correctly; unmatched price rows quarantined + counted.
+- 5.1 Acquire the Phase-0-selected historical mode. In research mode, freeze
+  the one-month EODHD snapshot: active+delisted symbol lists, raw OHLCV,
+  adjusted_close and every **available** split/dividend endpoint; preserve the
+  documented pre-2018 delisted-action gap and `vendor_frozen` quality labels.
+  In audit mode, implement the separately approved source contract. Store
+  licensed payloads in user-controlled storage, never the Git repo, then
+  execute the cancel/renewal checklist (D§0, §4.2; O§4).
+  **Gate:** price rows join through security validity windows (never bare
+  ticker/CIK); recycled-ticker fixture resolves; unmatched/action-unresolved
+  rows are counted; audit thresholds pass or the report is stamped RESEARCH.
 - 5.2 US factor attribution from scratch (NOT BIST weights): per-sleeve IC and
   portfolio-level contribution on TRAIN only → propose `factors.yaml`
   candidates (M§1).
-- 5.3 Run the pre-registered grid (E§3) on TRAIN/VALIDATION; plateau
-  selection; controls comparison; write the full report.
+- 5.3 Freeze `data_manifest.json`; run E§3 Stages 1-3 on TRAIN/VALIDATION;
+  execute neighborhood/ablation controls, actual-trial deflated Sharpe and
+  confidence intervals; register exactly one final config hash.
 - 5.4 ONE TEST run of the chosen config (E§4.5, §5); pass/fail verdict per the
   fixed criteria; overfit checks if too good.
   **Gate:** user reads the report and explicitly approves proceeding.
 
-## Phase 6 — Live pipeline & delivery (3 PRs)
+## Phase 6 — Unattended pipeline, broker-paper parity & PWA (4 PRs)
 
-- 6.1 `nightly-data.yml` + `rotation.yml` end-to-end on GitHub Actions with
-  state repo, health lines, stale-artifact banner (O§2-3).
-- 6.2 Snapshot artifact + minimal static `web/` viewer (O§4).
-- 6.3 Telegram notifications + weekly audit workflow (O§5).
-  **Gate:** five consecutive nightly runs green; a simulated rotation Monday
-  produces a correct, fresh artifact before 09:00 ET.
+- 6.1 `nightly-data.yml` + `decision.yml` + `fill-reconcile.yml` end-to-end on
+  GitHub Actions with durable remote runtime state, primary/retry idempotency,
+  external heartbeat and stale-artifact kill switch (O§2-5). No production
+  dependency on a local computer or self-hosted desktop runner.
+- 6.2 Versioned `snapshot.json` contract + delivery adapter. Golden contract
+  tests prove the PWA cannot infer or recompute selection and that no licensed
+  bulk/provider secret/broker credential field can enter the artifact.
+- 6.3 Independent installable mobile-first PWA: portfolio and cash, ranked
+  candidates with factor reasons, macro/regime, performance, order/fill state,
+  data health, offline last-verified snapshot and explicit stale mode. It shares
+  no runtime or source imports with MobileInv.
+- 6.4 Telegram notifications + weekly audit + paper broker adapter using
+  deterministic client-order IDs and the same preflight/reconciliation
+  contract later used by live mode.
+  **Gate:** five consecutive nightly runs green; a simulated rotation produces
+  a correct fresh paper order set and PWA artifact before the broker cutoff;
+  duplicate and dropped-schedule drills create no duplicate order.
 
 ## Phase 7 — Paper-forward window (no code, discipline)
 
-- Freeze config (hash pinned); run ≥6 rotations per E§6; weekly integrity job;
+- Freeze config (hash pinned); run ≥12 rotations and ≥12 months per E§6;
+  weekly integrity job;
   amendment log for anything that happens. Capital decisions out of scope
-  (D009).
+  until the explicit D024 gate.
+
+## Phase 8 — Explicit live-capital activation (USER-GATED)
+
+- Verify broker/account/funding behavior, secret scopes, settled-cash policy,
+  order collars, deterministic client-order IDs, kill switch and recovery runbook.
+- User explicitly approves capital mode and initial capital limit. Enabling live
+  mode changes execution destination only; it may not change model/config hash.
+- Normal operation remains unattended. Any data-integrity or reconciliation
+  ambiguity fails closed, preserves evidence and alerts.
 
 ## Deliberately NOT in scope (v1)
 
-Broker API auto-execution; intraday anything; FPIs/ADRs; financials/REITs
-scoring models; ML models; options; short side; the MobileInv PWA.
+Intraday strategy signals; FPIs/ADRs; financials/REITs scoring models; ML
+models; options; short side; reuse or coupling of the MobileInv PWA/runtime.

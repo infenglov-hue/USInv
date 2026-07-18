@@ -1,38 +1,42 @@
-# LIVE_SYSTEMS_EVIDENCE — how comparable systems actually performed with real money
+# LIVE_SYSTEMS_EVIDENCE — comparable live and forward-published evidence
 
-Research date 2026-07-17 (3-agent web sweep over live services, funds, and
-independently tracked model portfolios). This file informs Phase 5 priors and
-expectation-setting; it does NOT override the pre-registered protocol.
+Research date 2026-07-17; methodology repaired 2026-07-18. This is an evidence
+map, not a performance audit. It separates registered funds, sponsor-maintained
+model portfolios and academic studies because they do not have equal evidentiary
+weight. Exact returns are not experiment inputs until a reproducible capture
+(source URL/file, as-of date, benchmark, dividend treatment and calculation)
+is stored in the Phase-5 report. This file informs priors only and never
+overrides EXPERIMENT_PLAN.md.
 
-## The credible live records (not backtests)
+## Evidence classes
 
-| System | Recipe | Params | Live result |
+| Example | Evidence class | Design observation | Permitted inference |
 |---|---|---|---|
-| Stockopedia NAPS (UK) | composite Q+V+M rank, top-2 per sector | 20 stocks, ANNUAL rebalance | ~15%/yr over 11 forward-published years; beat every UK fund; worst year −16%; "7 years of suffering" below high-water inside that record |
-| Validea guru models (US, paper, since 2003) | codified published strategies | 10-20 stocks, monthly-annual | winners = momentum-blended composites (+4.7%/yr over S&P); losers = pure value (Magic Formula −1.7%, Dreman −2.5%); 10-stock books blow up (−30% single year) |
-| AAII Shadow Stock (REAL money) | micro-cap value | ~30 stocks, quarterly reviews | +14.9%/yr since 1993 — the most believable real-money number found |
-| MTUM (ETF) | risk-adjusted 12-6mo momentum | ~125 names, semi-annual+buffers, 0.15% | +2-3pp/yr over S&P for 13 years — momentum survives live when cost-obsessed |
-| AVUV (ETF) | small value + profitability | ~700 names, continuous banded migration | +4.7pp/yr over Russell 2000 Value since 2019 — best live factor alpha in sample |
-| DSTL / SYLD (ETFs) | normalized-FCF value + stability / shareholder yield | ~100 names, quarterly | matched S&P while carrying a value tilt — value survives when measured as FCF/payout, not P/B |
-| QVAL/QMOM (ETFs) | concentrated single-factor | ~50 names | honest factor exposure, but lagged S&P ~4pp/yr over 11 years (tracking-error pain) |
-| ZIG / Magic Formula live | pure cheapness | 20-30 names | ~half the market's return over 7-20 years — pure deep value is the decade's worst live style |
+| Stockopedia NAPS (UK) | Sponsor-published model portfolio; forward selections, not an audited fund | Q+V+M, sector diversification, ~20 stocks, annual rebalance | Useful behavioral/design example; its sponsor-reported ~15% annualized record is not direct US evidence or independent proof |
+| Validea guru models | Publisher-maintained paper/model portfolios | 10-20 stocks, monthly-to-annual; blended models often compare better than pure cheapness | Hypothesis generator only until transactions and benchmark series are independently reproduced |
+| AAII Shadow Stock | Sponsor says performance is based on actual tracked trades; still a model product, not an external fund audit | ~30 micro/small-value stocks, quarterly review | Evidence that a simple ruleset can be maintained for decades; exact CAGR must carry an as-of date |
+| MTUM, AVUV, DSTL, SYLD, QVAL/QMOM, PTLC, former VMOT | Registered live funds with SEC filings/NAV histories, but different universes, capacity and mandates | Buffers, broad diversification and implementation cost matter; concentrated styles can endure long relative drawdowns | Stronger implementation evidence, not an apples-to-apples test of USInv alpha |
+| Academic OOS studies | Peer-reviewed or working-paper datasets | Published anomalies and optimized backtests commonly decay | Supports conservative expectations and multiple-testing controls, not a fixed live/backtest conversion factor |
 
-## The uniform live-vs-backtest haircut
+## Live-vs-backtest decay prior — not a law
 
 - McLean-Pontiff (97 anomalies): −26% out-of-sample, −58% post-publication.
 - Suhonen et al. (215 bank strategies): median −73% Sharpe live vs backtest.
 - Quantopian (888 algos): backtest Sharpe predicts live Sharpe with R² < 0.025;
   each extra backtest iteration widens the gap.
-- Portfolio123 community (90 live designer models): live = 50-66% of backtest
-  is considered a GOOD outcome; zero performance persistence among models.
-- **Planning rule: live = backtest-excess × 0.5, and complexity is the single
-  strongest decay predictor** (few-parameter systems decayed least).
+- Portfolio123 community observations are useful but are not peer-reviewed and
+  must not be presented at the same evidence grade as the studies above.
+- **Planning prior:** haircut backtested *excess* return by roughly 50% in
+  expectation-setting and show 30/50/70% haircut scenarios. This is a scenario,
+  not a forecast or pass/fail transformation. Complexity and researcher
+  iteration count are risk flags; their effect is dataset-dependent.
 
 ## ⚠ The trend-overlay warning (directly relevant to our O1-O3 grid cells)
 
-Academic OOS evidence favors the 200d/10-mo SMA filter (Faber's paper rule even
-held out-of-sample 2006-2012: 10.5%/yr with −9.5% MaxDD). But EVERY real-money
-implementation 2015-2026 paid dearly:
+Academic evidence has supported 200d/10-month trend rules in some periods, but
+several prominent live implementations since 2015 lagged badly or captured
+less upside than intended. The examples below are warnings, not proof that
+every trend overlay fails:
 
 - PTLC (mechanical 200d SMA on S&P, multi-billion AUM): **−5pp/yr vs S&P over
   10 live years**; 2020: −1.1% vs +18.4% (exited after crash, re-entered after
@@ -61,18 +65,27 @@ triggers are disqualified outright — they never re-admit you.
 | Buffers/banding instead of hard rank tracking (universal among winners) | ✅ buy/hold band |
 | Cost model treated as part of alpha | ✅ inside objective |
 | Believable live edge +2-7%/yr; >30% CAGR claims unsustainable | ✅ +2-4% target, >6% = presumed overfit |
-| Few parameters (survivors have <~5 free params) | ✅ small grid, plateau rule |
+| Few economically motivated parameters; complexity increases decay risk | ⚠ USInv still has nine axes; staged search, ablations and simplicity tie-breaks reduce but do not erase this risk |
 | No mechanism through which panic can act | ✅ frozen ruleset + paper-forward |
-| Holdings: retail paper systems 20-30; live funds 100+; sub-10 books blow up | ⚠ our default 15 is at the low end — expect the grid to favor 20-25 |
-| Cadence: value=annual/quarterly, momentum=semi-annual w/ buffers; no live winner rebalances monthly on price | ⚠ our monthly default may lose to 6w/quarterly cells — let the grid decide |
+| Observed model portfolios often hold 20-30; scalable funds often hold far more | ⚠ 15 is a hypothesis, not a conclusion; concentration and capacity differ across examples |
+| Many implementations rebalance more slowly and use buffers | ⚠ monthly may lose to 6w/quarterly, but the sample does not prove a universal optimum |
 | Behavior gap: Greenblatt's self-directed accounts −25pp vs automated; abandonment at trough is the #1 documented killer | ✅ the whole D009/paper-forward design exists for this |
 
-## Sources
+## Sources and reproducibility
 
-Primary references captured in the research transcript; key public ones:
-Stockopedia NAPS reviews, Validea portfolios page + 20-year retrospectives,
-Zacks rank disclosure, Portfolio123 community OOS studies, stockanalysis.com
-fund pages (ZIG/QVAL/GMOM/PTLC/MTUM/AVUV/DSTL/SYLD), Morningstar "This Fund
-Followed the Rules. That Was the Problem" (PTLC), VMOT SEC filings +
-portfolioslab, Allocate Smartly research notes, Wiecki et al. 2016 (Quantopian),
-McLean-Pontiff JF 2016, Suhonen et al. JPM 2017.
+The durable source register is `SOURCE_REGISTER.md`. Minimum core references:
+
+- Stockopedia's own NAPS description (explicitly a model portfolio):
+  https://www.stockopedia.com/academy/events/inside-the-naps-portfolio-how-a-simple-rules-based-strategy-has-delivered/
+- AAII Shadow Stock support/method description:
+  https://aaiiweb.atlassian.net/wiki/spaces/APS/pages/155549740/Shadow+Stock+Portfolio
+- Wiecki et al., 888 Quantopian algorithms:
+  https://papers.ssrn.com/sol3/papers.cfm?abstract_id=2745220
+- McLean & Pontiff, 97 published predictors:
+  https://doi.org/10.1111/jofi.12365
+- VMOT strategy change filing (SEC, effective 2025-01-31):
+  https://www.sec.gov/Archives/edgar/data/1592900/000159290025000034/ck0001592900-20240930.htm
+
+Secondary fund aggregators may help discovery but cannot support an exact
+performance claim in the final report. Fund comparisons must be reproduced
+from frozen adjusted NAV/price data with identical dates and dividend treatment.
