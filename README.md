@@ -1,28 +1,39 @@
 # USInv — Systematic US Equity Picker
 
-**Status: BLUEPRINT ONLY — no code yet.** This repository currently contains the
-complete design specification for a free-data, point-in-time-correct, factor-based
-US stock selection system. The build-up is executed by an AI coding agent (Codex)
-following [docs/CODEX_TASKS.md](docs/CODEX_TASKS.md).
+**Status: REVISED BLUEPRINT — Phase 0 build starting.** This repository contains the
+design specification for a point-in-time-correct, factor-based US stock
+selection research system. It is intentionally not called implementation-ready
+until the Phase-0 historical-data feasibility gate is completed and the user
+chooses research or audit evidence mode. Build work follows
+[docs/CODEX_TASKS.md](docs/CODEX_TASKS.md).
 
-Created 2026-07-17. All external facts (API shapes, prices, rules, evidence) were
-verified against primary sources on that date; re-verify anything marked
-`[verify]` at implementation time.
+Created 2026-07-17; backbone audit repaired 2026-07-18 before any code or
+performance run. External contracts and evidence grades live in
+[docs/SOURCE_REGISTER.md](docs/SOURCE_REGISTER.md); re-verify time-sensitive
+items and anything marked `[verify]` at implementation time.
 
 ## What this system is
 
 A long-only, small/mid-cap tilted, factor-composite stock picker for US equities
 (NYSE / NYSE American / Nasdaq), producing a ranked portfolio recommendation on a
-fixed rotation calendar. It fetches **free data only** (SEC EDGAR fundamentals,
-free price feeds), applies **strict point-in-time discipline**, and targets
+fixed rotation calendar. It uses mostly free data (SEC EDGAR fundamentals and
+operational price feeds), applies **strict point-in-time discipline**, and targets
 **steady risk-adjusted returns** (drawdown control valued over headline CAGR).
 
 It is the US sibling of the MobileInv BIST system — same methodology, zero shared
 runtime. See [docs/DECISIONS.md](docs/DECISIONS.md) D012.
 
+The primary product surface will be an independent, mobile-first installable
+PWA. It consumes a small versioned snapshot and shows portfolio state, factor
+reasons, risk/cash regime, performance and data health without exposing bulk
+licensed data or secrets.
+
 ## What this system is NOT
 
-- Not an autotrader. It produces signals/artifacts; order placement is manual.
+- Not a live autotrader during research. Paper orders are automatic; live
+  broker submission remains disabled until the fixed paper-forward gate passes
+  and the user explicitly enables capital mode. Once enabled, normal operation
+  is unattended and does not require a local computer or daily approval.
 - Not a promise of returns. Success criteria are defined *before* experiments in
   [docs/EXPERIMENT_PLAN.md](docs/EXPERIMENT_PLAN.md); anything that looks too good
   is treated as a bug (presumed overfit) until proven otherwise.
@@ -36,22 +47,31 @@ runtime. See [docs/DECISIONS.md](docs/DECISIONS.md) D012.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | System overview, module tree, data flow, storage |
 | [docs/DATA_SPEC.md](docs/DATA_SPEC.md) | EDGAR/FSDS PIT store, price layer, corporate actions, universe, macro data — fine detail |
 | [docs/MODEL_SPEC.md](docs/MODEL_SPEC.md) | Factors, red-flag hard gates, composite, regime overlay, portfolio construction, exits |
-| [docs/EXPERIMENT_PLAN.md](docs/EXPERIMENT_PLAN.md) | Pre-registered parameter grid, walk-forward protocol, success/failure criteria |
+| [docs/EXPERIMENT_PLAN.md](docs/EXPERIMENT_PLAN.md) | Pre-registered static holdout, staged search, success/failure criteria |
 | [docs/OPS_SPEC.md](docs/OPS_SPEC.md) | Schedules (Istanbul-based), CI/CD, delivery artifact, monitoring |
 | [docs/CODEX_TASKS.md](docs/CODEX_TASKS.md) | Build phases as PR-sized tasks with acceptance gates |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Standing decisions and their rationale |
+| [docs/BUILD_GUIDE.md](docs/BUILD_GUIDE.md) | Detailed construction sequence and mental model |
+| [docs/SOURCE_REGISTER.md](docs/SOURCE_REGISTER.md) | External contracts, primary links, evidence grade and recheck cadence |
+| [docs/LIVE_SYSTEMS_EVIDENCE.md](docs/LIVE_SYSTEMS_EVIDENCE.md) | Cautious live/model evidence map; priors only |
+| [docs/PROGRESS.md](docs/PROGRESS.md) | Current build state, verification and blockers |
 
 ## The one-paragraph summary of the design
 
 A two-speed data pipeline builds an as-first-filed point-in-time fundamentals
 store from SEC Financial Statement Data Sets (historical spine, 2009Q2+) plus
 nightly EDGAR `submissions`/`companyfacts` deltas (live edge), keyed on filing
-**acceptance timestamps**; a free price layer (Alpaca SIP-quality EOD history +
-Stooq/Tiingo cross-checks + a one-time ~$20 EODHD delisted-inclusive snapshot for
-the honest backtest) feeds a canonical raw+adjusted price store. A quality + value
-+ momentum composite (Piotroski as junk veto), guarded by EDGAR-derived hard red
+**acceptance timestamps**. A security master separates entity, share class and
+time-bounded ticker identity. Alpaca/Stooq/Tiingo support operations; a frozen
+~$20 EODHD snapshot provides affordable delisted-inclusive **research** history,
+while audit-grade evidence additionally requires reconstructable old corporate
+actions/security identity. A quality + value + momentum composite (Piotroski as
+junk veto), guarded by EDGAR-derived hard red
 flags (shells, ATM dilution, going concern, delisting-risk), selects ~15 equal-
-weight names monthly with a buy/hold rank band, 20-25% trailing stops, and a
-200-day SMA trend overlay — all parameters chosen on walk-forward plateaus from a
-pre-registered grid, with a 20-40bp/side cost model inside the objective, then
-proven in a paper-forward window before any capital decision.
+weight names monthly with a buy/hold rank band, an optional separately ranked
+0/3/5-slot large-cap extension, 20-25% trailing stops, and a
+200-day SMA trend overlay — all parameters selected by the staged static-holdout
+protocol, with a 40bp/side baseline cost inside the objective, then proven in a
+minimum 12-month paper-forward window before any capital discussion. A
+versioned PWA snapshot is produced by the same canonical ledger used by
+backtest, paper and live operation.

@@ -24,7 +24,7 @@
       ┌──────────────┐      ┌──────────────┐       ┌──────────────┐
       │   BACKTEST   │      │  PORTFOLIO   │       │   DELIVERY   │
       │ engine+costs │      │ selector,    │       │ JSON snapshot│
-      │ walk-forward │      │ bands, exits,│       │ static page, │
+      │ staged search│      │ bands, exits,│       │ static page, │
       │ experiments  │      │ continuity   │       │ notifications│
       └──────────────┘      └──────┬───────┘       └──────────────┘
                                    ▼
@@ -63,13 +63,14 @@ usinv/
       bulk.py                # FSDS zips + companyfacts.zip/submissions.zip,
                              #   versioned local archive (SEC reprocesses!)
       fsds.py                # SUB/NUM/PRE/TAG ingestion (via secfsdstools)
-      companyfacts.py        # live-edge facts w/ fy-fp-trap-safe period logic
+      filing_xbrl.py         # primary live edge incl. custom/dimensional facts
+      companyfacts.py        # standard-taxonomy cross-check/backfill
       submissions.py         # filing index, acceptanceDateTime, formerNames
       pit_store.py           # MIN(accepted) dedup; PIT vs latest views
       tag_chains.py          # per-concept us-gaap fallback chains (versioned)
       quarterly.py           # Q1-Q3 direct, Q4 = FY − 3×Q1, sanity quarantine
       ttm.py                 # trailing-twelve-month assembly
-      tickers.py             # layered CIK↔ticker map incl. delisted recovery
+      securities.py          # entity/security/symbol lifecycle + collisions
     prices/
       base.py                # provider ABC + canonical parquet schema
       alpaca.py              # primary EOD (raw + all adjustments)
@@ -77,7 +78,7 @@ usinv/
       tiingo.py              # splitFactor/divCash spot-checks
       eodhd_snapshot.py      # one-time delisted-inclusive archive loader
       actions.py             # split/dividend detection + 3-source reconcile
-      adjust.py              # adj factors; raw close never touched
+      adjust.py              # as-of-anchored factors + quality provenance
     macro/
       fred.py                # BAMLH0A0HYM2, T10Y3M, T10Y2Y, VIXCLS
       alfred.py              # vintage series (NFCI, SAHMREALTIME)
@@ -114,7 +115,7 @@ usinv/
     costs.py                 # 20-40bp/side spread+impact model (in objective)
     metrics.py               # CAGR, Sharpe, Sortino, MaxDD, Ulcer,
                              #   rolling-12m win rate, benchmark-relative
-    walkforward.py           # purged, embargoed splits
+    splits.py                # locked static split + TRAIN-only diagnostics
     fragility.py             # parameter-plateau / neighborhood analysis
     experiments.py           # grid runner for experiment_grid.yaml
   ledger/
@@ -123,10 +124,10 @@ usinv/
   delivery/
     snapshot.py              # versioned JSON artifact (schema documented)
     notify.py                # Telegram push (optional, Phase 7)
-web/                         # minimal static viewer for the JSON snapshot
-                             #   (plain HTML+JS; NOT the MobileInv PWA)
+web/                         # independent installable PWA; snapshot consumer
+                             #   (no MobileInv imports, no scoring logic)
 tests/                       # mirrors package; PIT-leak tests mandatory
-.github/workflows/           # ci.yml, nightly-data.yml, rotation.yml
+.github/workflows/           # ci, nightly, decision, reconcile, audit
 docs/                        # this blueprint + PROGRESS.md
 data/                        # local DuckDB/Parquet (gitignored)
 ```
@@ -137,34 +138,48 @@ DuckDB database `data/usinv.duckdb` + Parquet archives. Main tables:
 
 | Table | Key | Notes |
 |---|---|---|
+| `ingest_batches` | `batch_id` | provider, request/response hashes, retrieval time, license/storage pointer, schema version |
 | `filings` | `adsh` | from SUB/submissions: cik, form, period, fy, fp, filed, **accepted**, sic, afs |
 | `facts_pit` | `(cik, tag, ddate, qtrs, uom)` | value, adsh, filed, accepted — first-accepted only |
 | `facts_latest` | same | latest-known view (restatements ok; never used by signals) |
-| `fundamentals_q` | `(cik, fiscal_q)` | standardized quarterly concepts + `available_from` (=accepted) |
-| `fundamentals_ttm` | `(cik, as_of_q)` | TTM assemblies + `available_from` |
-| `ticker_map` | `(cik, ticker, valid_from, valid_to)` | layered sources, `source` column |
-| `prices_raw` | `(ticker, date)` | o,h,l,c,v — immutable, provider + ingest batch tagged |
-| `prices_adj` | `(ticker, date)` | `split_factor` (splits only) + `tr_factor` (splits+dividends), action_id refs — consumers per DATA_SPEC §4.0 |
-| `corporate_actions` | `(ticker, date, type)` | ratio, source(s), reconciliation status |
+| `fundamentals_q` | `(cik, fiscal_q)` | entity fundamentals; standardized concepts + `available_from` (=accepted) |
+| `fundamentals_ttm` | `(cik, as_of_q)` | entity TTM assemblies + `available_from` |
+| `securities` | `security_id` | immutable tradeable-class identity; CIK is entity link, not key |
+| `security_symbols` | `(security_id, ticker, exchange, valid_from)` | non-overlapping symbol validity intervals + confidence/evidence |
+| `prices_raw` | `(security_id, session, provider, batch_id)` | contemporaneous o,h,l,c,v — immutable; vendor ticker retained as evidence |
+| `price_factors` | `(security_id, session, anchor_session, method)` | split/TR factors, adjustment-quality and action refs; never future-anchored inside a backtest |
+| `corporate_actions` | `(security_id, effective_session, type, source)` | ratio/cash, `known_at`, reconciliation and quality status |
 | `macro_series` | `(series, date, vintage_date)` | vintage-aware (ALFRED where needed) |
-| `universe_snapshots` | `(date, cik)` | inclusion + every filter's pass/fail (auditable) |
-| `red_flags` | `(date, cik, flag)` | evidence pointer (adsh / detection rule) |
-| `scores` | `(date, cik)` | per-factor + composite + regime block used |
+| `universe_snapshots` | `(date, security_id)` | inclusion + every filter's pass/fail and mapping quality |
+| `red_flags` | `(date, security_id, flag)` | evidence pointer (adsh / notice / detection rule) |
+| `scores` | `(date, security_id)` | per-factor + composite + regime block used |
 | `selections` | `(cycle, position_id)` | continuity model: one row per held position |
 | `nav_ledger` | `(date)` | canonical daily NAV + benchmark columns |
 | `trades` | `(trade_id)` | model ref price, assumed fill, costs |
+| `data_quality_issues` | `issue_id` | mapping/action/coverage/freshness quarantine with resolution state |
+| `experiment_runs` | `config_hash` | split, metrics, data/code hashes, status; append-only attempt ledger |
 
 Rules: `facts_pit` insert-only; `prices_raw` insert-only; every derived table
 carries the code version (`git describe`) that produced it.
 
+## 3.1 Evidence-mode boundary
+
+The architecture supports two modes defined in DATA_SPEC §0. `research` mode
+may consume a frozen vendor-adjusted return series where old delisted action
+history is unavailable; `audit` mode requires independently reconstructable
+actions and a high-coverage historical security master. Mode and coverage
+statistics are first-class fields in the ledger, experiment manifest and every
+delivery artifact. No code path may relabel research evidence as audit evidence.
+
 ## 4. Two-speed data pipeline
 
 - **Historical spine (rare, versioned):** FSDS quarterly ZIPs → parquet →
-  `facts_pit`. Archive the ZIPs locally/into state repo — SEC has reprocessed
+  `facts_pit`. Archive the ZIPs in user-controlled storage — SEC has reprocessed
   the whole archive before (Dec 2024); never assume immutability.
 - **Live edge (nightly):** submissions delta → detect new 10-K/10-Q by
-  `acceptanceDateTime` → companyfacts fetch for those CIKs only → same dedup
-  insert. When the next FSDS drop arrives it verifies/supersedes the edge rows;
+  `acceptanceDateTime` → archive/parse the filing's as-filed XBRL instance and
+  presentation metadata → companyfacts cross-check → same dedup insert. When
+  the next FSDS drop arrives it verifies/supersedes the edge rows;
   mismatches are logged (they are almost always our own period-derivation bugs).
 - **Prices (nightly):** Alpaca bars (raw + all) for the active universe with
   `end ≤ now−15min` (SIP-quality on free tier); weekly Stooq bulk cross-check;
@@ -173,11 +188,28 @@ carries the code version (`git describe`) that produced it.
 A biweekly-to-monthly rotation needs ~40h of slack at most — nightly batch is
 comfortably sufficient; there is deliberately **no intraday infrastructure**.
 
+Historical experiments do not run in scheduled GitHub Actions. They run in a
+controlled local/batch environment against a frozen data manifest during the
+research/build stage. After deployment, production is fully unattended and
+has zero dependency on the developer PC: GitHub Actions orchestrates
+incremental live data, validation, scoring, paper/live order staging, fill
+reconciliation, ledger updates and small delivery artifacts. Durable runtime
+state lives in remote object/database storage reachable from a fresh runner;
+multi-gigabyte licensed archives stay in separately controlled storage.
+
+GitHub cron is treated as an unreliable trigger, not as state or proof of
+execution. Primary and retry schedules use America/New_York time, acquire a
+remote idempotency lock keyed by business date and operation, and exit quickly
+when work is already complete. An independent heartbeat monitor alerts on a
+missing success signal and may trigger the same idempotent workflow through
+`workflow_dispatch`. Broker orders use deterministic client-order IDs so a
+retry cannot create a duplicate position.
+
 ## 5. Relationship to MobileInv (BIST)
 
 Zero runtime coupling (D012). What we port is *lessons*, listed in
 DECISIONS.md, and the general shape (PIT context, canonical ledger, hard gates,
-walk-forward discipline). Code is ported by copy-with-tests only if genuinely
+holdout/search discipline). Code is ported by copy-with-tests only if genuinely
 identical in semantics; expected for: trailing-stop logic shape, plateau/
 fragility analysis shape, snapshot-manifest hygiene. Everything data-touching is
 written fresh against US contracts.

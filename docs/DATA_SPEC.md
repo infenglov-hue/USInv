@@ -1,7 +1,34 @@
-# DATA_SPEC — free-data pipeline, fine detail
+# DATA_SPEC — mostly-free data pipeline, fine detail
 
-All facts below verified against primary sources 2026-07-17. Items marked
-`[verify]` must be re-checked at implementation time.
+External contracts are tracked in `SOURCE_REGISTER.md` with an as-of date and
+evidence grade. Items marked `[verify]` must be re-checked at implementation
+time; an unchecked claim is never treated as an API contract.
+
+## 0. Evidence modes and the data-feasibility gate
+
+The system has two explicitly different evidence modes. Reports MUST display
+the mode; code may never silently promote one to the other.
+
+- **Research mode:** affordable, frozen EODHD snapshot plus the free sources
+  below. It may use a frozen vendor adjusted-close series for a delisted
+  security when the underlying split/dividend event history is unavailable.
+  Such rows carry `adjustment_quality='vendor_frozen'`. Research-mode results
+  can reject a strategy or justify continued paper testing; they are not
+  audit-grade evidence for committing capital.
+- **Audit mode:** delisted-inclusive prices, historical listing/security
+  identity, and corporate actions are independently reconstructable to the
+  required coverage thresholds. This normally needs a professional security
+  master/corporate-action source (or an equivalently verified archive) and a
+  separate user budget decision. No vendor is pre-approved merely by name.
+
+Before Phase 1, run a bounded **data-feasibility spike** over at least 30
+securities: active, acquired, bankrupt, exchange-to-OTC, ticker-recycled,
+reverse-split, pre-2018 delisted, and post-2018 delisted examples. Freeze the
+raw responses and publish a coverage matrix for raw OHLCV, adjusted close,
+splits, dividends, listing dates, delisting reason/date, exchange, security
+type, CIK mapping, and ticker validity intervals. The user selects research or
+audit mode only after reading that matrix. Failure to meet a field is a design
+input, not an implementation surprise.
 
 ## 1. Fundamentals — SEC Financial Statement Data Sets (historical spine)
 
@@ -42,9 +69,10 @@ Python 3.12 compat — tested to 3.11) for zip management, parquet conversion,
 filters, Q4 derivation and its Balance/Income/CashFlow standardizers. Vendor
 (copy in-repo with attribution) the standardizer rule tables and Q4 logic we
 depend on — single-maintainer bus-factor. Use **edgartools** (dgunning, MIT,
-active) for the live edge. Do NOT use python-xbrl (discontinued) or OpenEDGAR
-(abandoned 2022). We build only the thin layer: PIT dedup, tag chains beyond
-the standardizers, factor tables, ticker map (~1-2k lines).
+active) for the filing-centric live edge after fixture validation. Do NOT use
+python-xbrl (discontinued) or OpenEDGAR (abandoned 2022). We own the PIT dedup,
+tag chains beyond the standardizers, factor tables and historical security
+master; do not estimate their size before the feasibility spike.
 
 ### 1.3 The PIT rule (as-first-filed)
 
@@ -95,7 +123,7 @@ tables; coverage gate: core concepts ≥90%, secondary ≥75%):
 | Long-term debt | `LongTermDebtNoncurrent` → `LongTermDebt` | core |
 | Current portion of debt + ST borrowings | `LongTermDebtCurrent`, `ShortTermBorrowings` → `DebtCurrent` | core |
 | Current assets / liabilities | `AssetsCurrent` / `LiabilitiesCurrent` | core |
-| Shares outstanding | `dei:EntityCommonStockSharesOutstanding` (sum classes) → `CommonStockSharesOutstanding` → `WeightedAverageNumberOfSharesOutstandingBasic` | core |
+| Shares outstanding | `dei:EntityCommonStockSharesOutstanding` (preserve class dimensions) → instant `CommonStockSharesOutstanding`; weighted-average shares are retained only for per-share diagnostics, never market cap | core |
 | Preferred equity | `PreferredStockValue` | secondary |
 | Minority interest | `MinorityInterest` | secondary |
 | D&A | `DepreciationDepletionAndAmortization` → `DepreciationAndAmortization` | secondary |
@@ -114,13 +142,26 @@ cash; FCF = CFO − capex; all nine Piotroski inputs derive from the rows above
 - **Q4 = (10-K `qtrs=4`) − Σ(three `qtrs=1` rows in the same fiscal year)**,
   matched on `cik+tag+uom`, fiscal year bounded by 10-K `ddate` − ~12mo.
 - Sanity quarantine (publish nothing, flag for review) when: quarter count ≠ 3,
-  |derived Q4| > |FY|, fiscal-year change detected (10-KT), or IPO year with
-  missing quarters.
+  fiscal-year change detected (10-KT), IPO year with missing quarters, units or
+  standardized concepts do not align, or the derived value fails concept-
+  specific checks. Do **not** apply a blanket `|Q4| > |FY|` rule to signed
+  concepts such as net income/CFO; a legitimate loss in Q1-Q3 can make Q4's
+  magnitude exceed FY. Nonnegative concepts (for example revenue) and signed
+  concepts have separate tolerances and accounting-identity checks.
 - **Exclude `form IN ('20-F','40-F')` filers from the quarterly model** — no
   10-Qs (semiannual 6-K only); they are excluded from the v1 universe anyway.
 - TTM = last 4 fiscal quarters, `available_from` = max(accepted) of inputs.
 
 ## 2. Fundamentals — EDGAR APIs (live edge)
+
+The primary live edge is **filing-centric**, not companyfacts-centric:
+submissions detects a new 10-K/10-Q, then the pipeline archives and parses that
+filing's as-filed Inline XBRL/XBRL instance plus presentation metadata. This is
+required for custom extension tags, multiple security-class dimensions and the
+same evidence pointers used by FSDS. The filing acceptance timestamp from
+submissions is attached to every parsed fact. `companyfacts` is a convenient
+standard-taxonomy cross-check/backfill, not a complete replacement for the
+filing instance.
 
 - `data.sec.gov/api/xbrl/companyfacts/CIK##########.json` — per-CIK facts.
   **Traps encoded as tests:** (a) `fy`/`fp` describe the FILING's fiscal focus,
@@ -132,7 +173,9 @@ cash; FCF = CFO − capex; all nine Piotroski inputs derive from the rows above
   end)` to the FSDS convention (`ddate` = period end rounded to nearest
   month-end, `qtrs` from duration); then apply the SAME dedup as the spine —
   MIN(accepted) on `(cik, tag, ddate, qtrs, uom)` — so edge rows and spine
-  rows deduplicate against each other. (c) Non-dimensional facts only — fine.
+  rows deduplicate against each other. (c) It does not provide the full custom-
+  extension/dimensional filing surface required by this design; never use it
+  as the sole live ingestion path.
 - `data.sec.gov/submissions/CIK##########.json` — `filings.recent` parallel
   arrays (accessionNumber, form, filingDate, **acceptanceDateTime**,
   primaryDocument…), capped at 1,000 recent + paginated older files; top level:
@@ -140,6 +183,10 @@ cash; FCF = CFO − capex; all nine Piotroski inputs derive from the rows above
   `stateOfIncorporation`, addresses.
 - Bulk bootstrap: `companyfacts.zip` (~1.2 GB `[verify]`) and
   `submissions.zip`, recompiled nightly ~3 a.m. ET.
+- Filing archive path: accession index → primary Inline XBRL document and
+  filing data files (`.xml`, presentation/linkbase files where available),
+  stored by accession hash. Parse through a pinned library plus golden filings;
+  do not scrape rendered HTML tables into numeric facts.
 - **`frames` API is BANNED for the historical store** (last-filed wins,
   restatement history destroyed = lookahead; drops YTD facts; misaligns
   non-calendar fiscal years). Cross-sectional sanity checks only.
@@ -148,38 +195,88 @@ cash; FCF = CFO − capex; all nine Piotroski inputs derive from the rows above
   backoff; cache everything; prefer nightly bulk zips over per-CIK loops. Note:
   some datacenter IPs get 403 regardless `[verify from the runner you use]`.
 
-## 3. CIK ↔ ticker mapping (incl. delisted)
+## 3. Historical security master (entity ≠ security ≠ ticker)
 
-Layered, materialized as `ticker_map(cik, ticker, exchange, valid_from,
-valid_to, source)`:
+A CIK identifies a filing entity, not a tradeable share class, and a ticker is
+recyclable. Therefore `ticker_map(cik,ticker)` is not a sufficient primary key.
+Materialize two event-sourced tables:
 
-1. `company_tickers.json` + `company_tickers_exchange.json` (current filers).
-2. `submissions.json` `tickers[]`/`exchanges[]` (retains many delisted) +
-   `formerNames[]` for renames.
-3. FSDS `SUB.instance` filename prefix (conventionally `tick-yyyymmdd.xml`).
-4. `dei:TradingSymbol` from companyfacts where present.
-5. Wayback Machine snapshots of `company_tickers.json` to date validity windows.
+- `securities(security_id, cik, class_title, security_type, domestic_flag)`
+- `security_symbols(security_id, ticker, exchange, valid_from, valid_to,
+  source, confidence, evidence_pointer)`
 
-Expect ~2-5% of dead small-caps unmappable: **log, never silently drop**
-(silent drops re-introduce survivorship through the back door).
+`security_id` is an internal immutable identifier. A price row joins to a
+security only when `(ticker, exchange, date)` falls inside exactly one validity
+interval. Zero or multiple matches are quarantined.
+
+Evidence layers, strongest first:
+
+1. **Historical listing membership:** Alpha Vantage `LISTING_STATUS` queried
+   with the rotation date (supported after 2010-01-01) supplies the as-of list,
+   exchange, asset type, IPO date and delisting date. It is a primary universe
+   input, not merely an audit list. Raw CSV responses are archived by date.
+2. **Vendor symbol lifecycle:** the frozen EODHD active+`delisted=1` exchange
+   lists, including its `_old` convention for recycled tickers and symbol-
+   change history. Use its CIK/ISIN mapping endpoint only if the selected plan
+   actually includes it; verify in the feasibility spike.
+3. **Filing-time cover facts:** `dei:TradingSymbol`, class title and exchange
+   facts from each 10-K/10-Q, keyed by filing acceptance time. These can create
+   or corroborate validity intervals; preserve dimensions for multiple share
+   classes rather than summing symbols.
+4. `company_tickers*.json` and the top-level `submissions` tickers/exchanges
+   are **current-state live-edge inputs only**. Former company names are not
+   ticker history and never create symbol intervals by themselves.
+5. FSDS `SUB.instance` filename prefixes and Wayback snapshots are low-
+   confidence recovery aids. They require independent corroboration before a
+   price-to-CIK join becomes eligible for scoring.
+
+Coverage gates, measured on every rotation snapshot:
+
+- 100% of selected/held securities must have a unique high-confidence mapping.
+- ≥99% of universe market capitalization and ≥98% of eligible security count
+  must map uniquely in audit mode; research mode may proceed below that only
+  with the missing-count/market-cap table attached to every report.
+- Every ticker collision, gap and overlap is a hard data-quality record.
+  Silent drops are forbidden because they reintroduce survivorship bias.
 
 ## 4. Prices
 
-### 4.0 Canonical schema and the two adjustments
+### 4.0 Canonical schema and event-time price semantics
 
-Raw (immutable): `(ticker, date, open, high, low, close, volume, provider,
-batch_id)`. Adjustments (recomputable, separate): `(ticker, date,
-split_factor, tr_factor)` where `split_factor` is cumulative **splits only**
-and `tr_factor` is **splits + dividends** (total return). Consumers are fixed:
+Raw is immutable and security-keyed:
+`(security_id, session, open, high, low, close, volume, provider, batch_id,
+bar_definition)`. Vendor symbol is retained as evidence, not used as identity.
+The raw values are the contemporaneous nominal prices observed on that session.
 
-- `split_factor` (price-level semantics preserved): universe price filter
-  ($2), delisting-clock rule ($1.50), market cap, trailing stops, LOO collars,
-  the >|25%| action detector.
-- `tr_factor` (return semantics): momentum sleeve, benchmark series, NAV.
+Corporate actions are immutable events:
+`(security_id, effective_session, type, ratio_or_cash, currency, source,
+known_at, quality, batch_id)`. Derived factors are versioned by an explicit
+anchor: `split_factor(date, anchor_session)` and
+`tr_factor(date, anchor_session)`. No factor may incorporate an action whose
+`known_at` or effective session is after the simulation's as-of context.
 
-Using a dividend-adjusted close for price-level rules silently deflates
-historical prices and misclassifies the $2/$1.50 thresholds — tests must cover
-this distinction.
+Consumers are fixed:
+
+- **Raw contemporaneous price:** historical universe price floor, delisting
+  clock, ADV dollars, market cap (`raw close × contemporaneous shares`), and
+  the T-1 LOO reference. Adjusting an old $1 price for a future reverse split
+  would be look-ahead and would corrupt the historical eligibility test.
+- **Split-continuous position series:** trailing stops and position continuity.
+  Implement by adjusting position quantity/cost basis on the effective session
+  or by anchoring past prices only through that session—never through future
+  actions.
+- **Total-return series:** momentum, benchmark proxy returns and performance
+  attribution. Dividends are reinvested for signals/benchmarks but are explicit
+  cash flows in the portfolio ledger.
+- **Action detector:** raw overnight discontinuity compared with the frozen
+  vendor-adjusted series and declared events; it never treats vendor adjusted
+  close as primary raw data.
+
+Every derived series carries `adjustment_quality`:
+`reconstructed`, `vendor_frozen`, `inferred_split`, or `unresolved`.
+`unresolved` rows cannot enter a stop calculation or an audit-mode backtest.
+Using dividend-adjusted prices for price-level rules, or future-anchored split
+prices for historical filters, is a tested hard failure.
 
 ### 4.1 Live/operational layer (active universe) — $0
 
@@ -206,32 +303,50 @@ this distinction.
   (5/min, 2yr), Alpha Vantage (25/day — but its free `LISTING_STATUS` delisted
   list IS used as an audit input, §6).
 
-### 4.2 Honest-backtest layer — the one paid item (D001)
+### 4.2 Historical research layer — paid snapshot with a declared limitation
 
-The pure-$0 stack **cannot** produce a survivorship-bias-free 10-year small-cap
-backtest (free sources drop delisted names; small-cap delistings ~5%/yr,
-concentrated exactly in what a value factor buys). Sanctioned fix: subscribe
-**one month** to EODHD "All World" ($19.99 `[verify]`), snapshot to Parquet
-(`eodhd_snapshot.py`), cancel. The snapshot becomes the immutable backtest
-price archive. **The snapshot MUST capture, per ticker:** raw OHLCV, EODHD's
-`adjusted_close`, AND the **splits and dividends endpoints** — without the
-action series, momentum/total-return and benchmarks cannot be built pre-2016.
-Adjustment factors: 2000→2016 derived from EODHD actions; 2016+ from the §5
-three-source reconcile (EODHD actions join the reconcile as a fourth source
-where they overlap). ~26k US tickers incl. delisted (mostly 2000+); budget
-calls accordingly (~1-2 days at 100k calls/day incl. actions endpoints).
+The pure-$0 stack cannot produce a trustworthy delisted-inclusive small-cap
+backtest. The affordable default is a one-month EODHD "EOD Historical Data —
+All World" subscription (currently $19.99; re-check before purchase), frozen
+to Parquet and cancelled. The snapshot captures active and `delisted=1`
+symbol lists, raw OHLCV, adjusted close, and every available split/dividend
+event. The raw payload, request parameters, retrieval time, response hash and
+license note are archived in the local data store; vendor data are never
+committed to a public repository.
 
-**EODHD-symbol → CIK mapping:** snapshot symbols are `.US`-suffixed tickers,
-and tickers get RECYCLED across a 26-year history. Join price rows to
-fundamentals via `ticker_map` on **ticker AND date ∈ [valid_from, valid_to]**
-— never on ticker alone. Rows matching no validity window are quarantined and
-counted in the unmappable log (§3). A collision test (one recycled ticker,
-two CIKs) is part of the Phase 5.1 acceptance gate.
+**Load-bearing vendor limitation:** EODHD's own coverage table says securities
+delisted before 2018 have EOD data only; split/dividend/fundamental coverage is
+available for post-2018 delistings. Therefore the old statement "2000→2016
+adjustments are derived from EODHD actions" is false and is removed.
 
-**Benchmarks (per MODEL_SPEC §8):** built from the same archives — IWM
-(Russell 2000 proxy) and SPY dividend-adjusted (TR) series from the EODHD
-snapshot pre-2016, Alpaca `adjustment=all` thereafter. Alpaca/Stooq serve as
-2016+ robustness cross-checks for the whole price layer.
+Research-mode treatment for pre-2018 delisted rows:
+
+1. Raw contemporaneous OHLCV remains the price-level source.
+2. Freeze the vendor `adjusted_close` and derive a vendor total-return factor;
+   label it `adjustment_quality='vendor_frozen'`.
+3. Infer only high-confidence split discontinuities from raw/adjusted factor
+   jumps and corroborating filings. Never infer cash dividends merely to make
+   two vendor series agree.
+4. If a held interval crosses an unresolved action, the primary research run
+   quarantines the trade and reports both conservative-loss and exclusion
+   sensitivities. Audit mode rejects the run instead.
+
+This is reproducible after freezing but not independently reconstructed; all
+research-mode performance pages must say so. If the feasibility spike shows
+material coverage loss or unstable adjusted data, stop and ask the user to
+choose: shorten the historical window, accept research-only evidence, or fund
+an audit-grade source. Do not market the $20 route as fully audit-grade.
+
+**Price-to-security mapping:** join EODHD symbols (including `_old` recycled
+symbols) through `security_symbols` on ticker, exchange and session validity.
+Never join on ticker or CIK alone. Zero/multiple matches are quarantined and
+counted; a one-ticker/two-issuer/two-era fixture is mandatory.
+
+**Benchmark proxies (per MODEL_SPEC §8):** use IWM and SPY frozen total-return
+series from the same archive, plus BIL total return for the non-selecting cash-
+yield sensitivity. They are investable ETF proxies, not licensed index total-
+return series. Report ETF expense and tracking differences as part of benchmark
+interpretation.
 
 ### 4.3 Official close definition
 
@@ -254,39 +369,57 @@ Three independent signals, reconciled nightly; disagreement ⇒ quarantine ticke
    same-day 8-K earnings event → confirm via volume spike + raw-vs-adjusted
    divergence.
 
-Cross-vendor reconciliation: recompute Stooq's adjusted close from Alpaca raw +
-detected actions; drift > 1% ⇒ missed/wrong action. Dividends recoverable from
-adj/raw ratio jumps on non-split days. **T+1 era rule (post 2024-05-28):
-ex-date generally EQUALS record date** — any `ex = record − 1` assumption
-corrupts modern data.
+Cross-vendor reconciliation (2016+ where source coverage overlaps): recompute
+the candidate adjusted series from Alpaca raw + declared/detected actions;
+drift > 1% ⇒ missed/wrong action. Adj/raw jumps can flag a possible dividend
+but never establish its cash amount without a declared event source. Store and
+use the provider/exchange-declared **ex-date**. In the T+1 era regular cash
+dividends often have ex-date equal to record date, but special distributions,
+weekends and other exceptions mean no formula from record date is allowed.
 
 ## 6. Universe construction (rank-based, own — no index licensing)
 
 Rebuilt point-in-time per rotation date from our own data; every filter's
 pass/fail persisted (`universe_snapshots`) for auditability:
 
-1. Exchange-listed only: NYSE / NYSE American / Nasdaq. **No OTC.**
+1. Candidate membership comes from the archived date-specific Alpha Vantage
+   `LISTING_STATUS` active list joined uniquely through §3, then corroborated
+   with filing/vendor evidence. Exchange-listed only: NYSE / NYSE American /
+   Nasdaq. **No OTC.** Current SEC ticker lists are never backfilled into old
+   dates.
 2. US domestic filers only: exclude FPIs/ADRs (form history contains
    20-F/6-K/F-1) — v1 decision, see MODEL_SPEC §2.
-3. Common stock only (single class per CIK: keep the most liquid line;
-   sum share classes for market cap).
-4. Price > $2 (split-adjusted; the $1-2 zone is delisting-clock territory).
+3. Common stock only; retain each class as a security, but admit only the most
+   liquid eligible line per filing entity into v1 selection. Aggregate issuer
+   market cap only across explicitly linked classes with valid share counts.
+4. Contemporaneous raw close > $2 (not adjusted through future splits; the
+   $1-2 zone is a risk zone, not a universal exchange-rule threshold).
 5. Median 21-day dollar volume ≥ $1M (fixed constant — NOT a grid axis; a
    one-off sensitivity check at 0.5/2M is reported in the Phase 5 audit).
-6. Market cap $100M – $10B (small/mid tilt; fixed constant, same one-off
-   sensitivity treatment), computed from
-   `dei:EntityCommonStockSharesOutstanding` (sum classes; gate >50% jumps
-   without a matching split — SEC-documented scaling errors) × price.
+6. Market cap is computed per security class from a point-in-time
+   outstanding-share fact × contemporaneous raw close, then aggregated only
+   when the security-master relationship between classes is explicit.
+   Candidates are assigned to two non-overlapping size buckets: **core alpha**
+   `$100M ≤ market cap ≤ $10B`, and **large-cap extension** `market cap > $10B`
+   with no forced allocation. The portfolio config permits at most {0, 3, 5}
+   large-cap slots and ranks that bucket separately (MODEL_SPEC §5). The
+   $100M core floor and $10B boundary receive the same named one-off edge
+   sensitivity treatment; they are not silently optimized.
+   `WeightedAverageNumberOfSharesOutstandingBasic` is a flow denominator and
+   is **not** a valid fallback for point-in-time market cap. Missing or
+   dimensionally ambiguous share counts quarantine the name; >50% jumps
+   without a matching split/action are a hard data-quality flag.
 7. Hygiene hard gates (MODEL_SPEC §3) applied last, every exclusion logged.
 
 Index membership is NOT used for the universe (Russell history is not free at
-any quality). For benchmarking only: Russell 2000 TR via ETF total-return
-series; `fja05680/sp500` GitHub lists for S&P sanity checks (good ≥2019,
+any quality). For benchmarking only: IWM total-return as the Russell 2000
+investable proxy; `fja05680/sp500` GitHub lists for S&P sanity checks (good ≥2019,
 degrading before).
 
-Delisted-coverage audit: reconcile our universe/price coverage against Alpha
-Vantage's free `LISTING_STATUS` delisted list; unexplained gaps are a red
-CI failure, not a warning (the BIST frozen-data lesson).
+Delisted-coverage audit: query both active and delisted date-specific Alpha
+Vantage lists and reconcile against the frozen vendor archive and security
+master. Unexplained gaps are a red pipeline failure, not a warning. Coverage
+thresholds come from §3 and are included in the experiment data manifest.
 
 ## 7. Macro / regime series (vintage-correct)
 
