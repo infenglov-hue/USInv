@@ -1,5 +1,44 @@
 # PROGRESS
 
+## 2026-07-18 — Phase 1.1 versioned SEC FSDS archive (PR pending)
+
+### Done
+
+- Added an inclusive `YYYYqN` range model and the official SEC quarterly URL
+  contract, beginning with the headers-only `2009q1` archive.
+- Added a streaming downloader with the existing monitored SEC contact policy,
+  rate cap, bounded retry/backoff and conditional ETag/Last-Modified refreshes.
+- Validated every new payload as a safe ZIP with the required SUB/NUM/PRE/TAG
+  members and passing CRCs before it can enter the archive.
+- Stored raw packages at content-addressed
+  `objects/YYYYqN/<sha256>.zip` paths. A changed SEC payload creates a new
+  object; it never replaces or mutates the older version.
+- Added an atomically written logical append-only manifest. Each check records
+  source URL, UTC check time, byte count, SHA-256, ZIP members, validators,
+  HTTP result, outcome and the prior hash, with strict chain validation.
+- Added archive-hit verification, a full object audit, and archive-version
+  selection by observation time. That observation boundary is not substituted
+  for filing acceptance time in the future facts store.
+- Added `usinv fsds-sync`; existing quarters are offline archive hits unless
+  `--refresh` is explicit. Added a manual-only `FSDS smoke` workflow for the
+  small 2009q1 package; normal CI stays offline.
+
+### Verification
+
+- `ruff check .`, `ruff format --check .` and all pre-commit hooks passed.
+- Full offline suite: 70 passed, including reprocess preservation, observation-
+  time look-ahead protection, conditional 304, retry pacing, corrupt object,
+  broken ledger chain, unsafe ZIP and inclusive multi-quarter fixtures.
+- GitHub CI passed on the clean Python 3.12 runner. Manual FSDS smoke run
+  `29657225120` downloaded the official 13,540-byte `2009q1` ZIP with SHA-256
+  `181327faaa37c2a3b47cb6727004960b762954d908697b252d12bea245b9d26e`,
+  then a second command returned `archive_hit` with the identical hash and no
+  additional SEC request.
+
+### Blueprint deviations
+
+- None.
+
 ## 2026-07-18 — Phase 0.4 historical-data feasibility (research mode selected)
 
 ### Feasibility assets

@@ -57,6 +57,17 @@ class EdgarCacheError(EdgarError):
     """Raised when a cached response is incomplete or fails its content hash."""
 
 
+def validate_sec_contact(value: str) -> str:
+    """Validate the monitored contact address declared to SEC."""
+    contact = value.strip()
+    lowered = contact.lower()
+    if not EMAIL_PATTERN.fullmatch(contact):
+        raise EdgarConfigurationError("EDGAR contact must be a valid email address")
+    if "noreply" in lowered or lowered.endswith("@example.com"):
+        raise EdgarConfigurationError("EDGAR contact must be a monitored email address")
+    return contact
+
+
 @dataclass(frozen=True, slots=True)
 class HttpResponse:
     status: int
@@ -281,7 +292,7 @@ class EdgarClient:
         monotonic: Callable[[], float] = time.monotonic,
         now: Callable[[], datetime] | None = None,
     ) -> None:
-        self.contact_email = self._validate_contact(contact_email)
+        self.contact_email = validate_sec_contact(contact_email)
         if not 0 < max_requests_per_second <= 8:
             raise EdgarConfigurationError("EDGAR rate must be within (0, 8] requests/second")
         if cache_ttl_seconds < 0 or timeout_seconds <= 0 or max_attempts < 1:
@@ -302,13 +313,8 @@ class EdgarClient:
 
     @staticmethod
     def _validate_contact(value: str) -> str:
-        contact = value.strip()
-        lowered = contact.lower()
-        if not EMAIL_PATTERN.fullmatch(contact):
-            raise EdgarConfigurationError("EDGAR contact must be a valid email address")
-        if "noreply" in lowered or lowered.endswith("@example.com"):
-            raise EdgarConfigurationError("EDGAR contact must be a monitored email address")
-        return contact
+        """Backward-compatible wrapper for the shared SEC contact contract."""
+        return validate_sec_contact(value)
 
     @classmethod
     def from_config(

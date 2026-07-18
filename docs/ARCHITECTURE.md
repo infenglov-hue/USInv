@@ -176,6 +176,11 @@ delivery artifact. No code path may relabel research evidence as audit evidence.
 - **Historical spine (rare, versioned):** FSDS quarterly ZIPs → parquet →
   `facts_pit`. Archive the ZIPs in user-controlled storage — SEC has reprocessed
   the whole archive before (Dec 2024); never assume immutability.
+  `data/sec/fsds/manifest.json` is an append-only logical ledger of checks;
+  immutable payloads live at `objects/YYYYqN/<sha256>.zip`. An unchanged check
+  appends provenance but reuses the object; a changed hash creates a new object
+  linked to the prior hash. `checked_at` selects a reproducible archive version
+  only — fact eligibility still comes from each filing's SEC acceptance time.
 - **Live edge (nightly):** submissions delta → detect new 10-K/10-Q by
   `acceptanceDateTime` → archive/parse the filing's as-filed XBRL instance and
   presentation metadata → companyfacts cross-check → same dedup insert. When
