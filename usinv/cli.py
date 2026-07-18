@@ -8,7 +8,21 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from usinv.config import load_config
-from usinv.data.edgar import EdgarClient, EdgarError
+from usinv.data.edgar import (
+    EdgarClient,
+    EdgarConfigurationError,
+    EdgarError,
+    FsdsArchiveClient,
+    FsdsQuarter,
+    fsds_quarter_range,
+)
+
+
+def _fsds_quarter(value: str) -> FsdsQuarter:
+    try:
+        return FsdsQuarter.parse(value)
+    except EdgarConfigurationError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -19,6 +33,20 @@ def _parser() -> argparse.ArgumentParser:
     smoke.add_argument("--cik", default="0000320193", help="CIK to fetch (default: Apple)")
     smoke.add_argument("--cache-dir", type=Path, help="override the EDGAR cache directory")
     smoke.add_argument("--refresh", action="store_true", help="bypass a fresh local cache")
+    fsds = subcommands.add_parser("fsds-sync", help="download and version SEC FSDS quarterly ZIPs")
+    fsds.add_argument(
+        "--start",
+        type=_fsds_quarter,
+        default=FsdsQuarter(2009, 1),
+        help="first quarter, inclusive (default: 2009q1 headers-only archive)",
+    )
+    fsds.add_argument("--end", type=_fsds_quarter, required=True, help="last quarter, inclusive")
+    fsds.add_argument("--archive-dir", type=Path, help="override the versioned FSDS archive")
+    fsds.add_argument(
+        "--refresh",
+        action="store_true",
+        help="revalidate existing quarters and record SEC replacements",
+    )
     return parser
 
 
@@ -56,6 +84,43 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"name={submissions.payload['name']!r}",
                     f"submissions_sha256={submissions.content_sha256}",
                     f"companyfacts_sha256={companyfacts.content_sha256}",
+                )
+            )
+        )
+        return 0
+    if args.command == "fsds-sync":
+        config = load_config()
+        try:
+            client = FsdsArchiveClient.from_config(config, archive_dir=args.archive_dir)
+            quarters = fsds_quarter_range(args.start, args.end)
+            new_versions = 0
+            reprocessed = 0
+            for quarter in quarters:
+                result = client.sync_quarter(quarter, refresh=args.refresh)
+                state = result.record.outcome if result.network_accessed else "archive_hit"
+                print(
+                    " ".join(
+                        (
+                            "fsds_quarter_ok",
+                            f"quarter={quarter}",
+                            f"state={state}",
+                            f"sha256={result.record.content_sha256}",
+                            f"bytes={result.record.byte_count}",
+                        )
+                    )
+                )
+                new_versions += int(result.new_version)
+                reprocessed += int(result.reprocessed)
+        except EdgarError as exc:
+            print(f"fsds_sync_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "fsds_sync_ok",
+                    f"quarters={len(quarters)}",
+                    f"new_versions={new_versions}",
+                    f"reprocessed={reprocessed}",
                 )
             )
         )

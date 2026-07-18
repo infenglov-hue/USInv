@@ -129,8 +129,12 @@ insufficient; discovering that before thousands of lines of code is the point.
 
 ### Step D — build the point-in-time fundamentals spine
 
-1. Download every SEC FSDS quarterly ZIP once; store source URL, retrieval
-   time and checksum. Never assume an old ZIP remains unchanged.
+1. Download every SEC FSDS quarterly ZIP once; store source URL, check time and
+   checksum. Keep the official headers-only `2009q1` package for archive
+   completeness, while treating `2009q2` as the first quarter with submissions.
+   Normal sync skips a hash-verified existing object; an explicit refresh uses
+   HTTP validators when available and appends unchanged/reprocessed evidence.
+   Never overwrite a prior hash or assume an old ZIP remains unchanged.
 2. Ingest SUB/NUM/PRE/TAG into raw Parquet without transforming values.
 3. Join numeric facts to filing `accepted` timestamps.
 4. Filter consolidated statement facts according to the current FSDS contract.

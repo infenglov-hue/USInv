@@ -1,6 +1,6 @@
 # USInv — Systematic US Equity Picker
 
-**Status: PHASE 0 BUILD — strict scaffold implemented.** This repository contains the
+**Status: PHASE 1 BUILD — fundamentals spine in progress.** This repository contains the
 design specification for a point-in-time-correct, factor-based US stock
 selection research system. It is intentionally not called implementation-ready
 until the Phase-0 historical-data feasibility gate is completed and the user
@@ -33,6 +33,25 @@ python -m usinv edgar-smoke --refresh
 For a fresh GitHub runner, store the same value as the repository secret
 `USINV_EDGAR_EMAIL`, then manually dispatch the `EDGAR smoke` workflow. Normal
 CI is offline and does not consume SEC requests.
+
+The FSDS archive command downloads an inclusive quarter range into ignored,
+user-controlled storage. Existing verified quarters are reused by default;
+`--refresh` deliberately asks SEC again and records an unchanged or reprocessed
+observation without overwriting any older raw ZIP. `2009q1` is retained because
+it is part of the official archive, although it contains headers only; filing
+rows begin in `2009q2`.
+
+```powershell
+$env:USINV_EDGAR_EMAIL = "your-monitored-address@your-domain.tld"
+python -m usinv fsds-sync --start 2009q1 --end 2026q1
+python -m usinv fsds-sync --start 2009q1 --end 2026q1 --refresh
+```
+
+The full range is large. Normal synchronization downloads only missing
+quarters; use the refresh form intentionally when auditing SEC replacements.
+The manually dispatched `FSDS smoke` workflow exercises only the small
+headers-only `2009q1` package, then proves the local object can be reused without
+a second request. Normal CI remains fixture-only.
 
 The account-free historical feasibility checks validate the 36-security sample,
 provider contracts and metadata-only evidence matrix; public demo responses are

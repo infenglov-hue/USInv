@@ -1,0 +1,36 @@
+name: FSDS smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  download-and-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      USINV_EDGAR_EMAIL: ${{ secrets.USINV_EDGAR_EMAIL }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install --disable-pip-version-check -e .
+      - name: Download the small headers-only 2009q1 package
+        run: >-
+          python -m usinv fsds-sync
+          --start 2009q1
+          --end 2009q1
+          --archive-dir "${{ runner.temp }}/fsds"
+      - name: Prove the archived object is reusable without networking
+        run: >-
+          python -m usinv fsds-sync
+          --start 2009q1
+          --end 2009q1
+          --archive-dir "${{ runner.temp }}/fsds"
