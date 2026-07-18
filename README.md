@@ -1,6 +1,6 @@
 # USInv — Systematic US Equity Picker
 
-**Status: REVISED BLUEPRINT — Phase 0 build starting.** This repository contains the
+**Status: PHASE 0 BUILD — strict scaffold implemented.** This repository contains the
 design specification for a point-in-time-correct, factor-based US stock
 selection research system. It is intentionally not called implementation-ready
 until the Phase-0 historical-data feasibility gate is completed and the user

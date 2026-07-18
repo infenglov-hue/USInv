@@ -1,6 +1,15 @@
-data/
+/data/
+/artifacts/
 .env
+.env.*
+!.env.example
+.venv/
 __pycache__/
 *.pyc
 .pytest_cache/
 .ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/

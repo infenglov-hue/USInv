@@ -171,8 +171,8 @@ optimistic end. A Sharpe near 1.0 net over a decade is elite; demand less.
   earnings seasons; 18 months is preferred before any capital discussion.
 - Judged against the same criteria (§2, §5) with slippage recorded (staged LOO
   vs assumed fill).
-- Mid-window changes reset the clock. Capital decisions are out of scope for
-  this repo (D009).
+- Mid-window changes reset the clock. Live capital stays disabled until D024's
+  explicit approval, funding, evidence and kill-switch gates all pass.
 
 ## 7. Amendment log
 

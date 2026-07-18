@@ -25,8 +25,9 @@ The system has seven contracts:
 3. **Identity contract:** entity, security class and ticker are separate.
 4. **Price contract:** raw price, split continuity and total return have
    different consumers and never borrow future actions.
-5. **Execution contract:** the backtest can fill only what the manual live
-   workflow could have filled, using the same collar, costs and cash funding.
+5. **Execution contract:** the backtest can fill only what the automated
+   paper/live workflow could have filled, using the same collar, costs and
+   cash funding.
 6. **Experiment contract:** data/config/code are frozen before the one-shot
    holdout; every tried configuration is counted.
 7. **Evidence contract:** `research` and `audit` modes are visibly different.

@@ -1,0 +1,18 @@
+axes:
+  holdings: [8, 10, 12, 15, 20, 25]
+  large_cap_max_slots: [0, 3, 5]
+  rotation_weeks: [2, 4, 6, 13]
+  bands: ["none", quintile, quartile, top_third]
+  sector_cap_fractions: [0.20, 0.27, 0.34]
+  correlation_filters: ["off", "0.7"]
+  trailing_stops: ["none", percent_15, percent_20, percent_25, percent_30, atr_3x]
+  overlays: [O0, O1, O2, O3]
+  sector_relative_ranks: [false, true]
+  factor_weights: [equal, quality_tilt, value_tilt, attribution_derived]
+limits:
+  full_cross_cells: 331776
+  stage1_max: 29
+  stage2_max: 96
+  stage3_max: 60
+  controls_max: 5
+  planned_max: 190
