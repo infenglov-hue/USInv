@@ -1,6 +1,52 @@
 # PROGRESS
 
-## 2026-07-18 — Phase 0.2 XNYS calendar contract (PR pending)
+## 2026-07-18 — Phase 0.3 polite EDGAR client (live gate pending)
+
+### Done
+
+- Added a declared `USInv/<version> <monitored-email>` User-Agent sourced only
+  from `USINV_EDGAR_EMAIL`; missing or placeholder contact fails before any
+  network request.
+- Added CIK-normalized `submissions` and `companyfacts` clients, capped at the
+  configured 8 requests/second.
+- Added exponential retry/backoff for 403/429/transient 5xx and network errors,
+  including bounded `Retry-After` support.
+- Added atomic response caching with SHA-256 verification, separate retrieval
+  and validation timestamps, ETag/Last-Modified conditional requests and loud
+  corruption failures.
+- Added `usinv edgar-smoke` and an isolated manual GitHub Actions smoke workflow.
+  CI remains fixture-only and never depends on SEC availability or a secret.
+
+### Verification
+
+- `ruff check .` and `ruff format --check .` — passed.
+- `pytest -q` — 43 passed offline. Tests cover contact/rate gates, exact URLs,
+  cache reuse/corruption, conditional revalidation, 403/429 backoff, permanent
+  errors, malformed JSON and safe CLI output.
+- User approved a monitored contact; it is stored as the new repository's
+  `USINV_EDGAR_EMAIL` secret and is not present in code or test output.
+- Live local smoke passed for Apple CIK `0000320193`: submissions SHA-256
+  `ea2aa552e984a29e920cf80e0827cf32b632563935f029b6ec9de7f4fa3c026d` and
+  companyfacts SHA-256
+  `31f9ab4398402faabc733178497af89dbf94dd5038c6e36d4c894317de8a4647`.
+- The built wheel was installed into a clean Python 3.12 environment and read
+  the same verified live cache successfully.
+- Committed schema-preserving recorded fixture subsets with the SEC URLs,
+  retrieval instants and full raw-response hashes; the 164 KB/3.75 MB payloads
+  remain outside Git.
+
+### Required to close Phase 0.3
+
+1. Run the two-request smoke test from a fresh GitHub runner through the
+   explicitly labeled PR workflow.
+2. Complete Phase 0.3 review/merge, then obtain user approval for the user-gated
+   Phase 0.4 historical-data feasibility spike.
+
+### Blueprint deviations
+
+- None.
+
+## 2026-07-18 — Phase 0.2 XNYS calendar contract (merged as `8c83e83`)
 
 ### Done
 
@@ -25,11 +71,10 @@
   Juneteenth cutover, 13:00 ET closes, both DST boundaries, MLK,
   Memorial/Labor Day and the Thanksgiving T-1 half-day trap.
 
-### Remaining
+### Outcome
 
-- Complete Phase 0.2 review/merge, then obtain user approval for Phase 0.3.
-- Phase 0.3 adds the polite, cached and throttled EDGAR client; it is not part
-  of this PR.
+- PR #3 passed GitHub Actions, was user-approved and squash-merged.
+- Phase 0.3 was explicitly authorized and started from the updated `main`.
 
 ### Blueprint deviations
 

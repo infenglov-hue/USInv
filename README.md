@@ -12,6 +12,28 @@ performance run. External contracts and evidence grades live in
 [docs/SOURCE_REGISTER.md](docs/SOURCE_REGISTER.md); re-verify time-sensitive
 items and anything marked `[verify]` at implementation time.
 
+## Current build checks
+
+The configuration and calendar checks are fully offline:
+
+```powershell
+python -m usinv config-check
+pytest -q
+```
+
+The EDGAR smoke test makes exactly one submissions request and one companyfacts
+request. It requires a real monitored contact address and never prints that
+address or the returned payload:
+
+```powershell
+$env:USINV_EDGAR_EMAIL = "your-monitored-address@your-domain.tld"
+python -m usinv edgar-smoke --refresh
+```
+
+For a fresh GitHub runner, store the same value as the repository secret
+`USINV_EDGAR_EMAIL`, then manually dispatch the `EDGAR smoke` workflow. Normal
+CI is offline and does not consume SEC requests.
+
 ## What this system is
 
 A long-only, small/mid-cap tilted, factor-composite stock picker for US equities

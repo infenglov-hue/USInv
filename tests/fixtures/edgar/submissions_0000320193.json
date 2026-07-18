@@ -1,0 +1,29 @@
+{
+  "_fixture": {
+    "source_url": "https://data.sec.gov/submissions/CIK0000320193.json",
+    "retrieved_at": "2026-07-18T15:04:42.818110+00:00",
+    "raw_content_sha256": "ea2aa552e984a29e920cf80e0827cf32b632563935f029b6ec9de7f4fa3c026d",
+    "selection": "Top-level identity plus first two recent filing rows; raw response omitted due size."
+  },
+  "payload": {
+    "cik": "0000320193",
+    "entityType": "operating",
+    "sic": "3571",
+    "sicDescription": "Electronic Computers",
+    "name": "Apple Inc.",
+    "tickers": ["AAPL"],
+    "exchanges": ["Nasdaq"],
+    "filings": {
+      "recent": {
+        "accessionNumber": ["0001140361-26-025622", "0001140361-26-025620"],
+        "filingDate": ["2026-06-17", "2026-06-17"],
+        "acceptanceDateTime": [
+          "2026-06-17T22:40:43.000Z",
+          "2026-06-17T22:30:15.000Z"
+        ],
+        "form": ["4", "4"],
+        "primaryDocument": ["xslF345X06/form4.xml", "xslF345X06/form4.xml"]
+      }
+    }
+  }
+}
