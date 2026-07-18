@@ -39,8 +39,9 @@ O=OPS_SPEC, B=BUILD_GUIDE, S=SOURCE_REGISTER.
 
 - 1.1 FSDS bulk download + versioned archive (`bulk.py`): all quarterly zips,
   checksums, immutability ledger (SEC reprocess detection) (D§1).
-- 1.2 FSDS ingestion via secfsdstools → `filings` + raw facts parquet; vendor
-  the Q4-derivation + standardizer rule tables we depend on (D§1.2).
+- 1.2 FSDS ingestion against the pinned secfsdstools schema contract → lossless
+  SUB/NUM/PRE/TAG, `filings` + raw facts parquet; vendor the exact standardizer
+  source snapshot and register the Q4 rule contract we depend on (D§1.2).
 - 1.3 PIT store (`pit_store.py`): MIN(accepted) dedup → `facts_pit`
   (insert-only) + `facts_latest`.
   **Gate:** property tests — amendment rows never mutate PIT; a synthetic

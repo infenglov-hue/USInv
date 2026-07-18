@@ -10,7 +10,11 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "exchange-calendars==4.13.2",
+  "numpy==1.26.4",
+  "pandas==2.3.3",
+  "pyarrow==25.0.0",
   "PyYAML>=6.0",
+  "secfsdstools==2.4.3",
   "tzdata>=2025.2",
 ]
 
@@ -34,6 +38,8 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["usinv/data/edgar/vendor/secfsdstools_2_4_3"]
+force-exclude = true
 
 [tool.ruff.lint]
 select = ["B", "C4", "E", "F", "I", "PIE", "RUF", "SIM", "UP"]

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "package": "secfsdstools",
+  "version": "2.4.3",
+  "tag": "v2.4.3",
+  "commit": "af83c24f999109322d01b4980d207eec67bc749e",
+  "license": "Apache-2.0",
+  "source": "https://github.com/HansjoergW/sec-fincancial-statement-data-set",
+  "files": {
+    "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+    "f_standardize/__init__.py": "4d53eeaa68cdd26da111a1932395d54ab88f6a8c0047ffa5ece7dc020cbd4171",
+    "f_standardize/base_prepivot_rules.py": "2d4e1f5a511790633a635a57e1aacdbfbd139b9f9aed5b0a53704a13a3881610",
+    "f_standardize/base_rule_framework.py": "a0c1986ac404e26253aec5d8f645b09f8a55a646a1628191ab9dc559c859a78b",
+    "f_standardize/base_rules.py": "4f0008abd061dfd728f77d5efb0349872ae9a20cae747468e6fbbd10a5a35b8b",
+    "f_standardize/base_validation_rules.py": "5ebe2a345added0811f462403b888e27be0e1526be59bd0f254d481e12407a26",
+    "f_standardize/bs_standardize.py": "ddb7cbe931c4ea35403c2043cac42c2bbbea6416f2cea8c4de984e6154b4158f",
+    "f_standardize/cf_standardize.py": "06347186d8e17b8ff2a06c31ef7b62f11802e0334945afc5a8a8e68db3ef7853",
+    "f_standardize/is_standardize.py": "303a70f3121cfe2e438bc72451e8d53108902d8d311e6e56a85e78c0b1d7c208",
+    "f_standardize/standardizing.py": "29eca7118cbe4fca3d322fad9293eecd786c146675da1c8987c76a5eb5129bcf"
+  }
+}

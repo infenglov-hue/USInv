@@ -1,6 +1,50 @@
 # PROGRESS
 
-## 2026-07-18 — Phase 1.1 versioned SEC FSDS archive (PR pending)
+## 2026-07-18 — Phase 1.2 lossless SEC FSDS ingestion (PR pending)
+
+### Done
+
+- Added a content-addressed, atomic FSDS ZIP-to-Parquet adapter that verifies
+  the archived source object before reading it and preserves SEC-reprocessed
+  ZIP versions in separate output directories.
+- Streamed all four SUB/NUM/PRE/TAG tables to raw Parquet as strings with exact
+  header-set validation. No raw financial value is coerced or discarded.
+- Added typed `filings.parquet` and `facts_raw.parquet`: SEC Eastern acceptance
+  timestamps become timezone-aware UTC values, NUM uses `Decimal128(28,4)`,
+  and every fact carries accession, filing context, batch and source hashes.
+- Added a safe raw-fact reader that requires a timezone-aware `as_of`, admits
+  only `accepted ≤ as_of`, excludes both `coreg` and `segments`, and does not
+  filter retroactive `prevrpt`.
+- Added artifact manifests with source/dependency/adapter versions, Arrow
+  schemas, row counts, byte counts and SHA-256 values. Cache reuse verifies all
+  six Parquet files and fails loudly on corruption.
+- Pinned `secfsdstools==2.4.3`, vendored the exact upstream standardizer source
+  snapshot with license/commit/file hashes, and registered the versioned Q4
+  derivation and quarantine contract for Phase 1.4.
+- Added `usinv fsds-ingest` with inclusive ranges and an archive-observation
+  `--archive-as-of` boundary. The manual FSDS smoke now checks clean-Linux
+  ingestion and cache reuse as well as archive reuse.
+
+### Verification
+
+- `ruff check .` and `ruff format --check .` passed.
+- Full offline suite: 83 passed. Coverage includes lossless decimal/TAG data,
+  timezone conversion, amendment look-ahead, `prevrpt`, segment/coreg safety,
+  timezone-naive rejection, schema drift, broken joins, Decimal overflow,
+  corrupted cache, SEC-reprocessed versions, headers-only 2009Q1 and vendored
+  source hashes.
+- Clean wheel/runner checks and the labeled live FSDS smoke are pending before
+  merge.
+
+### BLUEPRINT-DEVIATION
+
+- The blueprint said to use secfsdstools for Parquet conversion and Q4
+  derivation. Inspection of pinned 2.4.3 showed that its converter omits TAG,
+  casts NUM values to `float64`, and contains no matching Q4 implementation.
+  D028 records the safer replacement: retain the pin/source standardizers as a
+  reference, but own a lossless four-table adapter and versioned Q4 contract.
+
+## 2026-07-18 — Phase 1.1 versioned SEC FSDS archive (merged as `3ebae24`)
 
 ### Done
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 
 from usinv.config import load_config
@@ -13,6 +14,7 @@ from usinv.data.edgar import (
     EdgarConfigurationError,
     EdgarError,
     FsdsArchiveClient,
+    FsdsIngestor,
     FsdsQuarter,
     fsds_quarter_range,
 )
@@ -23,6 +25,16 @@ def _fsds_quarter(value: str) -> FsdsQuarter:
         return FsdsQuarter.parse(value)
     except EdgarConfigurationError as exc:
         raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _aware_datetime(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected an ISO-8601 datetime") from exc
+    if parsed.tzinfo is None:
+        raise argparse.ArgumentTypeError("datetime must include a UTC offset")
+    return parsed
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -46,6 +58,23 @@ def _parser() -> argparse.ArgumentParser:
         "--refresh",
         action="store_true",
         help="revalidate existing quarters and record SEC replacements",
+    )
+    ingest = subcommands.add_parser(
+        "fsds-ingest", help="convert archived FSDS ZIPs to immutable Parquet tables"
+    )
+    ingest.add_argument(
+        "--start",
+        type=_fsds_quarter,
+        default=FsdsQuarter(2009, 1),
+        help="first archived quarter, inclusive (default: 2009q1)",
+    )
+    ingest.add_argument("--end", type=_fsds_quarter, required=True, help="last quarter, inclusive")
+    ingest.add_argument("--archive-dir", type=Path, help="override the versioned FSDS archive")
+    ingest.add_argument("--output-dir", type=Path, help="override the Parquet output root")
+    ingest.add_argument(
+        "--archive-as-of",
+        type=_aware_datetime,
+        help="use only an archive version observed by this timezone-aware instant",
     )
     return parser
 
@@ -124,5 +153,37 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             )
         )
+        return 0
+    if args.command == "fsds-ingest":
+        config = load_config()
+        try:
+            ingestor = FsdsIngestor.from_config(
+                config,
+                archive_dir=args.archive_dir,
+                output_dir=args.output_dir,
+            )
+            quarters = fsds_quarter_range(args.start, args.end)
+            for quarter in quarters:
+                result = ingestor.ingest_quarter(
+                    quarter,
+                    archive_as_of=args.archive_as_of,
+                )
+                table_counts = {table.name: table.row_count for table in result.tables}
+                print(
+                    " ".join(
+                        (
+                            "fsds_ingest_quarter_ok",
+                            f"quarter={quarter}",
+                            f"state={'parquet_hit' if result.from_cache else 'created'}",
+                            f"source_sha256={result.source_sha256}",
+                            f"filings={table_counts['filings']}",
+                            f"facts_raw={table_counts['facts_raw']}",
+                        )
+                    )
+                )
+        except EdgarError as exc:
+            print(f"fsds_ingest_failed: {exc}", file=sys.stderr)
+            return 2
+        print(f"fsds_ingest_ok quarters={len(quarters)}")
         return 0
     raise AssertionError(f"unhandled command: {args.command}")

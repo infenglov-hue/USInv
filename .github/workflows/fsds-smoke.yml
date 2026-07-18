@@ -45,3 +45,17 @@ jobs:
           --start 2009q1
           --end 2009q1
           --archive-dir "${{ runner.temp }}/fsds"
+      - name: Ingest all four headers-only raw tables into Parquet
+        run: >-
+          python -m usinv fsds-ingest
+          --start 2009q1
+          --end 2009q1
+          --archive-dir "${{ runner.temp }}/fsds"
+          --output-dir "${{ runner.temp }}/fsds-parquet"
+      - name: Verify the Parquet cache without rebuilding it
+        run: >-
+          python -m usinv fsds-ingest
+          --start 2009q1
+          --end 2009q1
+          --archive-dir "${{ runner.temp }}/fsds"
+          --output-dir "${{ runner.temp }}/fsds-parquet"
