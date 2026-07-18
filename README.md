@@ -68,6 +68,19 @@ version known at an earlier observation time. This boundary chooses the source
 ZIP only; fact availability is always enforced separately from each filing's
 `accepted` timestamp.
 
+Build an immutable, content-addressed first-filed/latest snapshot from those
+exact normalized quarters:
+
+```powershell
+python -m usinv pit-build --start 2009q1 --end 2026q1
+```
+
+`facts_pit.parquet` keeps the minimum accepted fact per canonical key and is
+the only view admitted by the safe `as_of` reader. Amendments can update the
+separate `facts_latest.parquet` but cannot overwrite an older snapshot or a
+first-filed row. A repeated command verifies and returns the same snapshot;
+equal-time conflicting facts fail closed instead of being guessed.
+
 The account-free historical feasibility checks validate the 36-security sample,
 provider contracts and metadata-only evidence matrix; public demo responses are
 written only to the ignored artifacts directory:

@@ -59,3 +59,19 @@ jobs:
           --end 2009q1
           --archive-dir "${{ runner.temp }}/fsds"
           --output-dir "${{ runner.temp }}/fsds-parquet"
+      - name: Build immutable first-filed and latest fact views
+        run: >-
+          python -m usinv pit-build
+          --start 2009q1
+          --end 2009q1
+          --archive-dir "${{ runner.temp }}/fsds"
+          --parquet-dir "${{ runner.temp }}/fsds-parquet"
+          --store-dir "${{ runner.temp }}/pit-store"
+      - name: Verify the content-addressed PIT snapshot
+        run: >-
+          python -m usinv pit-build
+          --start 2009q1
+          --end 2009q1
+          --archive-dir "${{ runner.temp }}/fsds"
+          --parquet-dir "${{ runner.temp }}/fsds-parquet"
+          --store-dir "${{ runner.temp }}/pit-store"

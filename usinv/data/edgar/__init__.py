@@ -27,6 +27,15 @@ from usinv.data.edgar.fsds import (
     FsdsTableArtifact,
     read_consolidated_facts_as_of,
 )
+from usinv.data.edgar.pit_store import (
+    PitInputBatch,
+    PitStoreBuilder,
+    PitStoreConflictError,
+    PitStoreError,
+    PitStoreResult,
+    PitTableArtifact,
+    read_pit_facts_as_of,
+)
 
 __all__ = [
     "EdgarCacheError",
@@ -47,7 +56,14 @@ __all__ = [
     "FsdsSchemaError",
     "FsdsSyncResult",
     "FsdsTableArtifact",
+    "PitInputBatch",
+    "PitStoreBuilder",
+    "PitStoreConflictError",
+    "PitStoreError",
+    "PitStoreResult",
+    "PitTableArtifact",
     "fsds_quarter_range",
     "read_consolidated_facts_as_of",
+    "read_pit_facts_as_of",
     "validate_sec_contact",
 ]

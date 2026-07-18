@@ -173,6 +173,16 @@ schemas and artifact hashes. Raw columns are strings; typed NUM facts are
 `Decimal128(28,4)`. A second run verifies every artifact before declaring a
 cache hit, while an SEC-reprocessed ZIP produces a different directory.
 
+PIT materialization is also immutable rather than a mutable database upsert.
+The sorted normalized-batch descriptors determine
+`data/sec/pit_store/snapshots/<snapshot_id>/`, which contains
+`facts_pit.parquet`, `facts_latest.parquet` and a hash/schema/count manifest.
+DuckDB is an ephemeral out-of-core query engine for this build; it is not the
+canonical state. Adding an amendment or a backfilled source creates a new
+snapshot and leaves every prior snapshot byte-for-byte untouched. The safe
+reader accepts only the `facts_pit` schema metadata and an explicit timezone-
+aware cutoff, so accidentally passing the latest view fails structurally.
+
 ## 3.1 Evidence-mode boundary
 
 The architecture supports two modes defined in DATA_SPEC §0. `research` mode

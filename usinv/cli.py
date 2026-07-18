@@ -16,6 +16,8 @@ from usinv.data.edgar import (
     FsdsArchiveClient,
     FsdsIngestor,
     FsdsQuarter,
+    PitInputBatch,
+    PitStoreBuilder,
     fsds_quarter_range,
 )
 
@@ -75,6 +77,24 @@ def _parser() -> argparse.ArgumentParser:
         "--archive-as-of",
         type=_aware_datetime,
         help="use only an archive version observed by this timezone-aware instant",
+    )
+    pit = subcommands.add_parser(
+        "pit-build", help="build immutable first-filed and latest fact snapshots"
+    )
+    pit.add_argument(
+        "--start",
+        type=_fsds_quarter,
+        default=FsdsQuarter(2009, 1),
+        help="first archived quarter, inclusive (default: 2009q1)",
+    )
+    pit.add_argument("--end", type=_fsds_quarter, required=True, help="last quarter, inclusive")
+    pit.add_argument("--archive-dir", type=Path, help="override the versioned FSDS archive")
+    pit.add_argument("--parquet-dir", type=Path, help="override normalized FSDS Parquet root")
+    pit.add_argument("--store-dir", type=Path, help="override immutable PIT snapshot root")
+    pit.add_argument(
+        "--archive-as-of",
+        type=_aware_datetime,
+        help="select only FSDS archive versions observed by this instant",
     )
     return parser
 
@@ -185,5 +205,37 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"fsds_ingest_failed: {exc}", file=sys.stderr)
             return 2
         print(f"fsds_ingest_ok quarters={len(quarters)}")
+        return 0
+    if args.command == "pit-build":
+        config = load_config()
+        try:
+            ingestor = FsdsIngestor.from_config(
+                config,
+                archive_dir=args.archive_dir,
+                output_dir=args.parquet_dir,
+            )
+            ingested = ingestor.ingest_range(
+                args.start,
+                args.end,
+                archive_as_of=args.archive_as_of,
+            )
+            builder = PitStoreBuilder.from_config(config, output_dir=args.store_dir)
+            result = builder.build([PitInputBatch.from_fsds_result(item) for item in ingested])
+            table_counts = {table.name: table.row_count for table in result.tables}
+        except EdgarError as exc:
+            print(f"pit_build_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "pit_build_ok",
+                    f"state={'snapshot_hit' if result.from_cache else 'created'}",
+                    f"snapshot_id={result.snapshot_id}",
+                    f"inputs={len(result.inputs)}",
+                    f"facts_pit={table_counts['facts_pit']}",
+                    f"facts_latest={table_counts['facts_latest']}",
+                )
+            )
+        )
         return 0
     raise AssertionError(f"unhandled command: {args.command}")

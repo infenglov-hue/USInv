@@ -9,6 +9,7 @@ description = "Point-in-time systematic US equity research and portfolio engine"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "duckdb==1.5.4",
   "exchange-calendars==4.13.2",
   "numpy==1.26.4",
   "pandas==2.3.3",

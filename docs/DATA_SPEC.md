@@ -101,6 +101,13 @@ master.
   `accepted ≤ T-1 close`. (Commentary only: EDGAR assigns filings accepted
   after 17:30 ET the next business day as official *filing date* — irrelevant
   here because we key on `accepted`, never on `filed`.)
+- Materialize PIT/latest as immutable snapshots keyed by the sorted normalized-
+  batch manifest, not mutable upserts. Existing snapshots never change.
+  `facts_pit` chooses minimum `accepted`; `facts_latest` chooses maximum
+  `accepted`. Exact repeated observations from versioned source archives are
+  coalesced deterministically; logically conflicting rows at the same key and
+  acceptance timestamp fail closed. Only a schema-marked PIT artifact can be
+  opened through the safe timezone-aware `as_of` reader.
 
 ### 1.4 Standardization & tag fallback chains
 

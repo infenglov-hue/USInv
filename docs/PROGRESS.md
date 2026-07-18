@@ -1,6 +1,46 @@
 # PROGRESS
 
-## 2026-07-18 — Phase 1.2 lossless SEC FSDS ingestion (PR pending)
+## 2026-07-18 — Phase 1.3 immutable PIT/latest fact store (PR pending)
+
+### Done
+
+- Added manifest-selected immutable snapshots containing `facts_pit.parquet`
+  (minimum accepted) and `facts_latest.parquet` (maximum accepted) over the
+  exact canonical key `(cik, tag, ddate, qtrs, uom)`.
+- Added exact input Parquet hash/schema/count/provenance verification and
+  output manifest verification. Existing snapshots are never overwritten;
+  repeated input order resolves to the same snapshot and verified cache hit.
+- Pinned DuckDB 1.5.4 as an ephemeral out-of-core window-selection engine.
+  Canonical state remains compressed, hash-verified Parquet; no mutable DuckDB
+  file or current/latest pointer is treated as evidence.
+- Coalesced logically identical observations from repeated source archives and
+  failed closed on conflicting facts with the same PIT key and acceptance
+  timestamp.
+- Added a timezone-aware safe PIT reader whose schema metadata rejects
+  `facts_latest` even if its path is supplied directly. The PIT module contains
+  no retroactive previous-report field reference.
+- Added `usinv pit-build`; it selects exact archive versions, verifies/reuses
+  normalized FSDS inputs and reports only snapshot hashes and row counts.
+- Extended the manual FSDS smoke to build and verify the headers-only 2009Q1
+  PIT snapshot on a clean GitHub runner.
+
+### Verification
+
+- `ruff check .`, `ruff format --check .` and the full offline suite passed:
+  93 tests. The gate covers amendment isolation, a future filing hidden before
+  its acceptance time, latest-view rejection, input-order invariance,
+  immutable prior snapshots, equal-time conflicts, repeated archives, corrupt
+  inputs/cache, provenance/consolidation violations and zero-row history.
+- Built the wheel, installed all pinned dependencies in a clean Python 3.12
+  environment, repeated `config-check`, and verified the packaged PIT module,
+  canonical key and exact DuckDB 1.5.4 runtime.
+- GitHub CI and labeled live-smoke results will be recorded before merge.
+
+### Blueprint deviations
+
+- None.
+
+## 2026-07-18 — Phase 1.2 lossless SEC FSDS ingestion (merged as `029c5ee`)
 
 ### Done
 

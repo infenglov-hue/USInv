@@ -148,6 +148,13 @@ insufficient; discovering that before thousands of lines of code is the point.
 5. Create:
    - `facts_pit`: first-accepted value for the as-first-filed research view;
    - `facts_latest`: latest-known restated view, never accessible to signals.
+   Build both as deterministic, content-addressed Parquet snapshots over an
+   exact normalized-input manifest. Existing snapshots are immutable; a new
+   amendment creates a new snapshot in which the old PIT key still selects the
+   minimum acceptance time while latest selects the maximum. Equal-time rows
+   with conflicting logical facts are quarantined rather than broken by an
+   arbitrary row order. The safe reader verifies `facts_pit` view metadata and
+   rejects a latest artifact even when a caller supplies its path directly.
 6. Standardize concepts through versioned tag chains. Record source tag,
    accession and chain version for every derived value.
 7. Derive fiscal quarters with concept/unit alignment and quarantine, then TTM
