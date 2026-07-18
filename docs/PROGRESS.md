@@ -33,8 +33,14 @@
   timezone-naive rejection, schema drift, broken joins, Decimal overflow,
   corrupted cache, SEC-reprocessed versions, headers-only 2009Q1 and vendored
   source hashes.
-- Clean wheel/runner checks and the labeled live FSDS smoke are pending before
-  merge.
+- Built the wheel, installed it with all pinned dependencies in a clean Python
+  3.12 environment, repeated `config-check`, and verified the packaged Q4 rule,
+  license, source manifest and every vendored file hash.
+- GitHub CI passed on a clean runner. Labeled FSDS smoke run `29658804008`
+  downloaded the official 13,540-byte 2009Q1 ZIP with SHA-256
+  `181327faaa37c2a3b47cb6727004960b762954d908697b252d12bea245b9d26e`,
+  proved the archive hit, created all six zero-row Parquet tables, then returned
+  `parquet_hit` on the second ingest without rebuilding them.
 
 ### BLUEPRINT-DEVIATION
 
