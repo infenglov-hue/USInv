@@ -1,0 +1,47 @@
+name: EDGAR smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      cik:
+        description: Ten-digit SEC CIK
+        required: true
+        default: "0000320193"
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edgar-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.label.name == 'edgar-live-smoke'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      USINV_EDGAR_EMAIL: ${{ secrets.USINV_EDGAR_EMAIL }}
+      EDGAR_SMOKE_CIK: ${{ inputs.cik || '0000320193' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Require monitored SEC contact
+        run: test -n "$USINV_EDGAR_EMAIL"
+      - name: Install project
+        run: python -m pip install --disable-pip-version-check .
+      - name: Fetch submissions and company facts
+        run: >-
+          python -m usinv edgar-smoke
+          --cik "$EDGAR_SMOKE_CIK"
+          --cache-dir "${{ runner.temp }}/edgar-smoke"
+          --refresh

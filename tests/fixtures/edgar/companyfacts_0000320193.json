@@ -1,0 +1,43 @@
+{
+  "_fixture": {
+    "source_url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json",
+    "retrieved_at": "2026-07-18T15:04:43.826109+00:00",
+    "raw_content_sha256": "31f9ab4398402faabc733178497af89dbf94dd5038c6e36d4c894317de8a4647",
+    "selection": "Entity identity plus the final two reported common-share facts; raw response omitted due size."
+  },
+  "payload": {
+    "cik": 320193,
+    "entityName": "Apple Inc.",
+    "facts": {
+      "dei": {
+        "EntityCommonStockSharesOutstanding": {
+          "label": "Entity Common Stock, Shares Outstanding",
+          "units": {
+            "shares": [
+              {
+                "end": "2026-01-16",
+                "val": 14681140000,
+                "accn": "0000320193-26-000006",
+                "fy": 2026,
+                "fp": "Q1",
+                "form": "10-Q",
+                "filed": "2026-01-30",
+                "frame": "CY2025Q4I"
+              },
+              {
+                "end": "2026-04-17",
+                "val": 14687356000,
+                "accn": "0000320193-26-000013",
+                "fy": 2026,
+                "fp": "Q2",
+                "form": "10-Q",
+                "filed": "2026-05-01",
+                "frame": "CY2026Q1I"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
