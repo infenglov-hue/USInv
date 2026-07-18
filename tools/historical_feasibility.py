@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -945,6 +946,10 @@ def _alpha_rows(path: Path, *, valid: bool) -> list[dict[str, str]]:
     return rows
 
 
+def _alpha_has_value(value: str | None) -> bool:
+    return bool(value and value.strip().lower() not in {"-", "n/a", "none", "null"})
+
+
 def run_alpha_vantage_sample(
     output_dir: Path,
     *,
@@ -952,6 +957,7 @@ def run_alpha_vantage_sample(
     api_key: str,
     as_of: date,
     timeout: float = 30.0,
+    request_interval: float = 15.0,
 ) -> list[Capture]:
     """Match every sample security against dated active and delisted snapshots."""
     if not api_key or api_key.lower() == "demo":
@@ -960,29 +966,32 @@ def run_alpha_vantage_sample(
         )
     if as_of <= date(2010, 1, 1):
         raise FeasibilityError("Alpha Vantage historical listing dates must be after 2010-01-01")
+    if request_interval < 0:
+        raise FeasibilityError("Alpha Vantage request interval cannot be negative")
     output_dir = _ensure_raw_output_is_safe(output_dir)
     token = urllib.parse.quote(api_key, safe="")
     base = f"https://www.alphavantage.co/query?function=LISTING_STATUS&date={as_of.isoformat()}"
-    captures = [
-        _capture(
-            provider="alpha_vantage",
-            probe=f"sample_active_{as_of.isoformat()}",
-            url=f"{base}&state=active&apikey={token}",
-            extension="csv",
-            output_dir=output_dir,
-            timeout=timeout,
-            validator=_alpha_validator(expected_status="Active", cutoff=as_of),
-        ),
-        _capture(
-            provider="alpha_vantage",
-            probe=f"sample_delisted_{as_of.isoformat()}",
-            url=f"{base}&state=delisted&apikey={token}",
-            extension="csv",
-            output_dir=output_dir,
-            timeout=timeout,
-            validator=_alpha_validator(expected_status="Delisted", cutoff=as_of),
-        ),
-    ]
+    active_capture = _capture(
+        provider="alpha_vantage",
+        probe=f"sample_active_{as_of.isoformat()}",
+        url=f"{base}&state=active&apikey={token}",
+        extension="csv",
+        output_dir=output_dir,
+        timeout=timeout,
+        validator=_alpha_validator(expected_status="Active", cutoff=as_of),
+    )
+    if request_interval:
+        time.sleep(request_interval)
+    delisted_capture = _capture(
+        provider="alpha_vantage",
+        probe=f"sample_delisted_{as_of.isoformat()}",
+        url=f"{base}&state=delisted&apikey={token}",
+        extension="csv",
+        output_dir=output_dir,
+        timeout=timeout,
+        validator=_alpha_validator(expected_status="Delisted", cutoff=as_of),
+    )
+    captures = [active_capture, delisted_capture]
     active_rows = _alpha_rows(output_dir / captures[0].raw_path, valid=captures[0].valid)
     delisted_rows = _alpha_rows(output_dir / captures[1].raw_path, valid=captures[1].valid)
     active_index = defaultdict(list)
@@ -1004,10 +1013,11 @@ def run_alpha_vantage_sample(
             for symbol in candidates
             for row in delisted_index.get(symbol, [])
         ]
-        listing_observed = any(match.get("ipoDate") for match in matches)
-        delisting_observed = any(match.get("delistingDate") for match in matches)
+        listing_observed = any(_alpha_has_value(match.get("ipoDate")) for match in matches)
+        delisting_observed = any(_alpha_has_value(match.get("delistingDate")) for match in matches)
         exchange_type_observed = any(
-            match.get("exchange") and match.get("assetType") for match in matches
+            _alpha_has_value(match.get("exchange")) and _alpha_has_value(match.get("assetType"))
+            for match in matches
         )
         sample_coverage.append(
             {
@@ -1055,6 +1065,7 @@ def _parser() -> argparse.ArgumentParser:
     sample.add_argument("--provider", choices=("eodhd", "alpha_vantage"), required=True)
     sample.add_argument("--as-of", type=date.fromisoformat, required=True)
     sample.add_argument("--timeout", type=float, default=30.0)
+    sample.add_argument("--alpha-request-interval", type=float, default=15.0)
     return parser
 
 
@@ -1121,6 +1132,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     api_key=os.environ.get("ALPHA_VANTAGE_API_KEY", ""),
                     as_of=args.as_of,
                     timeout=args.timeout,
+                    request_interval=args.alpha_request_interval,
                 )
             valid = sum(capture.valid for capture in captures)
             print(

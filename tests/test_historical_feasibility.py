@@ -223,6 +223,8 @@ def test_full_alpha_sample_matches_symbols_without_leaking_key(
         return 200, {"Content-Type": "text/csv"}, content.encode()
 
     monkeypatch.setattr(feasibility, "_request", fake_request)
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(feasibility.time, "sleep", sleep_calls.append)
 
     captures = feasibility.run_alpha_vantage_sample(
         tmp_path,
@@ -233,11 +235,13 @@ def test_full_alpha_sample_matches_symbols_without_leaking_key(
     )
 
     assert len(captures) == 2
+    assert sleep_calls == [15.0]
     manifest_text = (tmp_path / "capture_manifest.json").read_text(encoding="utf-8")
     manifest = json.loads(manifest_text)
     assert "private-alpha-key" not in manifest_text
     assert manifest["sample_coverage"][0]["matched_symbols"] == ["AAPL"]
     assert manifest["sample_coverage"][0]["fields"]["listing_date"] == "observed"
+    assert manifest["sample_coverage"][0]["fields"]["delisting_date"] == "observed_gap"
     assert manifest["sample_coverage"][1]["fields"]["listing_date"] == "observed_gap"
 
 
