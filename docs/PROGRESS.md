@@ -1,8 +1,8 @@
 # PROGRESS
 
-## 2026-07-18 — Phase 0.4 historical-data feasibility (free portion in progress)
+## 2026-07-18 — Phase 0.4 historical-data feasibility (research mode selected)
 
-### Done without account creation or spend
+### Feasibility assets
 
 - Added an isolated `tools/historical_feasibility.py` probe; no feasibility
   code is imported by the production data package.
@@ -31,6 +31,13 @@
   the documented seven columns, all `Delisted`, and no date later than the
   requested cutoff. The same date's active demo returned `{}` and is recorded
   invalid rather than treated as empty coverage.
+- Alpha Vantage personal-key probe: pacing the two calls by 15 seconds returned
+  valid seven-column snapshots with 14,207 active and 9,350 delisted rows. The
+  36-security sample matched 24 cases: active/acquired/ticker-recycled/
+  multi-class/reverse-split were each 4/4, bankrupt was 1/4, OTC-moved 0/4,
+  deliberately pre-2010 delisted 0/4 and post-2018 delisted 3/4. Two recycled
+  symbols matched both snapshots, directly confirming the permanent-identity
+  requirement.
 - CRSP's current official contract documents permanent security identifiers,
   dated name/ticker/exchange history, detailed distributions and structured
   delisting reason/return. Access is institutional/quote-based, and the
@@ -42,30 +49,28 @@
 ### Verification so far
 
 - `ruff check .` and `ruff format --check .` — passed.
-- `pytest -q` — 57 passed offline, including 14 Phase-0.4 tests.
+- `pytest -q` — 58 passed offline, including 15 Phase-0.4 tests.
 - All pre-commit hooks passed; all relative Markdown links resolve.
-- Public demo raw hashes and response metadata are in
-  `research/phase_0_4/observations.json`; raw provider rows are not in Git.
+- Public-demo and Alpha Vantage sample hashes/metadata are in
+  `research/phase_0_4/observations.json`; raw provider rows and credentials are
+  not in Git. The personal key remains only in GitHub Secrets.
 - The feasibility-specific tests cover the ≥30/strata gate, namespaced
   security identities, complete capability schema, raw-artifact containment,
   secret redaction, sample-only evidence promotion and a post-cutoff
   look-ahead rejection.
 - Deterministic input manifest SHA-256:
-  `d61234c928daecdf29fc229c1fad3919a380a9cd71720c19e7c4037b8bc318d6`.
-- Built the wheel, installed it with runtime dependencies in a clean Python
-  3.12 environment and repeated `usinv config-check`; evidence mode remains
-  `undecided` and the config hash remains
-  `eb46acfe591d68e72c0e943e89a6f293d836205c08ff007dc2bd753b34d4ee9f`.
+  `a25783cb38525cc46e4d69cd94b09f3295865048bed54d91c2bde106e60180d5`.
+- The user selected `research`; `usinv/config/settings.yaml` now records that
+  choice. This does not unlock live execution or permit a historical backtest
+  before the remaining archive gate passes. Current config SHA-256:
+  `fde336ca86211e8f4931c1d523c08c022513afe996050d74610fa492f356f5f7`.
 
 ### Required to close Phase 0.4
 
-1. User selects `research` or `audit` intent and approves any account/spend.
-2. Research route: obtain an Alpha Vantage personal key for the full dated
-   listing sample; resolve EODHD post-expiry retention in writing and then run
-   its 36-security probe, or select another retention-permitted archive.
-3. Audit route: approve a professional-source search/budget and obtain sample
-   access; CRSP is a contract-level candidate, not a pre-approved purchase.
-4. Import resulting metadata-only observations, regenerate the matrix and
+1. Resolve EODHD post-expiry retention in writing and then run its 36-security
+   probe, maintain the subscription for the required reproduction period, or
+   select another retention-permitted research archive.
+2. Import that archive's metadata-only observations, regenerate the matrix and
    record missing-field consequences. No honest backtest claim before this.
 
 ### BLUEPRINT-DEVIATION
@@ -224,14 +229,13 @@
 
 ### Follow-on sequence
 
-1. Complete and review CODEX_TASKS 0.1-0.3 one PR at a time.
-2. Run the user-gated Phase 0.4 feasibility spike.
-3. Select historical evidence mode, storage target and provider/account inputs.
+1. Phases 0.1-0.3 are complete.
+2. Phase 0.4 selected research mode and measured Alpha Vantage membership.
+3. Resolve research-archive retention, storage and full-sample access.
 
 ### Current blockers
 
-- Historical mode cannot be selected honestly until the ≥30-security provider
-  coverage matrix is produced.
-- No historical-provider credentials, broker funding model or licensed-data
-  storage target have been registered yet. The EDGAR contact is registered as
-  a GitHub secret and is not a blocker.
+- The historical price/action archive and licensed storage target are not yet
+  selected; no backtest may start before their rights and sample gates pass.
+- Alpha Vantage and EDGAR secrets are registered and are not blockers. Broker
+  funding remains a later paper/live activation gate.

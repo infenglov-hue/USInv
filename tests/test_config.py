@@ -21,7 +21,7 @@ def _copy_config(tmp_path: Path) -> Path:
 def test_blueprint_defaults_are_typed_and_registered() -> None:
     config = load_config()
 
-    assert config.settings.evidence_mode is EvidenceMode.UNDECIDED
+    assert config.settings.evidence_mode is EvidenceMode.RESEARCH
     assert config.settings.execution_mode is ExecutionMode.PAPER
     assert config.settings.timezones.exchange == "America/New_York"
     assert config.settings.edgar.max_requests_per_second == 8
@@ -78,6 +78,7 @@ def test_live_mode_requires_selected_evidence_mode(tmp_path: Path) -> None:
     directory = _copy_config(tmp_path)
     path = directory / "settings.yaml"
     payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    payload["evidence_mode"] = "undecided"
     payload["execution_mode"] = "live"
     path.write_text(yaml.safe_dump(payload), encoding="utf-8")
 

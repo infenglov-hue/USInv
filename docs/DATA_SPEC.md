@@ -302,9 +302,11 @@ prices for historical filters, is a tested hard failure.
   action detector.
 - **yfinance: BANNED from cron** (D010) — 429 waves, curl_cffi breakage, ToS
   gray. Manual prototyping only.
-- Not viable at universe scale (do NOT wire into the main loop): Polygon free
-  (5/min, 2yr), Alpha Vantage (25/day — but its free `LISTING_STATUS` delisted
-  list IS used as an audit input, §6).
+- Not viable for universe-scale price polling (do NOT wire into the main price
+  loop): Polygon free (5/min, 2yr), Alpha Vantage (25/day). Alpha Vantage's
+  separately paced `LISTING_STATUS` snapshots remain the post-2010 dated
+  membership input in §6; Phase 0.4 measured 24/36 sample matches and confirmed
+  that ticker identity must be resolved independently.
 
 ### 4.2 Historical research layer — licensed archive with declared limitations
 

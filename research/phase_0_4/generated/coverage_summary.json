@@ -8,7 +8,8 @@
         "documented_partial": 36
       },
       "delisting_date": {
-        "documented": 36
+        "observed": 7,
+        "observed_gap": 29
       },
       "delisting_reason": {
         "not_documented": 36
@@ -17,13 +18,15 @@
         "documented": 36
       },
       "historical_exchange_security_type": {
-        "documented_partial": 36
+        "observed": 24,
+        "observed_gap": 12
       },
       "identifier_mapping": {
         "not_documented": 36
       },
       "listing_date": {
-        "documented": 36
+        "observed": 24,
+        "observed_gap": 12
       },
       "open_close_semantics": {
         "not_documented": 36
@@ -120,8 +123,8 @@
       }
     }
   },
-  "gate_status": "blocked_pending_user_mode_and_provider_access",
-  "input_manifest_sha256": "d61234c928daecdf29fc229c1fad3919a380a9cd71720c19e7c4037b8bc318d6",
+  "gate_status": "blocked_pending_research_archive_rights_and_sample",
+  "input_manifest_sha256": "a25783cb38525cc46e4d69cd94b09f3295865048bed54d91c2bde106e60180d5",
   "matrix_row_count": 108,
   "observations": [
     "eodhd-demo-aapl-eod-2020",
@@ -130,7 +133,43 @@
     "eodhd-demo-aapl-id-mapping-blocked",
     "eodhd-demo-delisted-list-blocked",
     "alpha-vantage-demo-delisted-2014-07-10",
-    "alpha-vantage-demo-active-2014-07-10-invalid"
+    "alpha-vantage-demo-active-2014-07-10-invalid",
+    "alpha-vantage-personal-listing-2026-07-18--active_aapl",
+    "alpha-vantage-personal-listing-2026-07-18--active_msft",
+    "alpha-vantage-personal-listing-2026-07-18--active_cost",
+    "alpha-vantage-personal-listing-2026-07-18--active_mnst",
+    "alpha-vantage-personal-listing-2026-07-18--acquired_twtr",
+    "alpha-vantage-personal-listing-2026-07-18--acquired_atvi",
+    "alpha-vantage-personal-listing-2026-07-18--acquired_vmw",
+    "alpha-vantage-personal-listing-2026-07-18--acquired_splk",
+    "alpha-vantage-personal-listing-2026-07-18--bankrupt_bbbyq",
+    "alpha-vantage-personal-listing-2026-07-18--bankrupt_sivbq",
+    "alpha-vantage-personal-listing-2026-07-18--bankrupt_revq",
+    "alpha-vantage-personal-listing-2026-07-18--bankrupt_yellq",
+    "alpha-vantage-personal-listing-2026-07-18--otc_fnma",
+    "alpha-vantage-personal-listing-2026-07-18--otc_fmcc",
+    "alpha-vantage-personal-listing-2026-07-18--otc_lkncy",
+    "alpha-vantage-personal-listing-2026-07-18--otc_didiy",
+    "alpha-vantage-personal-listing-2026-07-18--recycled_gm",
+    "alpha-vantage-personal-listing-2026-07-18--recycled_s",
+    "alpha-vantage-personal-listing-2026-07-18--recycled_czr",
+    "alpha-vantage-personal-listing-2026-07-18--recycled_life",
+    "alpha-vantage-personal-listing-2026-07-18--multiclass_brkb",
+    "alpha-vantage-personal-listing-2026-07-18--multiclass_goog",
+    "alpha-vantage-personal-listing-2026-07-18--multiclass_fox",
+    "alpha-vantage-personal-listing-2026-07-18--multiclass_nws",
+    "alpha-vantage-personal-listing-2026-07-18--reverse_ge",
+    "alpha-vantage-personal-listing-2026-07-18--reverse_c",
+    "alpha-vantage-personal-listing-2026-07-18--reverse_aig",
+    "alpha-vantage-personal-listing-2026-07-18--reverse_bkng",
+    "alpha-vantage-personal-listing-2026-07-18--pre2018_enrnq",
+    "alpha-vantage-personal-listing-2026-07-18--pre2018_lehmq",
+    "alpha-vantage-personal-listing-2026-07-18--pre2018_bsc",
+    "alpha-vantage-personal-listing-2026-07-18--pre2018_cfc",
+    "alpha-vantage-personal-listing-2026-07-18--post2018_jcpnq",
+    "alpha-vantage-personal-listing-2026-07-18--post2018_chkaq",
+    "alpha-vantage-personal-listing-2026-07-18--post2018_wll",
+    "alpha-vantage-personal-listing-2026-07-18--post2018_cbl"
   ],
   "provider_count": 3,
   "schema_version": 1,

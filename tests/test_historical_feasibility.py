@@ -34,7 +34,7 @@ def test_committed_feasibility_inputs_cover_all_strata() -> None:
         "alpha_vantage",
         "crsp",
     }
-    assert len(observations) == 7
+    assert len(observations) == 43
 
 
 def test_sample_manifest_rejects_bare_ticker_security_key() -> None:
@@ -76,6 +76,16 @@ def test_observations_cannot_claim_a_tracked_raw_archive() -> None:
         feasibility.validate_observations(invalid, {provider["provider"] for provider in providers})
 
 
+def test_sample_batch_rejects_tampered_manifest_hash() -> None:
+    _samples, contract_document, observation_document = _documents()
+    providers = feasibility.validate_provider_contracts(contract_document)
+    invalid = copy.deepcopy(observation_document)
+    invalid["sample_batches"][0]["manifest_sha256"] = "tampered"
+
+    with pytest.raises(feasibility.FeasibilityError, match="invalid hash"):
+        feasibility.validate_observations(invalid, {provider["provider"] for provider in providers})
+
+
 def test_matrix_only_promotes_sample_scoped_observations() -> None:
     sample_document, contract_document, observation_document = _documents()
     securities = feasibility.validate_sample_manifest(sample_document)
@@ -91,6 +101,16 @@ def test_matrix_only_promotes_sample_scoped_observations() -> None:
     msft_eodhd = next(
         row for row in matrix if row["provider"] == "eodhd" and row["sample_id"] == "active_msft"
     )
+    aapl_alpha = next(
+        row
+        for row in matrix
+        if row["provider"] == "alpha_vantage" and row["sample_id"] == "active_aapl"
+    )
+    fnma_alpha = next(
+        row
+        for row in matrix
+        if row["provider"] == "alpha_vantage" and row["sample_id"] == "otc_fnma"
+    )
 
     assert aapl_eodhd["raw_ohlcv"] == "observed"
     assert aapl_eodhd["splits"] == "observed"
@@ -98,6 +118,9 @@ def test_matrix_only_promotes_sample_scoped_observations() -> None:
     assert aapl_eodhd["identifier_mapping"] == "blocked"
     assert msft_eodhd["raw_ohlcv"] == "documented"
     assert msft_eodhd["splits"] == "documented_gap"
+    assert aapl_alpha["listing_date"] == "observed"
+    assert aapl_alpha["delisting_date"] == "observed_gap"
+    assert fnma_alpha["listing_date"] == "observed_gap"
 
 
 def test_alpha_validator_rejects_post_cutoff_delisting() -> None:
@@ -142,7 +165,7 @@ def test_render_writes_metadata_only_matrix(tmp_path: Path) -> None:
     report = (tmp_path / "REPORT.md").read_text(encoding="utf-8")
     assert summary["security_count"] == 36
     assert summary["matrix_row_count"] == 108
-    assert summary["gate_status"] == "blocked_pending_user_mode_and_provider_access"
+    assert summary["gate_status"] == "blocked_pending_research_archive_rights_and_sample"
     assert "No honest historical" in report
     assert not (tmp_path / "raw").exists()
 
@@ -327,4 +350,4 @@ def test_live_sample_fails_before_network_without_provider_secret(
 def test_validate_cli_reports_stable_counts(capsys: pytest.CaptureFixture[str]) -> None:
     assert feasibility.main(["validate", "--research-dir", str(RESEARCH_DIR)]) == 0
     output = capsys.readouterr().out
-    assert "securities=36 providers=3 observations=7 rows=108" in output
+    assert "securities=36 providers=3 observations=43 rows=108" in output

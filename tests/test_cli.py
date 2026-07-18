@@ -22,7 +22,7 @@ def test_config_check_command(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["config-check"]) == 0
     output = capsys.readouterr().out
     assert "config_ok schema=1" in output
-    assert "evidence=undecided execution=paper holdings=15 overlay=O0" in output
+    assert "evidence=research execution=paper holdings=15 overlay=O0" in output
 
 
 def test_edgar_smoke_fails_closed_without_contact(

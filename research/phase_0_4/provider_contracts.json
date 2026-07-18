@@ -93,10 +93,10 @@
       "evidence_route": "historical_universe_candidate",
       "checked_on": "2026-07-18",
       "contract_url": "https://www.alphavantage.co/documentation/",
-      "access": "A free personal key is required for normal use and is documented at 25 requests/day. The public demo exposes one historical delisted snapshot but returned an empty object for the matching active request.",
+      "access": "A free personal key is registered as a GitHub Actions secret and is documented at 25 requests/day. A paced credentialed probe returned valid active and delisted snapshots; no purchase was required.",
       "price_observation": "No purchase is required for the listing-status feasibility check; adjusted daily price history is a separate premium function and is not the selected historical archive.",
       "license_observation": "The published grant is personal and non-commercial unless otherwise agreed in writing; raw responses are therefore not committed or redistributed.",
-      "verdict": "Useful date-specific active/delisted universe input after 2010, but not a security master: it lacks delisting reason, permanent identifiers and explicit ticker validity intervals.",
+      "verdict": "Useful date-specific active/delisted universe input after 2010, with 24/36 awkward samples matched. It is not a security master: OTC and pre-2010 cases were absent, two recycled symbols matched both snapshots, and permanent identifiers, delisting reasons and explicit ticker validity intervals are absent.",
       "capabilities": {
         "raw_ohlcv": {
           "status": "documented_partial",
@@ -131,12 +131,12 @@
         "listing_date": {
           "status": "documented",
           "evidence_url": "https://www.alphavantage.co/documentation/",
-          "limitation": "The historical CSV contains ipoDate; field completeness and definition still require sample measurement."
+          "limitation": "The paced credentialed sample observed listing dates for 24/36 cases. Coverage was 0/4 for OTC-moved and 0/4 for the deliberately pre-2010 delisting cases."
         },
         "delisting_date": {
           "status": "documented",
           "evidence_url": "https://www.alphavantage.co/documentation/",
-          "limitation": "The historical CSV contains delistingDate; the demo snapshot was observed but the 36-security sample needs a personal key."
+          "limitation": "The paced credentialed sample observed a delisting date for 7/36 cases. A missing match is a measured gap, not proof that the security never existed."
         },
         "delisting_reason": {
           "status": "not_documented",
@@ -146,7 +146,7 @@
         "historical_exchange_security_type": {
           "status": "documented_partial",
           "evidence_url": "https://www.alphavantage.co/documentation/",
-          "limitation": "Each dated snapshot includes exchange and assetType, but changes between snapshots are not explicit events."
+          "limitation": "Exchange and assetType were observed for the same 24/36 matched cases, but changes between snapshots are not explicit events."
         },
         "identifier_mapping": {
           "status": "not_documented",

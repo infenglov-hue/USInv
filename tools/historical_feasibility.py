@@ -250,9 +250,10 @@ def validate_observations(
     """Validate metadata-only observations; raw provider payloads stay outside Git."""
     if document.get("schema_version") != 1:
         raise FeasibilityError("observations schema_version must be 1")
-    observations = document.get("observations")
-    if not isinstance(observations, list):
+    raw_observations = document.get("observations")
+    if not isinstance(raw_observations, list):
         raise FeasibilityError("observations must be a list")
+    observations = list(raw_observations)
     ids: set[str] = set()
     for index, observation in enumerate(observations):
         label = f"observations[{index}]"
@@ -280,6 +281,77 @@ def validate_observations(
         if observation.get("raw_archive") != "local_artifact_only":
             raise FeasibilityError(f"{label}.raw_archive must remain local_artifact_only")
         ids.add(observation_id)
+
+    sample_batches = document.get("sample_batches", [])
+    if not isinstance(sample_batches, list):
+        raise FeasibilityError("sample_batches must be a list")
+    for batch_index, batch in enumerate(sample_batches):
+        label = f"sample_batches[{batch_index}]"
+        if not isinstance(batch, dict):
+            raise FeasibilityError(f"{label} must be an object")
+        batch_id = batch.get("batch_id")
+        if not isinstance(batch_id, str) or not batch_id or batch_id in ids:
+            raise FeasibilityError(f"{label}.batch_id must be unique")
+        if batch.get("provider") not in provider_names:
+            raise FeasibilityError(f"{label}.provider is unknown")
+        manifest_sha256 = batch.get("manifest_sha256")
+        capture_sha256s = batch.get("capture_sha256s")
+        try:
+            if not isinstance(manifest_sha256, str) or len(manifest_sha256) != 64:
+                raise ValueError
+            int(manifest_sha256, 16)
+            if not isinstance(capture_sha256s, list) or not capture_sha256s:
+                raise ValueError
+            if any(not isinstance(value, str) or len(value) != 64 for value in capture_sha256s):
+                raise ValueError
+            for value in capture_sha256s:
+                int(value, 16)
+            datetime.fromisoformat(str(batch.get("retrieved_at")).replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise FeasibilityError(f"{label} has an invalid hash or timestamp") from exc
+        if batch.get("raw_archive") != "local_artifact_only":
+            raise FeasibilityError(f"{label}.raw_archive must remain local_artifact_only")
+        if not isinstance(batch.get("request_scope"), str) or not isinstance(
+            batch.get("notes"), str
+        ):
+            raise FeasibilityError(f"{label} requires request_scope and notes")
+        field_order = batch.get("field_order")
+        if (
+            not isinstance(field_order, list)
+            or not field_order
+            or len(field_order) != len(set(field_order))
+            or any(field not in COVERAGE_FIELDS for field in field_order)
+        ):
+            raise FeasibilityError(f"{label}.field_order is invalid")
+        samples = batch.get("samples")
+        if not isinstance(samples, dict) or not samples:
+            raise FeasibilityError(f"{label}.samples must be non-empty")
+        for sample_id, statuses in samples.items():
+            if not isinstance(sample_id, str) or not isinstance(statuses, list):
+                raise FeasibilityError(f"{label}.samples contains an invalid sample")
+            if len(statuses) != len(field_order) or any(
+                status not in OBSERVATION_STATUSES for status in statuses
+            ):
+                raise FeasibilityError(f"{label}.samples.{sample_id} has invalid statuses")
+            observation_id = f"{batch_id}--{sample_id}"
+            if observation_id in ids:
+                raise FeasibilityError(f"{label}.samples.{sample_id} has a duplicate identity")
+            observations.append(
+                {
+                    "observation_id": observation_id,
+                    "provider": batch["provider"],
+                    "sample_id": sample_id,
+                    "retrieved_at": batch["retrieved_at"],
+                    "request_scope": batch["request_scope"],
+                    "raw_sha256": manifest_sha256,
+                    "capture_sha256s": capture_sha256s,
+                    "raw_archive": batch["raw_archive"],
+                    "fields": dict(zip(field_order, statuses, strict=True)),
+                    "notes": batch["notes"],
+                }
+            )
+            ids.add(observation_id)
+        ids.add(batch_id)
     return observations
 
 
@@ -374,7 +446,7 @@ def render_outputs(
             for provider, fields in sorted(summary_counts.items())
         },
         "observations": [observation["observation_id"] for observation in observations],
-        "gate_status": "blocked_pending_user_mode_and_provider_access",
+        "gate_status": "blocked_pending_research_archive_rights_and_sample",
     }
     (output_dir / "coverage_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -391,8 +463,8 @@ def render_outputs(
         f"- Providers assessed: {', '.join(provider['provider'] for provider in providers)}",
         f"- Metadata-only live observations: {len(observations)}",
         (
-            "- Gate: **BLOCKED** pending user selection of `research` or `audit` mode "
-            "and any approved provider access/spend."
+            "- Gate: **BLOCKED** pending a retention-permitted research price archive "
+            "and its full sample probe."
         ),
         "",
         "A contract marked `documented` is not treated as observed sample coverage. Only explicit",
@@ -424,7 +496,7 @@ def render_outputs(
             "",
             "## Live observations",
             "",
-            "| Observation | Provider | Scope | Raw SHA-256 | Result |",
+            "| Observation | Provider | Scope | Evidence SHA-256 | Result |",
             "|---|---|---|---|---|",
         ]
     )
