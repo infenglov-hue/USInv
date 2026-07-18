@@ -34,7 +34,12 @@
 - Built the wheel, installed all pinned dependencies in a clean Python 3.12
   environment, repeated `config-check`, and verified the packaged PIT module,
   canonical key and exact DuckDB 1.5.4 runtime.
-- GitHub CI and labeled live-smoke results will be recorded before merge.
+- GitHub CI passed on a clean Python 3.12 runner. Labeled FSDS smoke run
+  `29659816104` reconfirmed the official 13,540-byte 2009Q1 ZIP SHA-256
+  `181327faaa37c2a3b47cb6727004960b762954d908697b252d12bea245b9d26e`,
+  archive and raw-Parquet cache hits, then created zero-row PIT/latest snapshot
+  `f839425ee5f5296dcd2ed0bd736eea90f7a958ad7cbec6568a0d8fb6c0a9ff93`.
+  The second PIT build returned `snapshot_hit` with the identical ID and counts.
 
 ### Blueprint deviations
 
