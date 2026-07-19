@@ -13,6 +13,7 @@ from usinv.data.edgar.pit_store import (
     PitStoreResult,
     PitTableArtifact,
 )
+from usinv.data.edgar.tag_chains import CHAIN_VERSION, CoverageReport
 
 
 def _document(payload: dict[str, object]) -> EdgarDocument:
@@ -253,3 +254,49 @@ def test_pit_build_rejects_naive_archive_cutoff() -> None:
                 "2026-07-01T00:00:00",
             ]
         )
+
+
+def test_fundamentals_coverage_reports_and_enforces_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    report = CoverageReport(
+        sample_quarter="2025q4",
+        chain_version=CHAIN_VERSION,
+        eligible_issuers=10,
+        concepts=(),
+        core_rate=0.80,
+        secondary_rate=0.70,
+    )
+    monkeypatch.setattr(cli_module, "standardize_pit_snapshot", lambda *args, **kwargs: (1, 2))
+    monkeypatch.setattr(cli_module, "eligible_ciks_from_filings", lambda paths: {1, 2})
+    monkeypatch.setattr(cli_module, "build_coverage_report", lambda *args, **kwargs: report)
+    monkeypatch.setattr(cli_module, "coverage_input", lambda *args, **kwargs: None)
+    output = tmp_path / "coverage.json"
+
+    result = main(
+        [
+            "fundamentals-coverage",
+            "--facts-pit",
+            "facts_pit.parquet",
+            "--pre",
+            "pre.parquet",
+            "--filings",
+            "filings.parquet",
+            "--sample-quarter",
+            "2025q4",
+            "--output",
+            str(output),
+            "--enforce",
+        ]
+    )
+
+    assert result == 3
+    assert (
+        "core_rate=0.800000 secondary_rate=0.700000 strict_gate=fail "
+        "enforcement=deferred_phase_1_5" in capsys.readouterr().out
+    )
+    assert output.read_text(encoding="utf-8") == report.to_json()

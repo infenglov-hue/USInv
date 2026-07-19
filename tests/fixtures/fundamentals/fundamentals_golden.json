@@ -1,0 +1,91 @@
+{
+  "fixture_version": 1,
+  "source_archive": {
+    "sample_quarter": "2025q4",
+    "fsds_sha256": "2b36ac3850c022cf19edd882e31c3c453c7666677b9fdd2e1f7748fdb5768c6e"
+  },
+  "calendar_fy": {
+    "name": "The Coca-Cola Company",
+    "cik": 21344,
+    "concept": "revenue",
+    "tag": "Revenues",
+    "fiscal_year_end": "2024-12-31",
+    "quarters": [
+      {"end": "2024-03-29", "value": "11300000000", "accepted": "2024-05-02T17:52:06Z", "adsh": "0000021344-24-000017"},
+      {"end": "2024-06-28", "value": "12363000000", "accepted": "2024-07-29T19:54:36Z", "adsh": "0000021344-24-000044"},
+      {"end": "2024-09-27", "value": "11854000000", "accepted": "2024-10-24T15:55:23Z", "adsh": "0000021344-24-000060"}
+    ],
+    "annual": {"value": "47061000000", "accepted": "2025-02-20T20:17:12Z", "adsh": "0000021344-25-000011"},
+    "expected_q4": "11544000000",
+    "evidence_urls": [
+      "https://www.sec.gov/Archives/edgar/data/21344/000002134424000017/ko-20240329.htm",
+      "https://www.sec.gov/Archives/edgar/data/21344/000002134424000044/ko-20240628.htm",
+      "https://www.sec.gov/Archives/edgar/data/21344/000002134424000060/ko-20240927.htm",
+      "https://www.sec.gov/Archives/edgar/data/21344/000002134425000011/ko-20241231.htm"
+    ]
+  },
+  "offset_fy": {
+    "name": "Apple Inc.",
+    "cik": 320193,
+    "concept": "revenue",
+    "tag": "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "fiscal_year_end": "2025-09-27",
+    "quarters": [
+      {"end": "2024-12-28", "value": "124300000000", "accepted": "2025-01-31T11:01:27Z", "adsh": "0000320193-25-000008"},
+      {"end": "2025-03-29", "value": "95359000000", "accepted": "2025-05-02T10:00:46Z", "adsh": "0000320193-25-000057"},
+      {"end": "2025-06-28", "value": "94036000000", "accepted": "2025-08-01T10:00:42Z", "adsh": "0000320193-25-000073"}
+    ],
+    "annual": {"value": "416161000000", "accepted": "2025-10-31T10:01:26Z", "adsh": "0000320193-25-000079"},
+    "expected_q4": "102466000000",
+    "evidence_urls": [
+      "https://www.sec.gov/Archives/edgar/data/320193/000032019325000008/aapl-20241228.htm",
+      "https://www.sec.gov/Archives/edgar/data/320193/000032019325000057/aapl-20250329.htm",
+      "https://www.sec.gov/Archives/edgar/data/320193/000032019325000073/aapl-20250628.htm",
+      "https://www.sec.gov/Archives/edgar/data/320193/000032019325000079/aapl-20250927.htm"
+    ]
+  },
+  "restater": {
+    "name": "American Resources Corp",
+    "cik": 1590715,
+    "concept": "total_assets",
+    "tag": "Assets",
+    "end": "2025-09-30",
+    "pit": {"value": "201200389", "accepted": "2025-11-14T22:01:40Z", "adsh": "0001477932-25-008333", "form": "10-Q"},
+    "latest": {"value": "202357184", "accepted": "2025-11-17T22:01:19Z", "adsh": "0001477932-25-008406", "form": "10-Q/A"},
+    "evidence_urls": [
+      "https://www.sec.gov/Archives/edgar/data/1590715/000147793225008333/arec_10q.htm",
+      "https://www.sec.gov/Archives/edgar/data/1590715/000147793225008406/arec_10qa.htm"
+    ]
+  },
+  "custom_revenue_small_cap": {
+    "name": "Splash Beverage Group, Inc.",
+    "cik": 1553788,
+    "concept": "revenue",
+    "tag": "NetRevenues",
+    "end": "2025-09-30",
+    "qtrs": 3,
+    "value": "438272",
+    "accepted": "2025-11-19T21:15:37Z",
+    "adsh": "0001731122-25-001571",
+    "pre": {"report": 4, "line": 1, "stmt": "IS", "plabel": "Net revenues"},
+    "evidence_urls": [
+      "https://www.sec.gov/Archives/edgar/data/1553788/000173112225001571/e7014_10q.htm"
+    ]
+  },
+  "quarantine": {
+    "name": "Mesa Air Group, Inc.",
+    "cik": 810332,
+    "concept": "revenue",
+    "tag": "RevenueFromContractWithCustomerExcludingAssessedTax",
+    "end": "2024-09-30",
+    "qtrs": 4,
+    "value": "476409000",
+    "accepted": "2025-11-21T01:26:44Z",
+    "adsh": "0001193125-25-290253",
+    "form": "10-KT",
+    "expected_reason": "fiscal_year_change_or_10_kt",
+    "evidence_urls": [
+      "https://www.sec.gov/Archives/edgar/data/810332/000119312525290253/mesa-20241231.htm"
+    ]
+  }
+}

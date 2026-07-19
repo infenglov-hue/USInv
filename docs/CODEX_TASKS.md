@@ -52,8 +52,9 @@ O=OPS_SPEC, B=BUILD_GUIDE, S=SOURCE_REGISTER.
   TTM with `available_from` = max(accepted) (D§1.4-1.5).
   **Gate:** golden tests on 5 hand-verified companies (one calendar FY, one
   offset FY, one restater, one custom-tag-revenue small cap, one quarantine
-  case); coverage report over the FULL concept table of D§1.4 on a sample
-  quarter (core concepts ≥90%, secondary ≥75%).
+  case); input-hashed strict observed-presence report over the FULL concept
+  table of D§1.4 on a sample quarter. Threshold misses remain visible and
+  missing facts are never converted to zero (D030).
 - 1.5 Historical security master (`securities.py`): entity/security/symbol
   tables, validity intervals, collision quarantine and evidence confidence
   (D§3). Current SEC tickers are live-edge only. Filing-centric live-edge
@@ -63,7 +64,10 @@ O=OPS_SPEC, B=BUILD_GUIDE, S=SOURCE_REGISTER.
   **Gate:** retrospective parity test — ingest an ALREADY-PUBLISHED past
   quarter via the API path and diff against that quarter's FSDS data
   (mismatches logged + explained); do NOT wait for the next quarterly SEC
-  drop. PIT-leak test suite green.
+  drop. PIT-leak test suite green. Build the versioned applicability matrix
+  over the final date-valid v1 exchange universe; enforce core ≥90% and
+  secondary ≥75%, with explicit tested structural-zero evidence and mandatory
+  scoring inputs fail-closed (D030).
 
 ## Phase 2 — Prices & universe (4 PRs)
 

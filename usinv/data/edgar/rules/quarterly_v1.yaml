@@ -1,7 +1,15 @@
 schema_version: 1
 contract: usinv_fsds_quarterly
-status: registered_not_executable_until_phase_1_4
+status: executable
 source: DATA_SPEC.md#15-quarterly-derivation
+chain_version: usinv-sec-concepts-v1
+
+period_identity:
+  source: [ddate, qtrs]
+  forbidden_grouping_fields: [filing_fy, filing_fp]
+  annual_window_days: [330, 385]
+  open_year_anchor: last_already_accepted_10_k
+  note: A future annual period end never enters Q1-Q3 availability or identity.
 
 direct_quarters:
   forms: [10-Q, 10-Q/A]
@@ -14,7 +22,7 @@ q4:
   annual_qtrs: 4
   required_direct_quarter_count: 3
   match_keys: [cik, tag, uom]
-  fiscal_window_months: 12
+  fiscal_window_days: [330, 385]
 
 availability:
   field: accepted
@@ -30,6 +38,24 @@ quarantine:
   - accounting_identity_failure
 
 excluded_forms: [20-F, 20-F/A, 40-F, 40-F/A]
+
+custom_revenue:
+  source: PRE
+  statement: IS
+  maximum_line: 5
+  label_pattern: revenue|revenues|sales
+  require_custom_version_equals_adsh: true
+  require_one_candidate_tag_per_report: true
+
+coverage:
+  phase_1_4_measurement: strict_observed_presence
+  phase_1_4_denominator: provisional_eligible_issuer_x_complete_concept_table
+  core_threshold: 0.90
+  secondary_threshold: 0.75
+  enforcement: deferred_to_phase_1_5_applicability
+  final_denominator: date_valid_v1_universe_x_evidence_backed_applicable_concepts
+  missing_value_policy: missing_is_not_zero
+  mandatory_scoring_inputs: fail_closed
 
 validation_classes:
   nonnegative: [Revenue]
