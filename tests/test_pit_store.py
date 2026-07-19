@@ -275,6 +275,43 @@ def test_identical_reprocessed_fact_is_coalesced_deterministically(tmp_path: Pat
     assert pit[0]["batch_id"] == latest[0]["batch_id"] == "batch:first"
 
 
+def test_equal_time_equal_value_from_distinct_accessions_is_not_a_false_conflict(
+    tmp_path: Path,
+) -> None:
+    source_sha = "9" * 64
+    accepted = datetime(2026, 5, 1, 20, tzinfo=UTC)
+    duplicate = _batch(
+        tmp_path,
+        "duplicate-accessions",
+        [
+            _fact(
+                batch_id="batch:duplicate-accessions",
+                source_quarter="2026q2",
+                source_sha256=source_sha,
+                adsh="0001234567-26-000002",
+                accepted=accepted,
+                value="100.0000",
+            ),
+            _fact(
+                batch_id="batch:duplicate-accessions",
+                source_quarter="2026q2",
+                source_sha256=source_sha,
+                adsh="0001234567-26-000001",
+                accepted=accepted,
+                value="100.0000",
+            ),
+        ],
+        source_sha256=source_sha,
+    )
+
+    result = PitStoreBuilder(output_dir=tmp_path / "store").build([duplicate])
+
+    pit = pq.read_table(result.table_path("facts_pit")).to_pylist()
+    assert len(pit) == 1
+    assert pit[0]["adsh"] == "0001234567-26-000001"
+    assert pit[0]["value"] == Decimal("100.0000")
+
+
 def test_input_and_cached_artifact_corruption_are_rejected(tmp_path: Path) -> None:
     base, _ = _base_and_amendment(tmp_path)
     builder = PitStoreBuilder(output_dir=tmp_path / "store")
