@@ -24,6 +24,13 @@ from usinv.data.edgar import (
     fsds_quarter_range,
     standardize_pit_snapshot,
 )
+from usinv.data.edgar.companyfacts import parse_companyfacts_document
+from usinv.data.edgar.live_edge import ingest_periodic_filing
+from usinv.data.edgar.submissions import (
+    detect_new_periodic_filings,
+    parse_submission_history,
+    parse_submissions_document,
+)
 
 
 def _fsds_quarter(value: str) -> FsdsQuarter:
@@ -51,6 +58,22 @@ def _parser() -> argparse.ArgumentParser:
     smoke.add_argument("--cik", default="0000320193", help="CIK to fetch (default: Apple)")
     smoke.add_argument("--cache-dir", type=Path, help="override the EDGAR cache directory")
     smoke.add_argument("--refresh", action="store_true", help="bypass a fresh local cache")
+    live = subcommands.add_parser(
+        "edgar-live-sync",
+        help="archive and normalize newly accepted 10-K/10-Q filings for one CIK",
+    )
+    live.add_argument("--cik", required=True, help="CIK to synchronize")
+    live.add_argument("--as-of", type=_aware_datetime, required=True, help="PIT acceptance cutoff")
+    live.add_argument("--seen-accession", action="append", default=[])
+    live.add_argument("--cache-dir", type=Path, help="override the EDGAR cache directory")
+    live.add_argument("--archive-dir", type=Path, help="override as-filed archive root")
+    live.add_argument("--output-dir", type=Path, help="override normalized live-edge root")
+    live.add_argument(
+        "--include-history",
+        action="store_true",
+        help="fetch SEC-declared older submissions pages for retrospective work",
+    )
+    live.add_argument("--refresh", action="store_true", help="revalidate SEC resources")
     fsds = subcommands.add_parser("fsds-sync", help="download and version SEC FSDS quarterly ZIPs")
     fsds.add_argument(
         "--start",
@@ -133,6 +156,66 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             )
         )
+        return 0
+    if args.command == "edgar-live-sync":
+        config = load_config()
+        data_root = Path(config.settings.paths.data_dir) / "sec"
+        archive_root = args.archive_dir or data_root / "filing-edge"
+        output_root = args.output_dir or data_root / "live-edge"
+        try:
+            client = EdgarClient.from_config(config, cache_dir=args.cache_dir)
+            submissions_document = client.submissions(args.cik, refresh=args.refresh)
+            feed = parse_submissions_document(submissions_document)
+            filings = list(feed.filings)
+            if args.include_history:
+                for filename in feed.history_files:
+                    document = client.submission_history(filename, refresh=args.refresh)
+                    filings.extend(
+                        parse_submission_history(
+                            document.payload,
+                            cik=feed.cik,
+                            source_url=document.url,
+                            source_sha256=document.content_sha256,
+                        )
+                    )
+            selected = detect_new_periodic_filings(
+                filings,
+                seen_accessions=args.seen_accession,
+                as_of=args.as_of,
+            )
+            if not selected:
+                print(f"edgar_live_sync_ok cik={feed.cik} new_filings=0")
+                return 0
+            companyfacts = parse_companyfacts_document(
+                client.companyfacts(args.cik, refresh=args.refresh),
+                filings=filings,
+            )
+            for filing in selected:
+                result = ingest_periodic_filing(
+                    client,
+                    filing,
+                    companyfacts,
+                    archive_root=archive_root,
+                    output_root=output_root,
+                    refresh=args.refresh,
+                )
+                print(
+                    " ".join(
+                        (
+                            "edgar_live_filing_ok",
+                            f"cik={feed.cik}",
+                            f"accession={filing.accession}",
+                            f"snapshot={result.snapshot.snapshot_id}",
+                            f"facts_raw={result.snapshot.facts_raw_rows}",
+                            f"parser_issues={len(result.snapshot.issues)}",
+                            f"companyfacts_overlap={result.companyfacts_overlap}",
+                            f"companyfacts_mismatches={result.companyfacts_mismatches}",
+                        )
+                    )
+                )
+        except EdgarError as exc:
+            print(f"edgar_live_sync_failed: {exc}", file=sys.stderr)
+            return 2
         return 0
     if args.command == "edgar-smoke":
         config = load_config()

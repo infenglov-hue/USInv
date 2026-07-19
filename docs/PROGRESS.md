@@ -1,5 +1,74 @@
 # PROGRESS
 
+## 2026-07-19 — Phase 1.5 security master and filing-centric live edge (in progress)
+
+### Done
+
+- Added a versioned entity/security/symbol master with immutable internal
+  `security_id`, half-open ticker+exchange validity intervals, confidence
+  evidence, collision/overlap quarantine and content-addressed Parquet
+  snapshots. Current SEC tickers begin only at their observation date; they
+  never invent historical ticker intervals.
+- Added strict `submissions` current/history parsing and periodic-filing
+  detection at an explicit timezone-aware cutoff. Former company names remain
+  separate from ticker evidence, and every Company Facts row must join its
+  accession to `acceptanceDateTime`; the date-only `filed` field is never used
+  as a PIT timestamp.
+- Added filing-centric Inline XBRL/XBRL parsing and accession archives. The
+  parser preserves dimensions, custom taxonomies, presentation/label evidence,
+  numeric scale/sign and source precision, rejects external-entity XML, and
+  extracts cover-page share-class identity without using a ticker as the
+  permanent identity anchor.
+- Added immutable live-edge Parquet materialization. Its canonical numeric
+  table uses the same `facts_raw` schema and `PitInputBatch` contract as FSDS,
+  so the existing Phase 1.3 first-filed PIT builder is the only merge path.
+- Added the D030 applicability engine: only explicit filing facts or tested
+  accounting identities may prove structural zero/not-applicable; future
+  evidence is ignored, universe mapping failures block the gate, and mandatory
+  scoring inputs fail closed.
+- Added `usinv edgar-live-sync` for one-CIK submissions detection, filing
+  archival, parsing, materialization and Company Facts parity diagnostics.
+
+### Verification
+
+- The official Apple 2025 10-K (`0000320193-25-000079`) was archived and
+  parsed through the live path. The archive contains nine hash-verified filing
+  resources. The resulting filing snapshot is
+  `000b5d178dce1bd6f3db211df2f81e33b3b5bc5538f288d9b739ea334061f336`:
+  1,085 full filing facts, 743 presentation rows, 461 canonical numeric rows
+  and one cover security class.
+- Every comparable dimensionless standard fact in that filing matched Company
+  Facts (420/420). The separate retrospective FSDS comparison matched all 205
+  common canonical keys. A committed official-source golden fixture locks 11
+  representative keys to the submissions hash
+  `ea2aa55be360d2c9f1f24ca470a0546dcc7fbbfb92c7c818d5e2b5bdf1fab6ac`,
+  Company Facts hash
+  `31f9ab4f679218b84f10e01ae999f3043f230bc778981cdbe8755e1448648eb1`
+  and 2025Q4 FSDS hash
+  `2b36ac3850c022cf19edd882e31c3c453c7666677b9fdd2e1f7748fdb5768c6e`.
+- Three facts were deliberately kept outside the canonical numeric PIT table:
+  one one-day duration that cannot map to an FSDS quarter, and two $0.00001 par
+  value facts that exceed the existing Decimal128(28,4) contract. All remain
+  preserved in the full filing-fact artifact with explicit issue records.
+- The full offline suite passes 138 tests; Ruff lint/format checks pass. A wheel
+  built from the repository installs into a clean Python 3.12 environment with
+  pinned `lxml==6.1.1`, and the packaged `config-check` plus live-edge/security
+  version imports pass outside the source tree.
+
+### BLUEPRINT-DEVIATION — empirical D030 gate cannot yet run
+
+- The executable D030 gate is implemented and fails closed, but its required
+  final date-valid exchange universe is not locally reproducible in Phase 1.5.
+  The credentialed Alpha Vantage CSVs from Phase 0.4 intentionally remained on
+  ephemeral GitHub runners; only redacted manifests were retained. The
+  production date-specific listing-status ingest and universe construction are
+  currently assigned to Phase 2.3.
+- Phase 1.5 therefore cannot honestly claim the final 90% core / 75% secondary
+  empirical pass. Moving only that universe-wide measurement to Phase 2.3,
+  while retaining the implemented fail-closed gate here, requires explicit
+  user approval before Phase 1.5 is merged. No threshold is weakened and no
+  provisional all-filer denominator is relabeled as the final universe.
+
 ## 2026-07-19 — Phase 1.4 standardized fundamentals (merged as `ca2fe14` via PR #10)
 
 ### Done

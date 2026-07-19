@@ -217,6 +217,14 @@ filing instance.
   filing data files (`.xml`, presentation/linkbase files where available),
   stored by accession hash. Parse through a pinned library plus golden filings;
   do not scrape rendered HTML tables into numeric facts.
+- Preserve every parsed filing fact, including dimensions and declared XBRL
+  precision, in the full accession artifact. For the dimensionless canonical
+  PIT input, duplicate values at the same filing key coalesce only when they
+  agree at their declared `decimals` precision; retain the most precise value.
+  A genuine conflict permanently quarantines that key for the filing (D031).
+  The resulting numeric rows must use the exact FSDS `facts_raw` schema and
+  enter the existing immutable `PitInputBatch`/PIT builder, never a parallel
+  live-only latest store.
 - **`frames` API is BANNED for the historical store** (last-filed wins,
   restatement history destroyed = lookahead; drops YTD facts; misaligns
   non-calendar fiscal years). Cross-sectional sanity checks only.

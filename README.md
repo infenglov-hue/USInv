@@ -1,6 +1,6 @@
 # USInv — Systematic US Equity Picker
 
-**Status: PHASE 1 BUILD — fundamentals spine in progress.** This repository contains the
+**Status: PHASE 1 BUILD — security master/live edge in progress.** This repository contains the
 design specification for a point-in-time-correct, factor-based US stock
 selection research system. It is intentionally not called implementation-ready
 until the Phase-0 historical-data feasibility gate is completed and the user
@@ -103,6 +103,24 @@ equity or minority interest is never silently converted to zero. Per D030, the
 enforceable applicability-aware 90%/75% scoring gate runs in Phase 1.5 after the
 date-valid exchange security universe and explicit structural-zero evidence
 rules exist.
+
+Detect and ingest already-published periodic filings for one CIK through the
+filing-centric live edge:
+
+```powershell
+$env:USINV_EDGAR_EMAIL = "your-monitored-address@your-domain.tld"
+python -m usinv edgar-live-sync `
+  --cik 320193 `
+  --as-of 2025-11-01T00:00:00Z `
+  --include-history
+```
+
+The command archives each selected accession, parses the as-filed XBRL and
+presentation evidence, writes immutable full-filing and canonical
+`facts_raw.parquet` artifacts, and reports Company Facts parity. Repeating a
+seen accession can be prevented with `--seen-accession`; raw filings and
+generated Parquet remain in ignored user-controlled storage. The SEC contact is
+read only from the environment and is never printed or embedded in artifacts.
 
 The account-free historical feasibility checks validate the 36-security sample,
 provider contracts and metadata-only evidence matrix; public demo responses are

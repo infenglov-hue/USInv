@@ -1,0 +1,186 @@
+{
+  "_fixture": {
+    "selection": "Official SEC Company Facts subset for Apple 2025 10-K, compared with official 2025Q4 FSDS canonical rows.",
+    "retrieved_at": "2026-07-19T08:54:52+00:00",
+    "submissions_url": "https://data.sec.gov/submissions/CIK0000320193.json",
+    "submissions_sha256": "ea2aa552e984a29e920cf80e0827cf32b632563935f029b6ec9de7f4fa3c026d",
+    "companyfacts_url": "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json",
+    "companyfacts_sha256": "31f9ab4398402faabc733178497af89dbf94dd5038c6e36d4c894317de8a4647",
+    "fsds_quarter": "2025q4",
+    "fsds_sha256": "2b36ac3850c022cf19edd882e31c3c453c7666677b9fdd2e1f7748fdb5768c6e"
+  },
+  "submissions": {
+    "cik": "0000320193",
+    "name": "Apple Inc.",
+    "entityType": "operating",
+    "sic": "3571",
+    "stateOfIncorporation": "CA",
+    "tickers": ["AAPL"],
+    "exchanges": ["Nasdaq"],
+    "formerNames": [],
+    "filings": {
+      "recent": {
+        "accessionNumber": ["0000320193-25-000079"],
+        "filingDate": ["2025-10-31"],
+        "acceptanceDateTime": ["2025-10-31T10:01:26.000Z"],
+        "form": ["10-K"],
+        "reportDate": ["2025-09-27"],
+        "primaryDocument": ["aapl-20250927.htm"]
+      },
+      "files": []
+    }
+  },
+  "companyfacts": {
+    "cik": 320193,
+    "entityName": "Apple Inc.",
+    "facts": {
+      "us-gaap": {
+        "Assets": {
+          "units": {
+            "USD": [
+              {
+                "end": "2024-09-28",
+                "val": 364980000000,
+                "accn": "0000320193-25-000079",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2025-10-31"
+              },
+              {
+                "end": "2025-09-27",
+                "val": 359241000000,
+                "accn": "0000320193-25-000079",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2025-10-31"
+              }
+            ]
+          }
+        },
+        "NetCashProvidedByUsedInOperatingActivities": {
+          "units": {
+            "USD": [
+              {
+                "start": "2022-09-25",
+                "end": "2023-09-30",
+                "val": 110543000000,
+                "accn": "0000320193-25-000079",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2025-10-31"
+              },
+              {
+                "start": "2023-10-01",
+                "end": "2024-09-28",
+                "val": 118254000000,
+                "accn": "0000320193-25-000079",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2025-10-31"
+              },
+              {
+                "start": "2024-09-29",
+                "end": "2025-09-27",
+                "val": 111482000000,
+                "accn": "0000320193-25-000079",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2025-10-31"
+              }
+            ]
+          }
+        },
+        "NetIncomeLoss": {
+          "units": {
+            "USD": [
+              {
+                "start": "2022-09-25",
+                "end": "2023-09-30",
+                "val": 96995000000,
+                "accn": "0000320193-25-000079",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2025-10-31"
+              },
+              {
+                "start": "2023-10-01",
+                "end": "2024-09-28",
+                "val": 93736000000,
+                "accn": "0000320193-25-000079",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2025-10-31"
+              },
+              {
+                "start": "2024-09-29",
+                "end": "2025-09-27",
+                "val": 112010000000,
+                "accn": "0000320193-25-000079",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2025-10-31"
+              }
+            ]
+          }
+        },
+        "RevenueFromContractWithCustomerExcludingAssessedTax": {
+          "units": {
+            "USD": [
+              {
+                "start": "2022-09-25",
+                "end": "2023-09-30",
+                "val": 383285000000,
+                "accn": "0000320193-25-000079",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2025-10-31"
+              },
+              {
+                "start": "2023-10-01",
+                "end": "2024-09-28",
+                "val": 391035000000,
+                "accn": "0000320193-25-000079",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2025-10-31"
+              },
+              {
+                "start": "2024-09-29",
+                "end": "2025-09-27",
+                "val": 416161000000,
+                "accn": "0000320193-25-000079",
+                "fy": 2025,
+                "fp": "FY",
+                "form": "10-K",
+                "filed": "2025-10-31"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  "fsds_expected": [
+    {"tag": "Assets", "ddate": "2024-09-30", "qtrs": 0, "uom": "USD", "value": "364980000000.0000"},
+    {"tag": "Assets", "ddate": "2025-09-30", "qtrs": 0, "uom": "USD", "value": "359241000000.0000"},
+    {"tag": "NetCashProvidedByUsedInOperatingActivities", "ddate": "2023-09-30", "qtrs": 4, "uom": "USD", "value": "110543000000.0000"},
+    {"tag": "NetCashProvidedByUsedInOperatingActivities", "ddate": "2024-09-30", "qtrs": 4, "uom": "USD", "value": "118254000000.0000"},
+    {"tag": "NetCashProvidedByUsedInOperatingActivities", "ddate": "2025-09-30", "qtrs": 4, "uom": "USD", "value": "111482000000.0000"},
+    {"tag": "NetIncomeLoss", "ddate": "2023-09-30", "qtrs": 4, "uom": "USD", "value": "96995000000.0000"},
+    {"tag": "NetIncomeLoss", "ddate": "2024-09-30", "qtrs": 4, "uom": "USD", "value": "93736000000.0000"},
+    {"tag": "NetIncomeLoss", "ddate": "2025-09-30", "qtrs": 4, "uom": "USD", "value": "112010000000.0000"},
+    {"tag": "RevenueFromContractWithCustomerExcludingAssessedTax", "ddate": "2023-09-30", "qtrs": 4, "uom": "USD", "value": "383285000000.0000"},
+    {"tag": "RevenueFromContractWithCustomerExcludingAssessedTax", "ddate": "2024-09-30", "qtrs": 4, "uom": "USD", "value": "391035000000.0000"},
+    {"tag": "RevenueFromContractWithCustomerExcludingAssessedTax", "ddate": "2025-09-30", "qtrs": 4, "uom": "USD", "value": "416161000000.0000"}
+  ]
+}
