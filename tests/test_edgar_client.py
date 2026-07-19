@@ -4,6 +4,7 @@ import json
 from collections import deque
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -60,10 +61,17 @@ def test_recorded_fixtures_have_live_provenance() -> None:
     for path in FIXTURE_DIR.glob("*.json"):
         document = json.loads(path.read_text(encoding="utf-8"))
         provenance = document["_fixture"]
-        assert provenance["source_url"].startswith("https://data.sec.gov/")
         assert datetime.fromisoformat(provenance["retrieved_at"]).tzinfo is not None
-        assert len(provenance["raw_content_sha256"]) == 64
-        assert "raw response omitted due size" in provenance["selection"]
+        if "source_url" in provenance:
+            assert provenance["source_url"].startswith("https://data.sec.gov/")
+            assert len(provenance["raw_content_sha256"]) == 64
+            assert "raw response omitted due size" in provenance["selection"]
+        else:
+            assert provenance["submissions_url"].startswith("https://data.sec.gov/")
+            assert provenance["companyfacts_url"].startswith("https://data.sec.gov/")
+            assert len(provenance["submissions_sha256"]) == 64
+            assert len(provenance["companyfacts_sha256"]) == 64
+            assert len(provenance["fsds_sha256"]) == 64
 
 
 def _client(tmp_path: Path, transport: FakeTransport, **kwargs: object) -> EdgarClient:
@@ -233,3 +241,16 @@ def test_invalid_json_is_not_cached(tmp_path: Path) -> None:
     with pytest.raises(EdgarPayloadError, match="invalid JSON"):
         client.submissions(320193)
     assert not list(tmp_path.glob("*.body.json"))
+
+
+def test_json_decimal_values_are_not_parsed_through_binary_float(tmp_path: Path) -> None:
+    payload = {
+        "cik": 1,
+        "entityName": "Fixture",
+        "facts": {"us-gaap": {"EarningsPerShareBasic": {"value": 0.1}}},
+    }
+    client = _client(tmp_path, FakeTransport(_response(payload)))
+
+    document = client.companyfacts(1)
+
+    assert document.payload["facts"]["us-gaap"]["EarningsPerShareBasic"]["value"] == Decimal("0.1")

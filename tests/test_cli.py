@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -33,6 +34,64 @@ def test_config_check_command(capsys: pytest.CaptureFixture[str]) -> None:
     output = capsys.readouterr().out
     assert "config_ok schema=1" in output
     assert "evidence=research execution=paper holdings=15 overlay=O0" in output
+
+
+def test_edgar_live_sync_wires_acceptance_detection_archive_and_crosscheck(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import usinv.cli as cli_module
+
+    filing = SimpleNamespace(accession="0000320193-25-000079")
+    feed = SimpleNamespace(cik=320193, filings=(filing,), history_files=())
+
+    class FakeClient:
+        def submissions(self, cik: str, *, refresh: bool) -> object:
+            assert cik == "320193" and not refresh
+            return object()
+
+        def companyfacts(self, cik: str, *, refresh: bool) -> object:
+            assert cik == "320193" and not refresh
+            return object()
+
+    result = SimpleNamespace(
+        snapshot=SimpleNamespace(snapshot_id="a" * 64, facts_raw_rows=42, issues=(1,)),
+        companyfacts_overlap=12,
+        companyfacts_mismatches=0,
+    )
+    monkeypatch.setattr(
+        EdgarClient,
+        "from_config",
+        staticmethod(lambda config, *, cache_dir=None: FakeClient()),
+    )
+    monkeypatch.setattr(cli_module, "parse_submissions_document", lambda document: feed)
+    monkeypatch.setattr(
+        cli_module,
+        "detect_new_periodic_filings",
+        lambda filings, **kwargs: (filing,),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "parse_companyfacts_document",
+        lambda document, *, filings: object(),
+    )
+    monkeypatch.setattr(cli_module, "ingest_periodic_filing", lambda *args, **kwargs: result)
+
+    status = main(
+        [
+            "edgar-live-sync",
+            "--cik",
+            "320193",
+            "--as-of",
+            "2026-07-19T16:00:00+00:00",
+        ]
+    )
+
+    assert status == 0
+    output = capsys.readouterr().out
+    assert "accession=0000320193-25-000079" in output
+    assert "facts_raw=42 parser_issues=1" in output
+    assert "companyfacts_overlap=12 companyfacts_mismatches=0" in output
 
 
 def test_edgar_smoke_fails_closed_without_contact(
@@ -297,6 +356,6 @@ def test_fundamentals_coverage_reports_and_enforces_gate(
     assert result == 3
     assert (
         "core_rate=0.800000 secondary_rate=0.700000 strict_gate=fail "
-        "enforcement=deferred_phase_1_5" in capsys.readouterr().out
+        "enforcement=phase_2_3_final_universe" in capsys.readouterr().out
     )
     assert output.read_text(encoding="utf-8") == report.to_json()

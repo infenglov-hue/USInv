@@ -124,12 +124,13 @@ derived tables). Where revenue exists only as a custom tag: recover via PRE —
 IS-statement top line whose `plabel` matches `/revenue|sales/i`. Expected
 standardized coverage ~90-95% of the universe, never 100%; ship a per-quarter
 **coverage report**. Phase 1.4 reports strict observed presence over every
-issuer-by-concept cell and does not relabel a threshold miss. Per D030, Phase
-1.5 applies the enforceable 90%/75% gate after constructing the date-valid v1
+issuer-by-concept cell and does not relabel a threshold miss. Phase 1.5 owns
+the D030 fail-closed applicability engine; per D032, Phase 2.3 applies its
+enforceable 90%/75% gate immediately after constructing the date-valid v1
 NYSE/Nasdaq/NYSE American domestic-common-stock universe and the existing
 financial, REIT, biotech and shell exclusions.
 
-The Phase 1.5 denominator is versioned and applicability-aware. A concept cell
+The final denominator is versioned and applicability-aware. A concept cell
 is applicable when a direct/fallback filing fact is presented or an explicit,
 tested filing fact or accounting identity proves a structural zero. Missing
 alone is never evidence of zero or non-applicability and may not be used to
@@ -217,6 +218,14 @@ filing instance.
   filing data files (`.xml`, presentation/linkbase files where available),
   stored by accession hash. Parse through a pinned library plus golden filings;
   do not scrape rendered HTML tables into numeric facts.
+- Preserve every parsed filing fact, including dimensions and declared XBRL
+  precision, in the full accession artifact. For the dimensionless canonical
+  PIT input, duplicate values at the same filing key coalesce only when they
+  agree at their declared `decimals` precision; retain the most precise value.
+  A genuine conflict permanently quarantines that key for the filing (D031).
+  The resulting numeric rows must use the exact FSDS `facts_raw` schema and
+  enter the existing immutable `PitInputBatch`/PIT builder, never a parallel
+  live-only latest store.
 - **`frames` API is BANNED for the historical store** (last-filed wins,
   restatement history destroyed = lookahead; drops YTD facts; misaligns
   non-calendar fiscal years). Cross-sectional sanity checks only.

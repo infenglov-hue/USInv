@@ -52,7 +52,8 @@ coverage:
   phase_1_4_denominator: provisional_eligible_issuer_x_complete_concept_table
   core_threshold: 0.90
   secondary_threshold: 0.75
-  enforcement: deferred_to_phase_1_5_applicability
+  applicability_engine: phase_1_5
+  enforcement: phase_2_3_final_universe_required
   final_denominator: date_valid_v1_universe_x_evidence_backed_applicable_concepts
   missing_value_policy: missing_is_not_zero
   mandatory_scoring_inputs: fail_closed

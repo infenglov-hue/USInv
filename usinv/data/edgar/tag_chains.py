@@ -20,7 +20,7 @@ from usinv.data.edgar.client import EdgarError
 
 CHAIN_VERSION: Final = "usinv-sec-concepts-v1"
 STRICT_COVERAGE_MEASUREMENT: Final = "strict_observed_presence"
-COVERAGE_ENFORCEMENT: Final = "deferred_to_phase_1_5_applicability"
+COVERAGE_ENFORCEMENT: Final = "phase_2_3_final_universe_applicability"
 MISSING_VALUE_POLICY: Final = "missing_is_not_zero"
 EXCLUDED_FORMS: Final = frozenset({"20-F", "20-F/A", "40-F", "40-F/A"})
 Tier = Literal["core", "secondary"]

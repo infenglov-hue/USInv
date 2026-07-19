@@ -1,0 +1,326 @@
+"""D030 applicability-aware fundamental coverage over a date-valid universe."""
+
+from __future__ import annotations
+
+import json
+from collections import defaultdict
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from datetime import UTC, date, datetime
+from decimal import Decimal
+from typing import Final, Literal
+
+from usinv.data.edgar.securities import MappingResult, SecurityMaster
+from usinv.data.edgar.tag_chains import CONCEPT_CHAINS, StandardizedFact, Tier
+
+APPLICABILITY_VERSION: Final = "usinv-applicability-v1"
+Classification = Literal["observed", "structural_zero", "not_applicable"]
+ProofKind = Literal[
+    "direct_fact",
+    "fallback_fact",
+    "custom_pre",
+    "derived_identity",
+    "explicit_filing_statement",
+    "accounting_identity",
+]
+CellOutcome = Literal["covered", "uncovered", "not_applicable"]
+_OBSERVED_PROOFS: Final = frozenset(
+    {"direct_fact", "fallback_fact", "custom_pre", "derived_identity"}
+)
+_ZERO_PROOFS: Final = frozenset({"direct_fact", "accounting_identity"})
+_NOT_APPLICABLE_PROOFS: Final = frozenset({"explicit_filing_statement", "accounting_identity"})
+
+
+class ApplicabilityError(ValueError):
+    """Raised when coverage evidence tries to weaken the D030 contract."""
+
+
+@dataclass(frozen=True, slots=True)
+class UniverseCandidate:
+    ticker: str
+    exchange: str
+    session: date
+    market_cap: Decimal | None = None
+    eligible: bool = True
+    exclusion_reason: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicabilityEvidence:
+    cik: int
+    concept: str
+    classification: Classification
+    proof_kind: ProofKind
+    value: Decimal | None
+    available_from: datetime
+    rule_version: str
+    evidence_pointer: str
+
+
+@dataclass(frozen=True, slots=True)
+class MappingFailure:
+    ticker: str
+    exchange: str
+    session: date
+    status: str
+    candidate_security_ids: tuple[str, ...]
+    issue_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicabilityCell:
+    cik: int
+    concept: str
+    tier: Tier
+    outcome: CellOutcome
+    classification: Classification | None
+    proof_kind: ProofKind | None
+    evidence_pointer: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ApplicabilityCoverageReport:
+    as_of: datetime
+    candidates: int
+    excluded_candidates: int
+    mapped_securities: int
+    eligible_issuers: int
+    mapping_failures: tuple[MappingFailure, ...]
+    cells: tuple[ApplicabilityCell, ...]
+    mandatory_missing: tuple[tuple[int, str], ...]
+    core_rate: float
+    secondary_rate: float
+    core_threshold: float = 0.90
+    secondary_threshold: float = 0.75
+    version: str = APPLICABILITY_VERSION
+
+    @property
+    def passed(self) -> bool:
+        return (
+            not self.mapping_failures
+            and not self.mandatory_missing
+            and self.core_rate >= self.core_threshold
+            and self.secondary_rate >= self.secondary_threshold
+        )
+
+    def to_json(self) -> str:
+        payload = {
+            "version": self.version,
+            "measurement": "evidence_backed_applicable_cells",
+            "missing_value_policy": "missing_is_uncovered_not_zero",
+            "as_of": self.as_of.astimezone(UTC).isoformat(),
+            "candidates": self.candidates,
+            "excluded_candidates": self.excluded_candidates,
+            "mapped_securities": self.mapped_securities,
+            "eligible_issuers": self.eligible_issuers,
+            "core_rate": self.core_rate,
+            "secondary_rate": self.secondary_rate,
+            "core_threshold": self.core_threshold,
+            "secondary_threshold": self.secondary_threshold,
+            "passed": self.passed,
+            "mandatory_missing": [
+                {"cik": cik, "concept": concept} for cik, concept in self.mandatory_missing
+            ],
+            "mapping_failures": [
+                {
+                    "ticker": item.ticker,
+                    "exchange": item.exchange,
+                    "session": item.session.isoformat(),
+                    "status": item.status,
+                    "candidate_security_ids": item.candidate_security_ids,
+                    "issue_ids": item.issue_ids,
+                }
+                for item in self.mapping_failures
+            ],
+            "cells": [
+                {
+                    "cik": item.cik,
+                    "concept": item.concept,
+                    "tier": item.tier,
+                    "outcome": item.outcome,
+                    "classification": item.classification,
+                    "proof_kind": item.proof_kind,
+                    "evidence_pointer": item.evidence_pointer,
+                }
+                for item in self.cells
+            ],
+        }
+        return json.dumps(payload, indent=2, sort_keys=True) + "\n"
+
+
+def _proof_from_derivation(value: str) -> ProofKind:
+    if value.startswith("tag:"):
+        return "direct_fact"
+    if value.startswith("custom-pre:"):
+        return "custom_pre"
+    if value.startswith(("difference:", "sum:")):
+        return "derived_identity"
+    return "fallback_fact"
+
+
+def observed_standardized_evidence(
+    facts: Iterable[StandardizedFact],
+) -> tuple[ApplicabilityEvidence, ...]:
+    """Convert standardized facts to observed evidence without manufacturing zeros."""
+    return tuple(
+        ApplicabilityEvidence(
+            cik=fact.cik,
+            concept=fact.concept,
+            classification="observed",
+            proof_kind=_proof_from_derivation(fact.derivation),
+            value=fact.value,
+            available_from=fact.available_from,
+            rule_version=fact.chain_version,
+            evidence_pointer=(
+                f"sec://{fact.cik}/{','.join(fact.source_adshs)}/{','.join(fact.source_tags)}"
+            ),
+        )
+        for fact in facts
+    )
+
+
+def _validate_evidence(item: ApplicabilityEvidence, concepts: frozenset[str]) -> None:
+    if item.cik <= 0 or item.concept not in concepts:
+        raise ApplicabilityError("applicability evidence has an unknown issuer/concept")
+    if item.available_from.tzinfo is None:
+        raise ApplicabilityError("applicability evidence must be timezone-aware")
+    if not item.rule_version or not item.evidence_pointer:
+        raise ApplicabilityError("applicability evidence requires version and pointer")
+    if item.classification == "observed":
+        if item.proof_kind not in _OBSERVED_PROOFS or item.value is None:
+            raise ApplicabilityError("observed coverage requires a value-bearing fact/derivation")
+    elif item.classification == "structural_zero":
+        if item.proof_kind not in _ZERO_PROOFS or item.value != 0:
+            raise ApplicabilityError(
+                "structural zero requires explicit zero or accounting identity"
+            )
+    elif item.classification == "not_applicable":
+        if item.proof_kind not in _NOT_APPLICABLE_PROOFS or item.value is not None:
+            raise ApplicabilityError("not-applicable requires explicit non-value filing evidence")
+    else:
+        raise ApplicabilityError(f"unknown applicability classification: {item.classification}")
+
+
+def _mapped_issuers(
+    master: SecurityMaster,
+    candidates: Sequence[UniverseCandidate],
+) -> tuple[set[str], set[int], tuple[MappingFailure, ...]]:
+    by_security = {item.security_id: item for item in master.securities}
+    security_ids: set[str] = set()
+    ciks: set[int] = set()
+    failures: list[MappingFailure] = []
+    for candidate in candidates:
+        if not candidate.eligible:
+            continue
+        result: MappingResult = master.resolve(
+            candidate.ticker,
+            candidate.exchange,
+            candidate.session,
+            minimum_confidence="high",
+        )
+        if result.status != "mapped" or result.security_id is None:
+            failures.append(
+                MappingFailure(
+                    result.ticker,
+                    result.exchange,
+                    result.session,
+                    result.status,
+                    result.candidate_security_ids,
+                    result.issue_ids,
+                )
+            )
+            continue
+        security = by_security[result.security_id]
+        if not security.domestic_flag or security.security_type != "common_stock":
+            raise ApplicabilityError("eligible candidate mapped outside the v1 security contract")
+        security_ids.add(security.security_id)
+        ciks.add(security.cik)
+    return security_ids, ciks, tuple(failures)
+
+
+def build_applicability_coverage(
+    master: SecurityMaster,
+    candidates: Sequence[UniverseCandidate],
+    evidence: Iterable[ApplicabilityEvidence],
+    *,
+    as_of: datetime,
+    mandatory_concepts: Iterable[str],
+) -> ApplicabilityCoverageReport:
+    """Enforce D030 over mapped date-valid v1 issuers; absence stays uncovered."""
+    if as_of.tzinfo is None:
+        raise ApplicabilityError("coverage as_of must be timezone-aware")
+    cutoff = as_of.astimezone(UTC)
+    if any(candidate.session > cutoff.date() for candidate in candidates):
+        raise ApplicabilityError("universe candidate session is after the coverage cutoff")
+    catalog = {chain.concept: chain for chain in CONCEPT_CHAINS}
+    concepts = frozenset(catalog)
+    mandatory = frozenset(mandatory_concepts)
+    if not mandatory <= concepts:
+        raise ApplicabilityError("mandatory concept list contains an unknown concept")
+    security_ids, ciks, failures = _mapped_issuers(master, candidates)
+
+    by_cell: dict[tuple[int, str], list[ApplicabilityEvidence]] = defaultdict(list)
+    for item in evidence:
+        _validate_evidence(item, concepts)
+        if item.cik in ciks and item.available_from.astimezone(UTC) <= cutoff:
+            by_cell[(item.cik, item.concept)].append(item)
+
+    cells: list[ApplicabilityCell] = []
+    mandatory_missing: list[tuple[int, str]] = []
+    for cik in sorted(ciks):
+        for concept, chain in catalog.items():
+            candidates_for_cell = by_cell.get((cik, concept), [])
+            classifications = {item.classification for item in candidates_for_cell}
+            if len(classifications) > 1:
+                raise ApplicabilityError(
+                    f"conflicting applicability evidence for cik={cik} concept={concept}"
+                )
+            selected = min(
+                candidates_for_cell,
+                key=lambda item: (
+                    item.available_from,
+                    item.rule_version,
+                    item.evidence_pointer,
+                ),
+                default=None,
+            )
+            if selected is None:
+                outcome: CellOutcome = "uncovered"
+            elif selected.classification == "not_applicable":
+                outcome = "not_applicable"
+            else:
+                outcome = "covered"
+            if concept in mandatory and outcome != "covered":
+                mandatory_missing.append((cik, concept))
+            cells.append(
+                ApplicabilityCell(
+                    cik,
+                    concept,
+                    chain.tier,
+                    outcome,
+                    selected.classification if selected else None,
+                    selected.proof_kind if selected else None,
+                    selected.evidence_pointer if selected else None,
+                )
+            )
+
+    def tier_rate(tier: Tier) -> float:
+        applicable = [
+            cell for cell in cells if cell.tier == tier and cell.outcome != "not_applicable"
+        ]
+        if not applicable:
+            return 0.0
+        return sum(cell.outcome == "covered" for cell in applicable) / len(applicable)
+
+    return ApplicabilityCoverageReport(
+        as_of=cutoff,
+        candidates=len(candidates),
+        excluded_candidates=sum(not item.eligible for item in candidates),
+        mapped_securities=len(security_ids),
+        eligible_issuers=len(ciks),
+        mapping_failures=failures,
+        cells=tuple(cells),
+        mandatory_missing=tuple(mandatory_missing),
+        core_rate=tier_rate("core"),
+        secondary_rate=tier_rate("secondary"),
+    )

@@ -13,16 +13,19 @@ import zlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final, Protocol
 from urllib.error import HTTPError
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 from usinv import __version__
 from usinv.config import AppConfig
 
 BASE_URL: Final = "https://data.sec.gov"
+ARCHIVE_BASE_URL: Final = "https://www.sec.gov/Archives/edgar/data"
+ALLOWED_SEC_HOSTS: Final = frozenset({"data.sec.gov", "www.sec.gov"})
 RETRIABLE_STATUS_CODES: Final = frozenset({403, 429, 500, 502, 503, 504})
 EMAIL_PATTERN: Final = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -119,6 +122,19 @@ class EdgarDocument:
 
 
 @dataclass(frozen=True, slots=True)
+class EdgarResource:
+    """Raw SEC resource with immutable retrieval provenance."""
+
+    url: str
+    retrieved_at: datetime
+    validated_at: datetime
+    content_sha256: str
+    body: bytes
+    from_cache: bool
+    revalidated: bool
+
+
+@dataclass(frozen=True, slots=True)
 class _CachedResponse:
     body: bytes
     retrieved_at: datetime
@@ -180,6 +196,13 @@ class _ResponseCache:
                 etag=metadata.get("etag"),
                 last_modified=metadata.get("last_modified"),
             )
+
+    def delete(self, url: str) -> None:
+        """Remove both halves of a cache entry after payload validation fails."""
+        body_path, metadata_path = self._paths(url)
+        with self._lock:
+            body_path.unlink(missing_ok=True)
+            metadata_path.unlink(missing_ok=True)
 
     def store(
         self,
@@ -363,10 +386,15 @@ class EdgarClient:
             raise EdgarConfigurationError(f"unsafe EDGAR path: {path!r}")
         return f"{BASE_URL}{path}"
 
-    def _headers(self, cached: _CachedResponse | None) -> dict[str, str]:
+    def _headers(
+        self,
+        cached: _CachedResponse | None,
+        *,
+        accept: str = "application/json",
+    ) -> dict[str, str]:
         headers = {
             "User-Agent": self.user_agent,
-            "Accept": "application/json",
+            "Accept": accept,
             "Accept-Encoding": "gzip, deflate",
         }
         if cached is not None:
@@ -394,23 +422,44 @@ class EdgarClient:
     @staticmethod
     def _decode_payload(body: bytes, url: str) -> Mapping[str, Any]:
         try:
-            payload = json.loads(body)
+            payload = json.loads(body, parse_float=Decimal)
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise EdgarPayloadError(f"SEC returned invalid JSON for {url}") from exc
         if not isinstance(payload, dict):
             raise EdgarPayloadError(f"SEC returned a non-object JSON payload for {url}")
         return payload
 
-    def _request(self, path: str, *, refresh: bool) -> EdgarDocument:
-        url = self._url(path)
+    @staticmethod
+    def _validate_sec_url(url: str) -> str:
+        parsed = urlsplit(url)
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname not in ALLOWED_SEC_HOSTS
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or ".." in parsed.path.split("/")
+        ):
+            raise EdgarConfigurationError(f"unsafe SEC resource URL: {url!r}")
+        return url
+
+    def _request_resource(
+        self,
+        url: str,
+        *,
+        refresh: bool,
+        accept: str,
+    ) -> EdgarResource:
+        url = self._validate_sec_url(url)
         cached = self._cache.load(url)
         if cached is not None and not refresh and self._is_fresh(cached):
-            return EdgarDocument(
+            return EdgarResource(
                 url=url,
                 retrieved_at=cached.retrieved_at,
                 validated_at=cached.validated_at,
                 content_sha256=cached.content_sha256,
-                payload=self._decode_payload(cached.body, url),
+                body=cached.body,
                 from_cache=True,
                 revalidated=False,
             )
@@ -419,7 +468,11 @@ class EdgarClient:
         for attempt in range(self.max_attempts):
             self._throttle.wait()
             try:
-                response = self._transport.get(url, self._headers(cached), self.timeout_seconds)
+                response = self._transport.get(
+                    url,
+                    self._headers(cached, accept=accept),
+                    self.timeout_seconds,
+                )
             except OSError as exc:
                 if attempt + 1 == self.max_attempts:
                     raise EdgarHttpError(None, url, f"EDGAR network failure for {url}") from exc
@@ -429,29 +482,28 @@ class EdgarClient:
             last_status = response.status
             if response.status == 304 and cached is not None:
                 revalidated = self._cache.revalidate(url, cached)
-                return EdgarDocument(
+                return EdgarResource(
                     url=url,
                     retrieved_at=revalidated.retrieved_at,
                     validated_at=revalidated.validated_at,
                     content_sha256=revalidated.content_sha256,
-                    payload=self._decode_payload(revalidated.body, url),
+                    body=revalidated.body,
                     from_cache=True,
                     revalidated=True,
                 )
             if response.status == 200:
-                payload = self._decode_payload(response.body, url)
                 stored = self._cache.store(
                     url,
                     response.body,
                     etag=_header(response.headers, "ETag"),
                     last_modified=_header(response.headers, "Last-Modified"),
                 )
-                return EdgarDocument(
+                return EdgarResource(
                     url=url,
                     retrieved_at=stored.retrieved_at,
                     validated_at=stored.validated_at,
                     content_sha256=stored.content_sha256,
-                    payload=payload,
+                    body=stored.body,
                     from_cache=False,
                     revalidated=False,
                 )
@@ -464,6 +516,27 @@ class EdgarClient:
             self._sleep(self._retry_delay(response, attempt))
 
         raise EdgarHttpError(last_status, url, f"EDGAR request exhausted retries for {url}")
+
+    def _request(self, path: str, *, refresh: bool) -> EdgarDocument:
+        resource = self._request_resource(
+            self._url(path),
+            refresh=refresh,
+            accept="application/json",
+        )
+        try:
+            payload = self._decode_payload(resource.body, resource.url)
+        except EdgarPayloadError:
+            self._cache.delete(resource.url)
+            raise
+        return EdgarDocument(
+            url=resource.url,
+            retrieved_at=resource.retrieved_at,
+            validated_at=resource.validated_at,
+            content_sha256=resource.content_sha256,
+            payload=payload,
+            from_cache=resource.from_cache,
+            revalidated=resource.revalidated,
+        )
 
     @staticmethod
     def _require_fields(
@@ -483,3 +556,33 @@ class EdgarClient:
         normalized = self.normalize_cik(cik)
         document = self._request(f"/api/xbrl/companyfacts/CIK{normalized}.json", refresh=refresh)
         return self._require_fields(document, ("cik", "entityName", "facts"), "companyfacts")
+
+    def submission_history(self, filename: str, *, refresh: bool = False) -> EdgarDocument:
+        """Fetch one SEC-declared older submissions page by its safe filename."""
+        if not re.fullmatch(r"CIK\d{10}-submissions-\d{3}\.json", filename):
+            raise EdgarConfigurationError("unsafe submissions history filename")
+        return self._request(f"/submissions/{filename}", refresh=refresh)
+
+    def filing_resource(
+        self,
+        cik: int | str,
+        accession: str,
+        filename: str,
+        *,
+        refresh: bool = False,
+    ) -> EdgarResource:
+        """Fetch one safe file from an accession directory using shared etiquette/cache."""
+        normalized_cik = self.normalize_cik(cik)
+        if not re.fullmatch(r"\d{10}-\d{2}-\d{6}", accession):
+            raise EdgarConfigurationError("invalid SEC accession")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}", filename):
+            raise EdgarConfigurationError("unsafe filing resource filename")
+        url = "/".join(
+            (
+                ARCHIVE_BASE_URL,
+                str(int(normalized_cik)),
+                accession.replace("-", ""),
+                quote(filename, safe="._-"),
+            )
+        )
+        return self._request_resource(url, refresh=refresh, accept="*/*")
