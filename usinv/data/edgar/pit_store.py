@@ -65,9 +65,7 @@ LATEST_FACT_SCHEMA: Final = pa.schema(
 )
 _FACT_COLUMNS_SQL: Final = ", ".join(field.name for field in _FACT_VIEW_FIELDS)
 _KEY_SQL: Final = ", ".join(PIT_KEY)
-_LOGICAL_IDENTITY_SQL: Final = """(
-    adsh, version, value, form, filed, filing_period, filing_fy, filing_fp, footnote
-)"""
+_LOGICAL_VALUE_SQL: Final = "COALESCE(CAST(value AS VARCHAR), '<NULL>')"
 
 
 class PitStoreError(EdgarError):
@@ -359,7 +357,7 @@ class PitStoreBuilder:
             SELECT {_KEY_SQL}, accepted
             FROM candidates
             GROUP BY {_KEY_SQL}, accepted
-            HAVING COUNT(DISTINCT {_LOGICAL_IDENTITY_SQL}) > 1
+            HAVING COUNT(DISTINCT {_LOGICAL_VALUE_SQL}) > 1
             LIMIT 1
             """
         ).fetchone()
