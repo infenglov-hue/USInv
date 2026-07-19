@@ -18,3 +18,13 @@ def test_runtime_and_secret_paths_are_ignored_and_untracked() -> None:
         text=True,
     ).stdout.strip()
     assert not tracked
+
+
+def test_alpaca_smoke_is_manual_and_uses_only_actions_secrets() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "alpaca-smoke.yml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in workflow
+    assert "pull_request:" not in workflow and "schedule:" not in workflow
+    assert "secrets.ALPACA_KEY_ID" in workflow
+    assert "secrets.ALPACA_SECRET_KEY" in workflow
+    assert "Require Alpaca credentials" in workflow

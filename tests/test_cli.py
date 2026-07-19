@@ -15,6 +15,7 @@ from usinv.data.edgar.pit_store import (
     PitTableArtifact,
 )
 from usinv.data.edgar.tag_chains import CHAIN_VERSION, CoverageReport
+from usinv.data.prices import AlpacaPriceProvider
 
 
 def _document(payload: dict[str, object]) -> EdgarDocument:
@@ -101,6 +102,47 @@ def test_edgar_smoke_fails_closed_without_contact(
 
     assert main(["edgar-smoke"]) == 2
     assert "set USINV_EDGAR_EMAIL" in capsys.readouterr().err
+
+
+def test_alpaca_smoke_fails_closed_without_credentials(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("ALPACA_KEY_ID", raising=False)
+    monkeypatch.delenv("ALPACA_SECRET_KEY", raising=False)
+
+    assert main(["alpaca-smoke"]) == 2
+    assert "credentials are missing" in capsys.readouterr().err
+
+
+def test_alpaca_smoke_reports_hashes_counts_and_empirical_action_access(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class FakeProvider:
+        def fetch_raw_and_all(self, **kwargs: object) -> tuple[object, object]:
+            assert kwargs["symbols"] == ("AAPL",)
+            return (
+                SimpleNamespace(bars=(1, 2), source_sha256="a" * 64),
+                SimpleNamespace(bars=(1, 2), source_sha256="b" * 64),
+            )
+
+        def probe_corporate_actions(self, **kwargs: object) -> object:
+            assert kwargs["symbols"] == ("AAPL",)
+            return SimpleNamespace(
+                outcome="available",
+                category_counts={"forward_splits": 1, "cash_dividends": 2},
+            )
+
+    monkeypatch.setattr(
+        AlpacaPriceProvider,
+        "from_config",
+        staticmethod(lambda config: FakeProvider()),
+    )
+
+    assert main(["alpaca-smoke"]) == 0
+    output = capsys.readouterr().out
+    assert "alpaca_smoke_ok symbol=AAPL raw_rows=2 adjusted_rows=2" in output
+    assert f"raw_sha256={'a' * 64} adjusted_sha256={'b' * 64}" in output
+    assert "corporate_actions=available corporate_action_rows=3" in output
 
 
 def test_edgar_smoke_reports_both_documents_without_dumping_payload(
