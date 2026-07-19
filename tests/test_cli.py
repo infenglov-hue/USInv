@@ -7,6 +7,12 @@ from usinv.cli import main
 from usinv.data.edgar.bulk import FsdsArchiveRecord, FsdsQuarter, FsdsSyncResult
 from usinv.data.edgar.client import EdgarClient, EdgarDocument
 from usinv.data.edgar.fsds import FsdsIngestor, FsdsIngestResult, FsdsTableArtifact
+from usinv.data.edgar.pit_store import (
+    PitInputBatch,
+    PitStoreBuilder,
+    PitStoreResult,
+    PitTableArtifact,
+)
 
 
 def _document(payload: dict[str, object]) -> EdgarDocument:
@@ -156,6 +162,91 @@ def test_fsds_ingest_rejects_naive_archive_cutoff() -> None:
         main(
             [
                 "fsds-ingest",
+                "--end",
+                "2026q1",
+                "--archive-as-of",
+                "2026-07-01T00:00:00",
+            ]
+        )
+
+
+def test_pit_build_reports_only_snapshot_hash_and_counts(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    archive_as_of = datetime(2026, 7, 1, tzinfo=UTC)
+    ingest_result = FsdsIngestResult(
+        quarter=FsdsQuarter(2026, 1),
+        source_sha256="a" * 64,
+        batch_id="fixture:2026q1",
+        output_dir=Path("unused"),
+        created_at=datetime(2026, 7, 18, tzinfo=UTC),
+        tables=(FsdsTableArtifact("facts_raw", "facts_raw.parquet", 3, 200, "b" * 64, "schema"),),
+        from_cache=True,
+    )
+
+    class FakeIngestor:
+        def ingest_range(
+            self,
+            start: FsdsQuarter,
+            end: FsdsQuarter,
+            *,
+            archive_as_of: datetime | None,
+        ) -> tuple[FsdsIngestResult, ...]:
+            assert start == end == FsdsQuarter(2026, 1)
+            assert archive_as_of == datetime(2026, 7, 1, tzinfo=UTC)
+            return (ingest_result,)
+
+    class FakeBuilder:
+        def build(self, inputs: list[PitInputBatch]) -> PitStoreResult:
+            assert len(inputs) == 1 and inputs[0].batch_id == "fixture:2026q1"
+            return PitStoreResult(
+                snapshot_id="c" * 64,
+                output_dir=Path("unused"),
+                created_at=datetime(2026, 7, 18, tzinfo=UTC),
+                inputs=tuple(inputs),
+                tables=(
+                    PitTableArtifact("facts_pit", "facts_pit.parquet", 2, 100, "d" * 64, "s"),
+                    PitTableArtifact("facts_latest", "facts_latest.parquet", 2, 100, "e" * 64, "s"),
+                ),
+                from_cache=False,
+            )
+
+    monkeypatch.setattr(
+        FsdsIngestor,
+        "from_config",
+        staticmethod(lambda config, *, archive_dir=None, output_dir=None: FakeIngestor()),
+    )
+    monkeypatch.setattr(
+        PitStoreBuilder,
+        "from_config",
+        staticmethod(lambda config, *, output_dir=None: FakeBuilder()),
+    )
+
+    assert (
+        main(
+            [
+                "pit-build",
+                "--start",
+                "2026q1",
+                "--end",
+                "2026q1",
+                "--archive-as-of",
+                archive_as_of.isoformat(),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "pit_build_ok state=created snapshot_id=" in output
+    assert "inputs=1 facts_pit=2 facts_latest=2" in output
+    assert "Fixture Corp" not in output
+
+
+def test_pit_build_rejects_naive_archive_cutoff() -> None:
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "pit-build",
                 "--end",
                 "2026q1",
                 "--archive-as-of",
