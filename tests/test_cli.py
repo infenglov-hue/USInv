@@ -356,6 +356,6 @@ def test_fundamentals_coverage_reports_and_enforces_gate(
     assert result == 3
     assert (
         "core_rate=0.800000 secondary_rate=0.700000 strict_gate=fail "
-        "enforcement=deferred_phase_1_5" in capsys.readouterr().out
+        "enforcement=phase_2_3_final_universe" in capsys.readouterr().out
     )
     assert output.read_text(encoding="utf-8") == report.to_json()

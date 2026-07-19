@@ -377,7 +377,7 @@ def test_coverage_report_uses_full_issuer_concept_denominator() -> None:
     payload = json.loads(report.to_json())
     assert payload["chain_version"] == "usinv-sec-concepts-v1"
     assert payload["measurement"] == "strict_observed_presence"
-    assert payload["enforcement"] == "deferred_to_phase_1_5_applicability"
+    assert payload["enforcement"] == "phase_2_3_final_universe_applicability"
     assert payload["missing_value_policy"] == "missing_is_not_zero"
     assert payload["passed"] is False
 

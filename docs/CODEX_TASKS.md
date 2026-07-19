@@ -64,10 +64,11 @@ O=OPS_SPEC, B=BUILD_GUIDE, S=SOURCE_REGISTER.
   **Gate:** retrospective parity test — ingest an ALREADY-PUBLISHED past
   quarter via the API path and diff against that quarter's FSDS data
   (mismatches logged + explained); do NOT wait for the next quarterly SEC
-  drop. PIT-leak test suite green. Build the versioned applicability matrix
-  over the final date-valid v1 exchange universe; enforce core ≥90% and
-  secondary ≥75%, with explicit tested structural-zero evidence and mandatory
-  scoring inputs fail-closed (D030).
+  drop. PIT-leak test suite green. Build and test the versioned fail-closed
+  applicability engine, including explicit structural-zero evidence, mapping
+  failures and mandatory scoring inputs (D030/D032). Its empirical final-
+  universe execution is the Phase 2.3 gate because that phase creates the
+  required denominator.
 
 ## Phase 2 — Prices & universe (4 PRs)
 
@@ -89,6 +90,10 @@ O=OPS_SPEC, B=BUILD_GUIDE, S=SOURCE_REGISTER.
   hygiene filter (D§6 step 7) is a **pass-through stub** in this phase — wired
   for real in 3.1; the `universe_snapshots` schema reserves its audit columns
   now.
+  **Gate:** execute the Phase 1.5 applicability engine over this final date-
+  valid universe; core ≥90%, secondary ≥75%, no missing mandatory scoring
+  inputs and no unresolved mapping gaps. A miss blocks Phase 2.3 and Phase 3
+  (D030/D032).
 - 2.4 Freshness + coverage gates (`freshness.py`) incl. the Alpha Vantage
   LISTING_STATUS delisted-audit; wire as red CI failures in `nightly-data.yml`
   (D§6, §8; O§3).

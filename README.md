@@ -99,10 +99,10 @@ and measures strict observed issuer/concept cells over the provisional domestic
 filer denominator after the documented financial, REIT, biotech and shell
 exclusions. This Phase 1.4 result is an honest diagnostic: `--enforce` returns a
 failing status while either threshold is missed, and missing debt, preferred
-equity or minority interest is never silently converted to zero. Per D030, the
-enforceable applicability-aware 90%/75% scoring gate runs in Phase 1.5 after the
-date-valid exchange security universe and explicit structural-zero evidence
-rules exist.
+equity or minority interest is never silently converted to zero. Phase 1.5
+implements the D030 fail-closed applicability engine. Per D032, its enforceable
+90%/75% empirical gate runs in Phase 2.3 immediately after the date-valid
+exchange universe is materialized; a miss blocks later phases.
 
 Detect and ingest already-published periodic filings for one CIK through the
 filing-centric live edge:

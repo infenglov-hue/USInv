@@ -1,6 +1,6 @@
 # PROGRESS
 
-## 2026-07-19 — Phase 1.5 security master and filing-centric live edge (in progress)
+## 2026-07-19 — Phase 1.5 security master and filing-centric live edge (complete in PR #12)
 
 ### Done
 
@@ -55,7 +55,7 @@
   pinned `lxml==6.1.1`, and the packaged `config-check` plus live-edge/security
   version imports pass outside the source tree.
 
-### BLUEPRINT-DEVIATION — empirical D030 gate cannot yet run
+### BLUEPRINT-DEVIATION — empirical D030 gate sequencing resolved as D032
 
 - The executable D030 gate is implemented and fails closed, but its required
   final date-valid exchange universe is not locally reproducible in Phase 1.5.
@@ -63,11 +63,12 @@
   ephemeral GitHub runners; only redacted manifests were retained. The
   production date-specific listing-status ingest and universe construction are
   currently assigned to Phase 2.3.
-- Phase 1.5 therefore cannot honestly claim the final 90% core / 75% secondary
-  empirical pass. Moving only that universe-wide measurement to Phase 2.3,
-  while retaining the implemented fail-closed gate here, requires explicit
-  user approval before Phase 1.5 is merged. No threshold is weakened and no
-  provisional all-filer denominator is relabeled as the final universe.
+- D032 keeps the fail-closed applicability engine, evidence rules and 90%/75%
+  thresholds implemented in Phase 1.5, while moving only the empirical
+  universe-wide execution to Phase 2.3 where the required date-specific
+  listing ingest and final universe are built. Phase 2.3 cannot complete on a
+  threshold miss or mapping gap. The user delegated the sequencing choice on
+  2026-07-19; no provisional all-filer denominator is relabeled as final.
 
 ## 2026-07-19 — Phase 1.4 standardized fundamentals (merged as `ca2fe14` via PR #10)
 

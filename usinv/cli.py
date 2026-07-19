@@ -373,7 +373,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"core_rate={report.core_rate:.6f}",
                     f"secondary_rate={report.secondary_rate:.6f}",
                     f"strict_gate={'pass' if report.passed else 'fail'}",
-                    "enforcement=deferred_phase_1_5",
+                    "enforcement=phase_2_3_final_universe",
                 )
             )
         )
