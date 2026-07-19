@@ -49,7 +49,7 @@ computed from free, keyless EDGAR endpoints and logged with evidence pointers.
 | Listing-compliance risk | Exchange-specific rules, never a single "US rule": Nasdaq—minimum-bid deficiency after a reverse split in the prior year can remove the normal compliance period; Nasdaq also has a two-year cumulative 1-for-250 condition. NYSE American has distinct two-year cumulative-ratio and low-price rules. Operational heuristic: contemporaneous raw close < $1.50 plus any reverse split in 12m = exclude; any reverse split in 24m = penalty. The $1.50 threshold is our conservative risk policy, not exchange law. | exclude / penalize |
 | Variable-price financing | Filing text/terms show an outstanding convertible or equity line whose conversion/purchase price is explicitly discounted to future market price, corroborated by a resale registration or subsequent issuance evidence | exclude while instrument is outstanding; unknown maturity/status = quarantine |
 | Enforcement/pivot markers | Active SEC trading suspension = exclude. Two or more filing-time legal-name changes in 36 months = penalty. Unexplained price/volume spikes are diagnostic output only in v1; without a reliable promotion-data source they cannot gate selection. | exclude / penalize / diagnostic as stated |
-| Data integrity | share-count jump >50% without detected split; standardization coverage failure; stale fundamentals past expected+grace | quarantine (not scored) |
+| Data integrity | share-count jump >50% without detected split; D030 applicability-aware standardization coverage failure; stale fundamentals past expected+grace | quarantine (not scored) |
 
 ## 4. Regime layer
 

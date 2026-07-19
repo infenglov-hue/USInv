@@ -81,6 +81,29 @@ separate `facts_latest.parquet` but cannot overwrite an older snapshot or a
 first-filed row. A repeated command verifies and returns the same snapshot;
 equal-time conflicting facts fail closed instead of being guessed.
 
+Measure the complete versioned fundamental concept table against an exact PIT
+snapshot and the matching lossless PRE/filings evidence:
+
+```powershell
+python -m usinv fundamentals-coverage `
+  --facts-pit <snapshot>/facts_pit.parquet `
+  --pre <normalized-quarter>/raw/pre.parquet `
+  --filings <normalized-quarter>/filings.parquet `
+  --sample-quarter 2025q4 `
+  --output artifacts/phase-1-4/coverage-2025q4.json `
+  --enforce
+```
+
+The JSON hashes every Parquet input, reports every core and secondary concept,
+and measures strict observed issuer/concept cells over the provisional domestic
+filer denominator after the documented financial, REIT, biotech and shell
+exclusions. This Phase 1.4 result is an honest diagnostic: `--enforce` returns a
+failing status while either threshold is missed, and missing debt, preferred
+equity or minority interest is never silently converted to zero. Per D030, the
+enforceable applicability-aware 90%/75% scoring gate runs in Phase 1.5 after the
+date-valid exchange security universe and explicit structural-zero evidence
+rules exist.
+
 The account-free historical feasibility checks validate the 36-security sample,
 provider contracts and metadata-only evidence matrix; public demo responses are
 written only to the ignored artifacts directory:

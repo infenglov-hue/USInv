@@ -1,6 +1,61 @@
 # PROGRESS
 
-## 2026-07-18 — Phase 1.3 immutable PIT/latest fact store (PR pending)
+## 2026-07-19 — Phase 1.4 standardized fundamentals (verification in progress)
+
+### Done
+
+- Added the complete 19-concept versioned chain catalog (14 core, 5 secondary)
+  with source tag/accession/acceptance provenance on every standardized value.
+  Conservative arithmetic covers gross profit and current debt components;
+  no upstream missing-as-zero or cross-concept copy rule is used.
+- Added PRE recovery for custom revenue only when an issuer extension is a
+  unique revenue/sales candidate in the first five rows of an IS report.
+- Added date-window fiscal quarter derivation without grouping on unsafe
+  filing `fy/fp`: direct Q1-Q3, YTD fallback, Q4=FY-Q1-Q2-Q3, exact source-tag
+  and unit alignment, separate nonnegative/signed checks, 10-KT quarantine and
+  20-F/40-F exclusion.
+- Added four-consecutive-quarter TTM aggregation with
+  `available_from=max(input acceptance)` and complete input evidence.
+- Added an input-hashed strict observed-coverage report/CLI. The audit-oriented
+  `--enforce` switch fails when the raw 90%/75% thresholds are missed; the
+  applicability-aware production gate is owned by Phase 1.5 under D030.
+- Added a committed five-company golden set tied to official SEC filing URLs:
+  Coca-Cola calendar FY, Apple offset FY, American Resources restatement,
+  Splash Beverage custom-tag revenue and Mesa Air 10-KT quarantine.
+
+### Verification so far
+
+- Downloaded and hash-locked official 2025Q4 FSDS
+  `2b36ac3850c022cf19edd882e31c3c453c7666677b9fdd2e1f7748fdb5768c6e`
+  (65,830,170 bytes), ingested 6,304 filings / 3,832,977 raw facts and built
+  PIT snapshot `3e117cba9fa1ec598d573ac4927dbe4d437d5f7bde66757b091b31a562088ef5`
+  with 1,510,546 first-filed facts.
+- The real sample standardized 246,741 facts over 3,132 eligible domestic
+  filers. Observed issuer/concept-cell coverage is 82.8658% core and 56.9413%
+  secondary. Revenue, net income, assets, equity, CFO and cash individually
+  cover 91.25%-99.30%; structurally absent/optional debt, preferred equity,
+  minority interest and share rows drive the aggregate shortfall.
+- The full offline suite passes 107 tests; the focused Phase 1.4/CLI set has
+  21 tests, including five real-company
+  goldens, custom-tag ambiguity, YTD fallback, offset fiscal year, signed Q4,
+  negative-revenue quarantine, source mismatch, 10-KT, TTM gaps and PIT
+  availability.
+
+### BLUEPRINT-DEVIATION — coverage gate approved as D030
+
+- DATA_SPEC requires 90% core / 75% secondary coverage but does not define
+  whether a legitimately unreported optional balance (for example preferred
+  equity or minority interest) belongs in the denominator. Treating every
+  absence as zero would clear more cells but would violate the evidence rule.
+  The implementation uses the strict full issuer-by-concept denominator and
+  reports the measured shortfall without relabeling it as passing.
+- User approval on 2026-07-19 established D030: the enforceable 90%/75% gate
+  moves to Phase 1.5, after the date-valid exchange/security universe exists,
+  and measures only evidence-backed applicable cells. Absence alone can never
+  create a zero or remove a cell from the denominator; mandatory scoring inputs
+  continue to fail closed.
+
+## 2026-07-18 — Phase 1.3 immutable PIT/latest fact store (merged as `ea33b45`; hotfix `5849a96`)
 
 ### Done
 
@@ -13,9 +68,9 @@
 - Pinned DuckDB 1.5.4 as an ephemeral out-of-core window-selection engine.
   Canonical state remains compressed, hash-verified Parquet; no mutable DuckDB
   file or current/latest pointer is treated as evidence.
-- Coalesced logically identical observations from repeated source archives and
-  failed closed on conflicting facts with the same PIT key and acceptance
-  timestamp.
+- Coalesced equal numeric observations from repeated source archives or
+  distinct same-minute accessions and failed closed only when the numeric fact
+  actually conflicts at the same PIT key and acceptance timestamp.
 - Added a timezone-aware safe PIT reader whose schema metadata rejects
   `facts_latest` even if its path is supplied directly. The PIT module contains
   no retroactive previous-report field reference.
@@ -27,7 +82,7 @@
 ### Verification
 
 - `ruff check .`, `ruff format --check .` and the full offline suite passed:
-  93 tests. The gate covers amendment isolation, a future filing hidden before
+  94 tests after the equal-time hotfix. The gate covers amendment isolation, a future filing hidden before
   its acceptance time, latest-view rejection, input-order invariance,
   immutable prior snapshots, equal-time conflicts, repeated archives, corrupt
   inputs/cache, provenance/consolidation violations and zero-row history.
@@ -40,6 +95,9 @@
   archive and raw-Parquet cache hits, then created zero-row PIT/latest snapshot
   `f839425ee5f5296dcd2ed0bd736eea90f7a958ad7cbec6568a0d8fb6c0a9ff93`.
   The second PIT build returned `snapshot_hit` with the identical ID and counts.
+- Real 2025Q4 FSDS exposed two distinct accessions for CIK 1787518 sharing the
+  SEC minute and identical values. PR #9 corrected the false conflict without
+  weakening the different-value fail-closed test; GitHub CI passed.
 
 ### Blueprint deviations
 

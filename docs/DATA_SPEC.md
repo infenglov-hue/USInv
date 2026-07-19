@@ -123,11 +123,21 @@ Chains live in `tag_chains.py`, **versioned** (chain version stamped into
 derived tables). Where revenue exists only as a custom tag: recover via PRE —
 IS-statement top line whose `plabel` matches `/revenue|sales/i`. Expected
 standardized coverage ~90-95% of the universe, never 100%; ship a per-quarter
-**coverage report** and gate scoring on it.
+**coverage report**. Phase 1.4 reports strict observed presence over every
+issuer-by-concept cell and does not relabel a threshold miss. Per D030, Phase
+1.5 applies the enforceable 90%/75% gate after constructing the date-valid v1
+NYSE/Nasdaq/NYSE American domestic-common-stock universe and the existing
+financial, REIT, biotech and shell exclusions.
+
+The Phase 1.5 denominator is versioned and applicability-aware. A concept cell
+is applicable when a direct/fallback filing fact is presented or an explicit,
+tested filing fact or accounting identity proves a structural zero. Missing
+alone is never evidence of zero or non-applicability and may not be used to
+game the denominator. Mandatory scoring inputs remain fail-closed.
 
 **Complete concept list required by MODEL_SPEC §1** (every one needs a chain;
 primary tag below, Codex extends fallbacks from secfsdstools standardizer
-tables; coverage gate: core concepts ≥90%, secondary ≥75%):
+tables; final D030 applicability gate: core concepts ≥90%, secondary ≥75%):
 
 | Concept | Primary us-gaap tag (fallbacks →) | Core? |
 |---|---|---|

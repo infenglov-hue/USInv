@@ -18,7 +18,11 @@ from usinv.data.edgar import (
     FsdsQuarter,
     PitInputBatch,
     PitStoreBuilder,
+    build_coverage_report,
+    coverage_input,
+    eligible_ciks_from_filings,
     fsds_quarter_range,
+    standardize_pit_snapshot,
 )
 
 
@@ -95,6 +99,20 @@ def _parser() -> argparse.ArgumentParser:
         "--archive-as-of",
         type=_aware_datetime,
         help="select only FSDS archive versions observed by this instant",
+    )
+    coverage = subcommands.add_parser(
+        "fundamentals-coverage",
+        help="measure versioned concept coverage on a verified PIT snapshot",
+    )
+    coverage.add_argument("--facts-pit", type=Path, required=True)
+    coverage.add_argument("--pre", type=Path, action="append", required=True)
+    coverage.add_argument("--filings", type=Path, action="append", required=True)
+    coverage.add_argument("--sample-quarter", type=_fsds_quarter, required=True)
+    coverage.add_argument("--output", type=Path, help="write the JSON report to this path")
+    coverage.add_argument(
+        "--enforce",
+        action="store_true",
+        help="return a failing status unless core and secondary thresholds pass",
     )
     return parser
 
@@ -238,4 +256,43 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
         return 0
+    if args.command == "fundamentals-coverage":
+        try:
+            standardized = standardize_pit_snapshot(
+                args.facts_pit,
+                presentation_paths=args.pre,
+            )
+            eligible = eligible_ciks_from_filings(args.filings)
+            report = build_coverage_report(
+                standardized,
+                eligible_ciks=eligible,
+                sample_quarter=args.sample_quarter.label,
+                inputs=(
+                    coverage_input(args.facts_pit, role="facts_pit"),
+                    *(coverage_input(path, role="raw_pre") for path in args.pre),
+                    *(coverage_input(path, role="filings") for path in args.filings),
+                ),
+            )
+            if args.output is not None:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(report.to_json(), encoding="utf-8")
+        except EdgarError as exc:
+            print(f"fundamentals_coverage_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "fundamentals_coverage_ok",
+                    f"sample={report.sample_quarter}",
+                    f"chain={report.chain_version}",
+                    f"eligible_issuers={report.eligible_issuers}",
+                    f"standardized_facts={len(standardized)}",
+                    f"core_rate={report.core_rate:.6f}",
+                    f"secondary_rate={report.secondary_rate:.6f}",
+                    f"strict_gate={'pass' if report.passed else 'fail'}",
+                    "enforcement=deferred_phase_1_5",
+                )
+            )
+        )
+        return 3 if args.enforce and not report.passed else 0
     raise AssertionError(f"unhandled command: {args.command}")
