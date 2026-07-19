@@ -1,6 +1,6 @@
 # PROGRESS
 
-## 2026-07-19 — Phase 1.4 standardized fundamentals (verification in progress)
+## 2026-07-19 — Phase 1.4 standardized fundamentals (merged as `ca2fe14` via PR #10)
 
 ### Done
 
@@ -23,7 +23,7 @@
   Coca-Cola calendar FY, Apple offset FY, American Resources restatement,
   Splash Beverage custom-tag revenue and Mesa Air 10-KT quarantine.
 
-### Verification so far
+### Verification
 
 - Downloaded and hash-locked official 2025Q4 FSDS
   `2b36ac3850c022cf19edd882e31c3c453c7666677b9fdd2e1f7748fdb5768c6e`
