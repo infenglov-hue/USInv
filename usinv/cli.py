@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from usinv.config import load_config
@@ -31,6 +31,7 @@ from usinv.data.edgar.submissions import (
     parse_submission_history,
     parse_submissions_document,
 )
+from usinv.data.prices import AlpacaPriceProvider, PriceDataError
 
 
 def _fsds_quarter(value: str) -> FsdsQuarter:
@@ -50,6 +51,13 @@ def _aware_datetime(value: str) -> datetime:
     return parsed
 
 
+def _iso_date(value: str) -> date:
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("expected an ISO-8601 date") from exc
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="usinv")
     subcommands = parser.add_subparsers(dest="command", required=True)
@@ -58,6 +66,31 @@ def _parser() -> argparse.ArgumentParser:
     smoke.add_argument("--cik", default="0000320193", help="CIK to fetch (default: Apple)")
     smoke.add_argument("--cache-dir", type=Path, help="override the EDGAR cache directory")
     smoke.add_argument("--refresh", action="store_true", help="bypass a fresh local cache")
+    alpaca = subcommands.add_parser(
+        "alpaca-smoke",
+        help="fetch separate historical SIP raw/all bars and probe corporate actions",
+    )
+    alpaca.add_argument("--symbol", default="AAPL")
+    alpaca.add_argument(
+        "--start",
+        type=_aware_datetime,
+        default=datetime(2020, 8, 27, 4, tzinfo=UTC),
+    )
+    alpaca.add_argument(
+        "--end",
+        type=_aware_datetime,
+        default=datetime(2020, 9, 3, 3, 59, 59, tzinfo=UTC),
+    )
+    alpaca.add_argument(
+        "--action-start",
+        type=_iso_date,
+        default=date(2020, 8, 1),
+    )
+    alpaca.add_argument(
+        "--action-end",
+        type=_iso_date,
+        default=date(2020, 9, 30),
+    )
     live = subcommands.add_parser(
         "edgar-live-sync",
         help="archive and normalize newly accepted 10-K/10-Q filings for one CIK",
@@ -153,6 +186,39 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"execution={config.settings.execution_mode.value}",
                     f"holdings={config.portfolio.holdings}",
                     f"overlay={config.regime.default_overlay}",
+                )
+            )
+        )
+        return 0
+    if args.command == "alpaca-smoke":
+        config = load_config()
+        try:
+            provider = AlpacaPriceProvider.from_config(config)
+            raw, adjusted = provider.fetch_raw_and_all(
+                symbols=(args.symbol,),
+                start=args.start,
+                end=args.end,
+            )
+            actions = provider.probe_corporate_actions(
+                symbols=(args.symbol,),
+                start=args.action_start,
+                end=args.action_end,
+            )
+        except PriceDataError as exc:
+            print(f"alpaca_smoke_failed: {exc}", file=sys.stderr)
+            return 2
+        action_rows = sum(actions.category_counts.values())
+        print(
+            " ".join(
+                (
+                    "alpaca_smoke_ok",
+                    f"symbol={args.symbol.upper()}",
+                    f"raw_rows={len(raw.bars)}",
+                    f"adjusted_rows={len(adjusted.bars)}",
+                    f"raw_sha256={raw.source_sha256}",
+                    f"adjusted_sha256={adjusted.source_sha256}",
+                    f"corporate_actions={actions.outcome}",
+                    f"corporate_action_rows={action_rows}",
                 )
             )
         )

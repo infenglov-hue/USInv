@@ -408,7 +408,7 @@ official closes `[verify per provider]`.
 Three independent signals, reconciled nightly; disagreement ⇒ quarantine ticker:
 
 1. Tiingo `splitFactor`/`divCash` for detector-flagged names.
-2. Alpaca corporate-actions endpoint (`/v1beta1/corporate-actions`: splits,
+2. Alpaca corporate-actions endpoint (`/v1/corporate-actions`: splits,
    dividends, mergers, spinoffs). Free-tier availability undocumented —
    **verify empirically on day one** `[verify]`.
 3. Derived detector (BIST-ported): |overnight return| > 25% on raw close →

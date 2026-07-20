@@ -1,5 +1,50 @@
 # PROGRESS
 
+## 2026-07-20 — Phase 2.1 Alpaca price foundation (complete in PR #13)
+
+### Implemented locally
+
+- Added a provider-neutral daily-price interface and an authenticated Alpaca
+  adapter for multi-symbol `1Day` bars. It forces delayed consolidated SIP,
+  requests `raw` and `all` separately, disables Alpaca's own historical symbol
+  remapping with `asof=-`, follows every page and rejects requests whose end is
+  newer than `now - 15 minutes` before any network call.
+- Provider JSON is parsed with exact decimals and a fail-closed daily-bar
+  schema. XNYS session validity, New York-midnight timestamps, OHLC invariants,
+  positive price/volume, retries, request IDs and source-page hashes are
+  preserved. Credentials remain header-only and are never printed or placed in
+  URLs.
+- Added date-valid security bindings and immutable content-addressed Parquet
+  snapshots. `prices_raw` and `prices_vendor_adjusted` are physically separate;
+  vendor ticker is evidence only. Ticker reuse maps by half-open validity
+  interval, while zero/multiple matches create explicit issue rows instead of
+  silent drops. Every source JSON page is archived and hash-verified locally.
+- Added a manual/PR-label credential-gated Alpaca smoke workflow and CLI command. The
+  smoke fetches the known AAPL August/September 2020 window as raw+all and probes
+  the current `/v1/corporate-actions` endpoint without assuming entitlement.
+
+### Verification/status
+
+- The focused Alpaca/CLI suite has 29 passing tests covering the Basic-tier time
+  fence, SIP/raw/all/asof parameters, pagination, exact decimals, retry pacing,
+  schema drift, holidays, current corporate-action path, ticker reuse,
+  ambiguity accounting, raw/adjusted isolation, content addressing and cache
+  corruption.
+- The full offline suite passes 168 tests; Ruff lint/format checks pass. The
+  project wheel builds successfully and contains both new price modules plus
+  the packaged credential-name configuration.
+- **The credentialed Basic-tier smoke passed on 2026-07-20.** GitHub Actions run
+  `29722507670` fetched five AAPL August/September 2020 SIP daily rows for each
+  of the physically separate `raw` and `all` requests, produced different
+  immutable source hashes, and returned two rows from the current corporate-
+  actions endpoint. This empirically confirms historical delayed SIP and
+  corporate-actions access for the configured Basic account; it does not turn
+  Alpaca into the survivorship-safe long-history source.
+- Alpaca documents daily bars as eligible-trade aggregates; the current public
+  contract reviewed here does not explicitly guarantee that `close` is the
+  exchange's official closing-auction print. The stored `bar_definition` says
+  trade aggregate rather than overstating that unresolved provider detail.
+
 ## 2026-07-19 — Phase 1.5 security master and filing-centric live edge (complete in PR #12)
 
 ### Done
