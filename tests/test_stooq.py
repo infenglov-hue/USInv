@@ -20,13 +20,23 @@ from usinv.data.prices.stooq import (
 OBSERVED = datetime(2026, 7, 20, 7, tzinfo=UTC)
 
 
-def _zip(path: Path, *, malicious: bool = False) -> Path:
+def _zip(
+    path: Path,
+    *,
+    malicious: bool = False,
+    fractional_volume: bool = False,
+    row_ticker: str = "AAPL.US",
+) -> Path:
     header = ",".join(STOOQ_EXPECTED_HEADER)
     body = "\n".join(
         (
             header,
+            "AAPL.US,D,19840907,000000,1,2,1,2,100000,0",
             "AAPL.US,D,20240102,000000,185,188,183,187,1000000,0",
-            "AAPL.US,D,20240103,000000,187,189,184,185,1100000,0",
+            (
+                f"{row_ticker},D,20240103,000000,187,189,184,185,"
+                f"{'1100000.5' if fractional_volume else '1100000'},0"
+            ),
         )
     )
     entry = "../escape.txt" if malicious else "data/daily/us/nasdaq stocks/1/aapl.us.txt"
@@ -42,6 +52,7 @@ def _sample(
     total_return: str,
     *,
     day: date,
+    archive_sha256: str = "a" * 64,
 ) -> StooqBasisSample:
     return StooqBasisSample(
         "security",
@@ -50,6 +61,7 @@ def _sample(
         Decimal(stooq),
         Decimal(split_only),
         Decimal(total_return),
+        archive_sha256,
         f"fixture://stooq/{day}/{event_type}",
     )
 
@@ -72,6 +84,7 @@ def test_stooq_full_zip_is_content_addressed_and_parsed_as_adjusted_only(
     assert result.adjustment_basis == "unresolved"
     assert [bar.session for bar in result.bars] == [date(2024, 1, 2), date(2024, 1, 3)]
     assert result.bars[0].close == Decimal("187")
+    assert result.bars[0].volume == Decimal("1000000")
     assert result.bars[0].archive_entry.endswith("aapl.us.txt")
 
 
@@ -121,6 +134,86 @@ def test_stooq_dividend_payer_empirically_selects_total_return_basis() -> None:
     assert check_stooq_drift(samples, assessment) == ()
 
 
+def test_stooq_basis_samples_from_multiple_archives_remain_unresolved() -> None:
+    samples = (
+        _sample("split", "1", "1", "1", day=date(2024, 1, 4)),
+        _sample(
+            "cash_dividend",
+            "0.98",
+            "0.98",
+            "0.99",
+            day=date(2024, 1, 5),
+            archive_sha256="b" * 64,
+        ),
+    )
+
+    assessment = classify_stooq_adjustment_basis(samples)
+
+    assert assessment.basis == "unresolved"
+    assert assessment.archive_sha256 is None
+    assert "one immutable" in assessment.reason
+
+
+def test_stooq_drift_rejects_samples_from_a_different_archive() -> None:
+    assessed_samples = (
+        _sample("split", "1", "1", "1", day=date(2024, 1, 4)),
+        _sample("cash_dividend", "0.98", "0.98", "0.99", day=date(2024, 1, 5)),
+    )
+    assessment = classify_stooq_adjustment_basis(assessed_samples)
+    other_archive_samples = tuple(
+        _sample(
+            sample.event_type,
+            str(sample.stooq_return),
+            str(sample.split_only_return),
+            str(sample.total_return),
+            day=sample.session,
+            archive_sha256="b" * 64,
+        )
+        for sample in assessed_samples
+    )
+
+    with pytest.raises(PriceConfigurationError, match="assessed archive"):
+        check_stooq_drift(other_archive_samples, assessment)
+
+
+def test_stooq_basis_is_enabled_only_for_the_assessed_archive(tmp_path: Path) -> None:
+    source = _zip(tmp_path / "download.zip")
+    archived = archive_stooq_bulk(source, tmp_path / "store", retrieved_at=OBSERVED)
+    samples = (
+        _sample(
+            "split",
+            "1",
+            "1",
+            "1",
+            day=date(2024, 1, 4),
+            archive_sha256=archived.content_sha256,
+        ),
+        _sample(
+            "cash_dividend",
+            "0.98",
+            "0.98",
+            "0.99",
+            day=date(2024, 1, 5),
+            archive_sha256=archived.content_sha256,
+        ),
+    )
+    assessment = classify_stooq_adjustment_basis(samples)
+
+    result = read_stooq_bulk(
+        archived,
+        symbols=("AAPL",),
+        basis_assessment=assessment,
+    )
+    assert result.adjustment_basis == "splits_only"
+
+    different = _zip(tmp_path / "different.zip")
+    with zipfile.ZipFile(different, "a") as archive:
+        archive.writestr("extra.txt", "different")
+    other = archive_stooq_bulk(different, tmp_path / "other", retrieved_at=OBSERVED)
+    with pytest.raises(PriceConfigurationError, match="different archive"):
+        read_stooq_bulk(other, symbols=("AAPL",), basis_assessment=assessment)
+
+
 def test_stooq_header_drift_is_rejected(tmp_path: Path) -> None:
     source = tmp_path / "drift.zip"
     with zipfile.ZipFile(source, "w") as archive:
@@ -131,4 +224,21 @@ def test_stooq_header_drift_is_rejected(tmp_path: Path) -> None:
     archived = archive_stooq_bulk(source, tmp_path / "store", retrieved_at=OBSERVED)
 
     with pytest.raises(PricePayloadError, match="header drifted"):
+        read_stooq_bulk(archived, symbols=("AAPL",))
+
+
+def test_stooq_fractional_adjusted_volume_is_preserved_exactly(tmp_path: Path) -> None:
+    source = _zip(tmp_path / "fractional.zip", fractional_volume=True)
+    archived = archive_stooq_bulk(source, tmp_path / "store", retrieved_at=OBSERVED)
+
+    result = read_stooq_bulk(archived, symbols=("AAPL",))
+
+    assert result.bars[-1].volume == Decimal("1100000.5")
+
+
+def test_stooq_row_ticker_must_match_archive_entry(tmp_path: Path) -> None:
+    source = _zip(tmp_path / "mismatch.zip", row_ticker="MSFT.US")
+    archived = archive_stooq_bulk(source, tmp_path / "store", retrieved_at=OBSERVED)
+
+    with pytest.raises(PricePayloadError, match="does not match"):
         read_stooq_bulk(archived, symbols=("AAPL",))

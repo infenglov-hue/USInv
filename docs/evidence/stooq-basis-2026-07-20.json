@@ -1,0 +1,37 @@
+{
+  "archive": {
+    "bytes": 537357305,
+    "retrieved_at": "2026-07-20T09:40:29.601886+00:00",
+    "sha256": "dbfbe12bec5b78daeabb7811e3d1c41a2f964699c68f17d7dd200b45f40eec33",
+    "source_url": "https://stooq.com/db/d/?b=d_us_txt"
+  },
+  "assessment": {
+    "basis": "splits_only",
+    "classifier": "usinv.data.prices.stooq.classify_stooq_adjustment_basis",
+    "drift_issues": 0,
+    "sample_count": 2
+  },
+  "evidence": [
+    {
+      "event_session": "2026-07-06",
+      "event_type": "split",
+      "independent_market_series": "https://api.nasdaq.com/api/quote/SNAL/historical?assetclass=stocks",
+      "security": "SNAL",
+      "source": "https://www.nasdaq.com/press-release/snail-announces-reverse-stock-split-support-effort-regain-compliance-nasdaqs-minimum"
+    },
+    {
+      "event_session": "2026-05-11",
+      "event_type": "cash_dividend",
+      "independent_market_series": "https://api.nasdaq.com/api/quote/AAPL/historical?assetclass=stocks",
+      "security": "AAPL",
+      "source": "https://investor.apple.com/dividend-history/default.aspx"
+    }
+  ],
+  "license_boundary": {
+    "archive_committed": false,
+    "raw_or_derived_vendor_prices_committed": false,
+    "use": "private_personal_research_cross_check"
+  },
+  "observed_at": "2026-07-20T12:57:00+03:00",
+  "schema_version": 1
+}

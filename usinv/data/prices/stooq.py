@@ -66,7 +66,7 @@ class StooqAdjustedBar:
     high: Decimal
     low: Decimal
     close: Decimal
-    volume: int
+    volume: Decimal
     archive_sha256: str
     archive_entry: str
     row_number: int
@@ -79,8 +79,8 @@ class StooqAdjustedBar:
             raise PricePayloadError("Stooq OHLC bounds are invalid")
         if not self.low <= self.close <= self.high:
             raise PricePayloadError("Stooq OHLC bounds are invalid")
-        if isinstance(self.volume, bool) or not isinstance(self.volume, int) or self.volume <= 0:
-            raise PricePayloadError("Stooq volume must be a positive integer")
+        if not isinstance(self.volume, Decimal) or not self.volume.is_finite() or self.volume <= 0:
+            raise PricePayloadError("Stooq adjusted volume must be finite and positive")
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,27 +96,52 @@ class StooqBasisSample:
     security_id: str
     session: date
     event_type: Literal["split", "cash_dividend"]
-    stooq_close: Decimal
-    split_only_close: Decimal
-    total_return_close: Decimal
+    stooq_return: Decimal
+    split_only_return: Decimal
+    total_return: Decimal
+    stooq_archive_sha256: str
     evidence_pointer: str
 
     def __post_init__(self) -> None:
-        values = (self.stooq_close, self.split_only_close, self.total_return_close)
+        values = (self.stooq_return, self.split_only_return, self.total_return)
         if not self.security_id or not self.evidence_pointer:
             raise PricePayloadError("Stooq basis evidence identity is incomplete")
+        if len(self.stooq_archive_sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in self.stooq_archive_sha256
+        ):
+            raise PricePayloadError("Stooq basis archive hash is invalid")
         if any(not value.is_finite() or value <= 0 for value in values):
-            raise PricePayloadError("Stooq basis prices must be finite and positive")
+            raise PricePayloadError("Stooq basis returns must be finite and positive")
 
 
 @dataclass(frozen=True, slots=True)
 class StooqBasisAssessment:
     basis: StooqAdjustmentBasis
+    archive_sha256: str | None
     sample_count: int
     dividend_sample_count: int
     split_sample_count: int
     evidence_pointers: tuple[str, ...]
     reason: str
+
+    def __post_init__(self) -> None:
+        if self.basis == "unresolved":
+            if self.archive_sha256 is not None and (
+                len(self.archive_sha256) != 64
+                or any(character not in "0123456789abcdef" for character in self.archive_sha256)
+            ):
+                raise PricePayloadError("Stooq basis assessment archive hash is invalid")
+        elif self.archive_sha256 is None or (
+            len(self.archive_sha256) != 64
+            or any(character not in "0123456789abcdef" for character in self.archive_sha256)
+        ):
+            raise PricePayloadError("resolved Stooq basis assessment requires a valid archive hash")
+        if min(self.sample_count, self.dividend_sample_count, self.split_sample_count) < 0:
+            raise PricePayloadError("Stooq basis assessment counts cannot be negative")
+        if self.dividend_sample_count + self.split_sample_count != self.sample_count:
+            raise PricePayloadError("Stooq basis assessment counts are inconsistent")
+        if not self.reason:
+            raise PricePayloadError("Stooq basis assessment reason is required")
 
     @property
     def drift_check_enabled(self) -> bool:
@@ -139,7 +164,7 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _validate_zip(path: Path) -> None:
+def _validate_zip(path: Path, *, verify_all_crc: bool = True) -> None:
     try:
         with zipfile.ZipFile(path) as archive:
             entries = archive.infolist()
@@ -163,9 +188,10 @@ def _validate_zip(path: Path) -> None:
                 total += entry.file_size
                 if total > MAX_TOTAL_UNCOMPRESSED_BYTES:
                     raise PricePayloadError("Stooq archive exceeds the uncompressed safety limit")
-            bad = archive.testzip()
-            if bad is not None:
-                raise PricePayloadError(f"Stooq archive CRC failed: {bad}")
+            if verify_all_crc:
+                bad = archive.testzip()
+                if bad is not None:
+                    raise PricePayloadError(f"Stooq archive CRC failed: {bad}")
     except zipfile.BadZipFile as exc:
         raise PricePayloadError(
             "Stooq response is not a ZIP archive (automation challenge or schema drift)"
@@ -282,6 +308,7 @@ def read_stooq_bulk(
     archive: StooqBulkArchive,
     *,
     symbols: tuple[str, ...],
+    basis_assessment: StooqBasisAssessment | None = None,
 ) -> StooqBulkResult:
     """Read only requested symbols from the full adjusted-only ASCII archive."""
     try:
@@ -292,10 +319,20 @@ def read_stooq_bulk(
         raise PriceConfigurationError("Stooq request requires at least one symbol")
     requested = set(normalized)
     bars: list[StooqAdjustedBar] = []
-    _validate_zip(archive.source_path)
+    session_calendar = default_calendar()
+    if _sha256(archive.source_path) != archive.content_sha256:
+        raise PriceStoreError("Stooq archive failed read-time hash verification")
+    _validate_zip(archive.source_path, verify_all_crc=False)
     with zipfile.ZipFile(archive.source_path) as bundle:
         for entry in sorted(bundle.infolist(), key=lambda item: item.filename):
             if entry.is_dir() or not entry.filename.casefold().endswith((".txt", ".csv")):
+                continue
+            filename_without_extension = PurePosixPath(entry.filename).name.rsplit(".", 1)[0]
+            try:
+                entry_symbol = _normalize_stooq_symbol(filename_without_extension)
+            except PricePayloadError:
+                continue
+            if entry_symbol not in requested:
                 continue
             with bundle.open(entry) as raw_file:
                 lines = (line.decode("ascii", errors="strict") for line in raw_file)
@@ -310,16 +347,23 @@ def read_stooq_bulk(
                     if len(row) != len(STOOQ_EXPECTED_HEADER):
                         raise PricePayloadError("Stooq ASCII row width drifted")
                     symbol = _normalize_stooq_symbol(row[0])
-                    if symbol not in requested:
-                        continue
+                    if symbol != entry_symbol:
+                        raise PricePayloadError("Stooq row ticker does not match its archive entry")
                     if row[1] != "D" or row[3] not in {"", "000000"}:
                         raise PricePayloadError("Stooq row is not a canonical daily bar")
                     try:
                         session = datetime.strptime(row[2], "%Y%m%d").date()
-                        default_calendar().session(session)
-                        volume = int(row[8])
-                    except (ValueError, CalendarError) as exc:
-                        raise PricePayloadError("Stooq row date/volume is invalid") from exc
+                    except ValueError as exc:
+                        raise PricePayloadError("Stooq row date is invalid") from exc
+                    volume = _decimal(row[8], field="adjusted volume")
+                    if session < session_calendar.start:
+                        continue
+                    try:
+                        session_calendar.session(session)
+                    except CalendarError as exc:
+                        raise PricePayloadError(
+                            "Stooq row date is not a supported session"
+                        ) from exc
                     bars.append(
                         StooqAdjustedBar(
                             symbol,
@@ -337,7 +381,14 @@ def read_stooq_bulk(
     bars.sort(key=lambda item: (item.vendor_symbol, item.session, item.archive_entry))
     if len({(bar.vendor_symbol, bar.session) for bar in bars}) != len(bars):
         raise PricePayloadError("Stooq archive has duplicate requested symbol/session rows")
-    return StooqBulkResult(archive, normalized, tuple(bars))
+    basis: StooqAdjustmentBasis = "unresolved"
+    if basis_assessment is not None:
+        if not basis_assessment.drift_check_enabled:
+            raise PriceConfigurationError("unresolved Stooq basis assessment cannot be enabled")
+        if basis_assessment.archive_sha256 != archive.content_sha256:
+            raise PriceConfigurationError("Stooq basis assessment belongs to a different archive")
+        basis = basis_assessment.basis
+    return StooqBulkResult(archive, normalized, tuple(bars), basis)
 
 
 def _relative_error(observed: Decimal, expected: Decimal) -> Decimal:
@@ -351,9 +402,22 @@ def classify_stooq_adjustment_basis(
     dividend_samples = tuple(sample for sample in samples if sample.event_type == "cash_dividend")
     split_samples = tuple(sample for sample in samples if sample.event_type == "split")
     pointers = tuple(sorted({sample.evidence_pointer for sample in samples}))
+    archive_hashes = {sample.stooq_archive_sha256 for sample in samples}
+    archive_sha256 = next(iter(archive_hashes)) if len(archive_hashes) == 1 else None
+    if len(archive_hashes) != 1:
+        return StooqBasisAssessment(
+            "unresolved",
+            None,
+            len(samples),
+            len(dividend_samples),
+            len(split_samples),
+            pointers,
+            "basis samples must belong to exactly one immutable Stooq archive",
+        )
     if not dividend_samples or not split_samples:
         return StooqBasisAssessment(
             "unresolved",
+            archive_sha256,
             len(samples),
             len(dividend_samples),
             len(split_samples),
@@ -362,8 +426,8 @@ def classify_stooq_adjustment_basis(
         )
     split_valid = all(
         min(
-            _relative_error(sample.stooq_close, sample.split_only_close),
-            _relative_error(sample.stooq_close, sample.total_return_close),
+            _relative_error(sample.stooq_return, sample.split_only_return),
+            _relative_error(sample.stooq_return, sample.total_return),
         )
         <= DRIFT_TOLERANCE
         for sample in split_samples
@@ -371,6 +435,7 @@ def classify_stooq_adjustment_basis(
     if not split_valid:
         return StooqBasisAssessment(
             "unresolved",
+            archive_sha256,
             len(samples),
             len(dividend_samples),
             len(split_samples),
@@ -378,15 +443,15 @@ def classify_stooq_adjustment_basis(
             "split sample does not match either reconstructed basis",
         )
     split_only_wins = all(
-        _relative_error(sample.stooq_close, sample.split_only_close) <= DRIFT_TOLERANCE
-        and _relative_error(sample.stooq_close, sample.split_only_close)
-        < _relative_error(sample.stooq_close, sample.total_return_close)
+        _relative_error(sample.stooq_return, sample.split_only_return) <= DRIFT_TOLERANCE
+        and _relative_error(sample.stooq_return, sample.split_only_return)
+        < _relative_error(sample.stooq_return, sample.total_return)
         for sample in dividend_samples
     )
     total_return_wins = all(
-        _relative_error(sample.stooq_close, sample.total_return_close) <= DRIFT_TOLERANCE
-        and _relative_error(sample.stooq_close, sample.total_return_close)
-        < _relative_error(sample.stooq_close, sample.split_only_close)
+        _relative_error(sample.stooq_return, sample.total_return) <= DRIFT_TOLERANCE
+        and _relative_error(sample.stooq_return, sample.total_return)
+        < _relative_error(sample.stooq_return, sample.split_only_return)
         for sample in dividend_samples
     )
     if split_only_wins == total_return_wins:
@@ -400,6 +465,7 @@ def classify_stooq_adjustment_basis(
         reason = "declared dividend samples match the independently total-return series"
     return StooqBasisAssessment(
         basis,
+        archive_sha256,
         len(samples),
         len(dividend_samples),
         len(split_samples),
@@ -416,14 +482,14 @@ def check_stooq_drift(
         raise PriceConfigurationError(
             "Stooq drift check is disabled until adjustment basis is empirically classified"
         )
+    if {sample.stooq_archive_sha256 for sample in samples} != {assessment.archive_sha256}:
+        raise PriceConfigurationError("Stooq drift samples do not belong to the assessed archive")
     issues: list[StooqDriftIssue] = []
     for sample in samples:
         expected = (
-            sample.split_only_close
-            if assessment.basis == "splits_only"
-            else sample.total_return_close
+            sample.split_only_return if assessment.basis == "splits_only" else sample.total_return
         )
-        drift = _relative_error(sample.stooq_close, expected)
+        drift = _relative_error(sample.stooq_return, expected)
         if drift > DRIFT_TOLERANCE:
             issues.append(
                 StooqDriftIssue(
