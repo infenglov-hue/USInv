@@ -13,8 +13,14 @@ from usinv.data.edgar.securities import (
     current_sec_symbol,
     materialize_security_master,
     mint_security_id,
+    normalize_exchange,
     read_security_master_snapshot,
 )
+
+
+def test_exchange_normalization_is_idempotent_for_every_canonical_venue() -> None:
+    for exchange in ("NASDAQ", "NYSE", "NYSEAMERICAN"):
+        assert normalize_exchange(normalize_exchange(exchange)) == exchange
 
 
 def _security(cik: int, anchor: str, title: str = "Common Stock") -> Security:
