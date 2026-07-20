@@ -40,9 +40,15 @@
 - An isolated wheel build succeeds and includes `usinv/data/listings.py`,
   `usinv/universe.py` and the generated `usinv/scoring/sic_ranges_v1.json`
   resource.
-- The credentialed Alpha Vantage Actions smoke and its run identifier are
-  pending until this branch is published. It is deliberately manual/PR-label
-  gated and publishes only redacted counts and hashes.
+- **The credentialed Alpha Vantage listing smoke passed on 2026-07-20.** GitHub
+  Actions run `29737419392` materialized the paired 2026-07-17 snapshot with
+  14,207 active and 9,350 delisted rows under snapshot ID
+  `cdb21e5c192ac504cfafe419fa2b5358519a098c78eac1967fc1d7964594927e`.
+  The first live attempt exposed an undocumented HTTP 406 response to an
+  explicit CSV `Accept` header; the second showed that provider display names
+  can be blank. The final adapter sends the previously proven User-Agent-only
+  negotiation, permits blank non-key display names, and still rejects a blank
+  symbol, exchange or asset type. No raw CSV was uploaded or committed.
 
 ### Acceptance gate remains closed
 
