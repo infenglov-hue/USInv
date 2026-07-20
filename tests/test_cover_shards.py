@@ -14,9 +14,11 @@ from usinv.data.edgar.cover_acquisition import (
     CoverShareObservation,
 )
 from usinv.data.edgar.cover_shards import (
+    materialize_cover_evidence_merge,
     materialize_cover_evidence_shard,
     merge_cover_evidence_shards,
     read_cover_evidence_shard,
+    read_cover_evidence_snapshot,
 )
 from usinv.data.edgar.securities import (
     Security,
@@ -120,6 +122,18 @@ def test_cover_evidence_merge_requires_an_exact_non_overlapping_cik_partition(
     assert len(merged.master.securities) == 2
     assert len(merged.share_observations) == 2
     assert merged.master.resolve("TWO", "NASDAQ", date(2026, 6, 1)).status == "mapped"
+
+    created = materialize_cover_evidence_merge(merged, tmp_path / "final")
+    cached = materialize_cover_evidence_merge(merged, tmp_path / "final")
+    assert created.snapshot_id == cached.snapshot_id
+    assert not created.from_cache and cached.from_cache
+    reopened = read_cover_evidence_snapshot(created.output_dir)
+    assert reopened.merge.share_observations == merged.share_observations
+    assert reopened.merge.master == merged.master
+
+    created.output_dir.joinpath("complete-evidence.json").write_text("{}", encoding="utf-8")
+    with pytest.raises(EdgarPayloadError, match="identity"):
+        read_cover_evidence_snapshot(created.output_dir)
 
     with pytest.raises(EdgarPayloadError, match="exactly cover"):
         merge_cover_evidence_shards((first,), expected_ciks=(1, 2))

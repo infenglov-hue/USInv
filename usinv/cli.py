@@ -25,6 +25,7 @@ from usinv.data.edgar import (
     coverage_input,
     eligible_ciks_from_filings,
     fsds_quarter_range,
+    materialize_cover_evidence_merge,
     materialize_cover_evidence_shard,
     materialize_filing_discovery_plan,
     materialize_security_master,
@@ -375,10 +376,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             merged = merge_cover_evidence_shards(shards, expected_ciks=plan.ciks)
             if merged.plan_snapshot_id != plan.snapshot_id:
                 raise EdgarError("cover evidence shards do not belong to the discovery plan")
-            snapshot = materialize_security_master(
-                merged.master,
-                output_root / "security-bootstrap" / "master" / plan.snapshot_id,
-            )
+            snapshot = materialize_cover_evidence_merge(merged, output_root)
         except EdgarError as exc:
             print(f"sec_cover_merge_failed: {exc}", file=sys.stderr)
             return 2
@@ -394,7 +392,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"mapping_issues={len(merged.master.issues)}",
                     f"acquisition_gaps={len(merged.acquisition_gaps)}",
                     f"bootstrap_gaps={len(merged.bootstrap_gaps)}",
-                    f"master_snapshot={snapshot.snapshot_id}",
+                    f"share_observations={len(merged.share_observations)}",
+                    f"evidence_snapshot={snapshot.snapshot_id}",
+                    f"master_snapshot={snapshot.master_snapshot_id}",
                 )
             )
         )

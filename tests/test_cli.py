@@ -384,10 +384,11 @@ def test_sec_cover_merge_requires_exact_shards_before_publishing(
         plan_snapshot_id=plan.snapshot_id,
         requested_ciks=(1, 2),
         master=master,
+        share_observations=(),
         acquisition_gaps=(),
         bootstrap_gaps=(),
     )
-    snapshot = SimpleNamespace(snapshot_id="f" * 64)
+    snapshot = SimpleNamespace(snapshot_id="e" * 64, master_snapshot_id="f" * 64)
 
     monkeypatch.setattr(cli_module, "read_filing_discovery_plan", lambda path: plan)
     monkeypatch.setattr(cli_module, "read_cover_evidence_shard", lambda path: shard)
@@ -398,8 +399,8 @@ def test_sec_cover_merge_requires_exact_shards_before_publishing(
     )
     monkeypatch.setattr(
         cli_module,
-        "materialize_security_master",
-        lambda master_value, output: snapshot,
+        "materialize_cover_evidence_merge",
+        lambda merged_value, output: snapshot,
     )
 
     assert (
@@ -419,6 +420,7 @@ def test_sec_cover_merge_requires_exact_shards_before_publishing(
     output = capsys.readouterr().out
     assert "sec_cover_merge_ok" in output
     assert "shards=1 covered_ciks=2 securities=1 symbols=1" in output
+    assert f"evidence_snapshot={'e' * 64}" in output
     assert f"master_snapshot={'f' * 64}" in output
 
 

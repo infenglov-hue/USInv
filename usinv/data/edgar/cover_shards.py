@@ -32,7 +32,9 @@ from usinv.data.edgar.security_bootstrap import (
     CoverSecurityBootstrap,
 )
 
+COVER_MERGE_VERSION: Final = "usinv-cover-evidence-merge-v1"
 COVER_SHARD_VERSION: Final = "usinv-cover-evidence-shard-v2"
+_SHA256_PATTERN: Final = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +65,15 @@ class CoverEvidenceMerge:
     acquisition_gaps: tuple[CoverAcquisitionGap, ...]
     bootstrap_gaps: tuple[CoverBootstrapGap, ...]
     master: SecurityMaster
+
+
+@dataclass(frozen=True, slots=True)
+class CoverEvidenceSnapshot:
+    snapshot_id: str
+    output_dir: Path
+    merge: CoverEvidenceMerge
+    master_snapshot_id: str
+    from_cache: bool
 
 
 def _canonical(payload: dict[str, object]) -> bytes:
@@ -118,6 +129,10 @@ def read_cover_evidence_shard(path: str | Path) -> CoverEvidenceShard:
     payload, snapshot_id = _read_payload(root)
     try:
         master_snapshot_id = payload["master_snapshot_id"]
+        if not isinstance(master_snapshot_id, str) or not _SHA256_PATTERN.fullmatch(
+            master_snapshot_id
+        ):
+            raise EdgarPayloadError("cover evidence master identity is invalid")
         master = read_security_master_snapshot(root / "master" / "snapshots" / master_snapshot_id)
         archives = tuple(CoverArchiveRecord(**row) for row in payload["archives"])
         share_observations = tuple(
@@ -138,9 +153,8 @@ def read_cover_evidence_shard(path: str | Path) -> CoverEvidenceShard:
     except (KeyError, TypeError, ValueError) as exc:
         raise EdgarPayloadError("cover evidence shard metadata is invalid") from exc
     if (
-        not isinstance(master_snapshot_id, str)
-        or not isinstance(plan_snapshot_id, str)
-        or len(plan_snapshot_id) != 64
+        not isinstance(plan_snapshot_id, str)
+        or not _SHA256_PATTERN.fullmatch(plan_snapshot_id)
         or as_of.tzinfo is None
         or tuple(sorted(set(requested_ciks))) != requested_ciks
         or any(not isinstance(cik, int) or cik <= 0 for cik in requested_ciks)
@@ -271,4 +285,173 @@ def merge_cover_evidence_shards(
         tuple(gap for row in rows for gap in row.acquisition_gaps),
         tuple(gap for row in rows for gap in row.bootstrap_gaps),
         master,
+    )
+
+
+def _merge_payload(
+    merged: CoverEvidenceMerge,
+    master_snapshot_id: str,
+) -> dict[str, object]:
+    return {
+        "version": COVER_MERGE_VERSION,
+        "plan_snapshot_id": merged.plan_snapshot_id,
+        "as_of": merged.as_of.astimezone(UTC).isoformat(),
+        "requested_ciks": list(merged.requested_ciks),
+        "shard_snapshot_ids": list(merged.shard_snapshot_ids),
+        "archives": [asdict(row) for row in merged.archives],
+        "share_observations": [
+            {
+                "security_id": row.security_id,
+                "cik": row.cik,
+                "accepted": row.accepted.astimezone(UTC).isoformat(),
+                "shares_outstanding": str(row.shares_outstanding),
+                "evidence_pointer": row.evidence_pointer,
+            }
+            for row in merged.share_observations
+        ],
+        "acquisition_gaps": [asdict(row) for row in merged.acquisition_gaps],
+        "bootstrap_gaps": [asdict(row) for row in merged.bootstrap_gaps],
+        "master_snapshot_id": master_snapshot_id,
+    }
+
+
+def _read_merge_payload(path: Path) -> tuple[dict[str, object], str]:
+    try:
+        payload = json.loads((path / "complete-evidence.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise EdgarPayloadError("complete cover evidence metadata is unreadable") from exc
+    snapshot_id = hashlib.sha256(_canonical(payload)).hexdigest()
+    if path.name != snapshot_id or payload.get("version") != COVER_MERGE_VERSION:
+        raise EdgarPayloadError("complete cover evidence identity is invalid")
+    return payload, snapshot_id
+
+
+def read_cover_evidence_snapshot(path: str | Path) -> CoverEvidenceSnapshot:
+    """Verify and reopen one complete cover-evidence package."""
+    root = Path(path)
+    payload, snapshot_id = _read_merge_payload(root)
+    try:
+        master_snapshot_id = payload["master_snapshot_id"]
+        if not isinstance(master_snapshot_id, str) or not _SHA256_PATTERN.fullmatch(
+            master_snapshot_id
+        ):
+            raise EdgarPayloadError("complete cover evidence master identity is invalid")
+        master = read_security_master_snapshot(root / "master" / "snapshots" / master_snapshot_id)
+        as_of = datetime.fromisoformat(payload["as_of"])
+        requested_ciks = tuple(payload["requested_ciks"])
+        shard_snapshot_ids = tuple(payload["shard_snapshot_ids"])
+        archives = tuple(CoverArchiveRecord(**row) for row in payload["archives"])
+        shares = tuple(
+            CoverShareObservation(
+                row["security_id"],
+                row["cik"],
+                datetime.fromisoformat(row["accepted"]),
+                Decimal(row["shares_outstanding"]),
+                row["evidence_pointer"],
+            )
+            for row in payload["share_observations"]
+        )
+        acquisition_gaps = tuple(CoverAcquisitionGap(**row) for row in payload["acquisition_gaps"])
+        bootstrap_gaps = tuple(CoverBootstrapGap(**row) for row in payload["bootstrap_gaps"])
+        plan_snapshot_id = payload["plan_snapshot_id"]
+    except (KeyError, TypeError, ValueError) as exc:
+        raise EdgarPayloadError("complete cover evidence metadata is invalid") from exc
+    requested = frozenset(requested_ciks)
+    security_ids = {row.security_id for row in master.securities}
+    if (
+        not isinstance(plan_snapshot_id, str)
+        or not _SHA256_PATTERN.fullmatch(plan_snapshot_id)
+        or as_of.tzinfo is None
+        or tuple(sorted(requested)) != requested_ciks
+        or any(not isinstance(cik, int) or cik <= 0 for cik in requested_ciks)
+        or not shard_snapshot_ids
+        or tuple(sorted(set(shard_snapshot_ids))) != shard_snapshot_ids
+        or any(
+            not isinstance(value, str) or not _SHA256_PATTERN.fullmatch(value)
+            for value in shard_snapshot_ids
+        )
+        or any(row.cik not in requested for row in master.securities)
+        or any(
+            row.cik not in requested
+            or row.security_id not in security_ids
+            or row.accepted.astimezone(UTC) > as_of.astimezone(UTC)
+            for row in shares
+        )
+        or any(
+            row.cik not in requested
+            or not re.fullmatch(r"\d{10}-\d{2}-\d{6}", row.accession)
+            or len(row.archive_snapshot_id) != 64
+            or len(row.primary_sha256) != 64
+            for row in archives
+        )
+        or any(row.cik not in requested for row in acquisition_gaps)
+        or any(row.cik not in requested for row in bootstrap_gaps)
+    ):
+        raise EdgarPayloadError("complete cover evidence provenance is invalid")
+    merged = CoverEvidenceMerge(
+        plan_snapshot_id,
+        as_of.astimezone(UTC),
+        requested_ciks,
+        shard_snapshot_ids,
+        archives,
+        shares,
+        acquisition_gaps,
+        bootstrap_gaps,
+        master,
+    )
+    return CoverEvidenceSnapshot(snapshot_id, root, merged, master_snapshot_id, True)
+
+
+def materialize_cover_evidence_merge(
+    merged: CoverEvidenceMerge,
+    output_root: str | Path,
+) -> CoverEvidenceSnapshot:
+    """Persist the exact merged master, shares and gaps as one immutable package."""
+    if (
+        not _SHA256_PATTERN.fullmatch(merged.plan_snapshot_id)
+        or merged.as_of.tzinfo is None
+        or tuple(sorted(set(merged.requested_ciks))) != merged.requested_ciks
+        or not merged.requested_ciks
+        or tuple(sorted(set(merged.shard_snapshot_ids))) != merged.shard_snapshot_ids
+        or not merged.shard_snapshot_ids
+        or any(not _SHA256_PATTERN.fullmatch(value) for value in merged.shard_snapshot_ids)
+    ):
+        raise EdgarPayloadError("complete cover evidence requires exact merged inputs")
+    root = (
+        Path(output_root)
+        / "security-bootstrap"
+        / "complete-evidence"
+        / merged.plan_snapshot_id
+        / merged.as_of.date().isoformat()
+        / "snapshots"
+    )
+    temporary = root / f".pending.{uuid.uuid4().hex}.tmp"
+    temporary.mkdir(parents=True, exist_ok=False)
+    try:
+        master_snapshot = materialize_security_master(merged.master, temporary / "master")
+        payload = _merge_payload(merged, master_snapshot.snapshot_id)
+        snapshot_id = hashlib.sha256(_canonical(payload)).hexdigest()
+        target = root / snapshot_id
+        if target.exists():
+            shutil.rmtree(temporary, ignore_errors=True)
+            existing = read_cover_evidence_snapshot(target)
+            if _read_merge_payload(existing.output_dir)[0] != payload:
+                raise EdgarPayloadError("complete cover evidence cache conflicts with the input")
+            return existing
+        (temporary / "complete-evidence.json").write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        root.mkdir(parents=True, exist_ok=True)
+        temporary.replace(target)
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+    created = read_cover_evidence_snapshot(target)
+    return CoverEvidenceSnapshot(
+        created.snapshot_id,
+        created.output_dir,
+        created.merge,
+        created.master_snapshot_id,
+        False,
     )

@@ -44,12 +44,16 @@ from usinv.data.edgar.cover_acquisition import (
     infer_domestic_flag,
 )
 from usinv.data.edgar.cover_shards import (
+    COVER_MERGE_VERSION,
     COVER_SHARD_VERSION,
     CoverEvidenceMerge,
     CoverEvidenceShard,
+    CoverEvidenceSnapshot,
+    materialize_cover_evidence_merge,
     materialize_cover_evidence_shard,
     merge_cover_evidence_shards,
     read_cover_evidence_shard,
+    read_cover_evidence_snapshot,
 )
 from usinv.data.edgar.filing_xbrl import (
     FILING_XBRL_VERSION,
@@ -150,6 +154,7 @@ __all__ = [
     "CHAIN_VERSION",
     "CONCEPT_CHAINS",
     "COVER_FORMS",
+    "COVER_MERGE_VERSION",
     "COVER_SHARD_VERSION",
     "DISCOVERY_VERSION",
     "FILING_XBRL_VERSION",
@@ -166,6 +171,7 @@ __all__ = [
     "CoverBootstrapGap",
     "CoverEvidenceMerge",
     "CoverEvidenceShard",
+    "CoverEvidenceSnapshot",
     "CoverFilingEvidence",
     "CoverSecurityBootstrap",
     "CoverShareObservation",
@@ -239,6 +245,7 @@ __all__ = [
     "fsds_quarter_range",
     "infer_domestic_flag",
     "ingest_periodic_filing",
+    "materialize_cover_evidence_merge",
     "materialize_cover_evidence_shard",
     "materialize_filing_discovery_plan",
     "materialize_live_edge",
@@ -254,6 +261,7 @@ __all__ = [
     "parse_submissions_document",
     "read_consolidated_facts_as_of",
     "read_cover_evidence_shard",
+    "read_cover_evidence_snapshot",
     "read_filing_discovery_plan",
     "read_pit_facts_as_of",
     "read_security_master_snapshot",
