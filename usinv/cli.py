@@ -291,6 +291,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"rows={artifact.rows}",
                     f"discovered_ciks={artifact.discovered_ciks}",
                     f"identity_gaps={artifact.identity_gaps}",
+                    f"association_unusable_rows={artifact.association_unusable_rows}",
                 )
             )
         )

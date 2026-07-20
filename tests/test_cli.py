@@ -249,6 +249,7 @@ def test_sec_filing_discovery_reports_only_plan_counts(
         rows=100,
         discovered_ciks=80,
         identity_gaps=5,
+        association_unusable_rows=3,
     )
 
     class FakeClient:
@@ -290,6 +291,7 @@ def test_sec_filing_discovery_reports_only_plan_counts(
     output = capsys.readouterr().out
     assert "sec_filing_discovery_ok listing_as_of=2026-07-17 state=created" in output
     assert "rows=100 discovered_ciks=80 identity_gaps=5" in output
+    assert "association_unusable_rows=3" in output
 
 
 def test_sec_cover_bootstrap_reports_partial_progress_without_publishing_a_partial_master(

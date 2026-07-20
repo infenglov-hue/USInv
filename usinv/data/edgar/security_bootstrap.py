@@ -32,7 +32,7 @@ from usinv.data.edgar.submissions import SubmissionFeed, SubmissionFiling
 from usinv.data.listings import AlphaListingSnapshot
 
 SEC_TICKER_FIELDS: Final = ("cik", "name", "ticker", "exchange")
-DISCOVERY_VERSION: Final = "usinv-sec-filing-discovery-v1"
+DISCOVERY_VERSION: Final = "usinv-sec-filing-discovery-v2"
 COVER_FORMS: Final = frozenset(
     {
         "10-K",
@@ -78,9 +78,15 @@ class SecTickerAssociationSnapshot:
     source_url: str
     source_sha256: str
     rows: tuple[SecTickerAssociation, ...]
+    unusable_rows: int
 
     def __post_init__(self) -> None:
-        if self.observed_at.tzinfo is None or len(self.source_sha256) != 64 or not self.rows:
+        if (
+            self.observed_at.tzinfo is None
+            or len(self.source_sha256) != 64
+            or not self.rows
+            or self.unusable_rows < 0
+        ):
             raise EdgarPayloadError("SEC ticker association snapshot provenance is incomplete")
 
 
@@ -98,6 +104,7 @@ def parse_sec_ticker_associations(document: EdgarDocument) -> SecTickerAssociati
     raw_rows = _sequence(document.payload.get("data"), "data")
     rows: list[SecTickerAssociation] = []
     seen: set[tuple[int, str, str]] = set()
+    unusable_rows = 0
     for row_number, raw in enumerate(raw_rows, start=1):
         values = _sequence(raw, f"data[{row_number}]")
         if len(values) != len(SEC_TICKER_FIELDS):
@@ -109,6 +116,17 @@ def parse_sec_ticker_associations(document: EdgarDocument) -> SecTickerAssociati
             raise EdgarPayloadError("SEC ticker association CIK is invalid") from exc
         if cik <= 0 or not isinstance(name_raw, str) or not name_raw.strip():
             raise EdgarPayloadError("SEC ticker association identity is incomplete")
+        if (
+            ticker_raw is None
+            or exchange_raw is None
+            or (
+                isinstance(ticker_raw, str)
+                and isinstance(exchange_raw, str)
+                and (not ticker_raw.strip() or not exchange_raw.strip())
+            )
+        ):
+            unusable_rows += 1
+            continue
         if not isinstance(ticker_raw, str) or not isinstance(exchange_raw, str):
             raise EdgarPayloadError("SEC ticker association symbol fields must be text")
         try:
@@ -130,6 +148,7 @@ def parse_sec_ticker_associations(document: EdgarDocument) -> SecTickerAssociati
         document.url,
         document.content_sha256,
         tuple(rows),
+        unusable_rows,
     )
 
 
@@ -152,6 +171,7 @@ class FilingDiscoveryPlan:
     association_observed_at: datetime
     rows: tuple[FilingDiscoveryRow, ...]
     version: str = DISCOVERY_VERSION
+    association_unusable_rows: int = 0
 
     def __post_init__(self) -> None:
         if (
@@ -159,6 +179,7 @@ class FilingDiscoveryPlan:
             or len(self.listing_snapshot_id) != 64
             or len(self.association_source_sha256) != 64
             or not self.rows
+            or self.association_unusable_rows < 0
         ):
             raise EdgarPayloadError("filing discovery plan provenance is incomplete")
         for row in self.rows:
@@ -281,6 +302,7 @@ def build_filing_discovery_plan(
         associations.source_sha256,
         associations.observed_at,
         tuple(rows),
+        association_unusable_rows=associations.unusable_rows,
     )
 
 
@@ -303,6 +325,7 @@ def _plan_payload(plan: FilingDiscoveryPlan) -> dict[str, object]:
         "listing_snapshot_id": plan.listing_snapshot_id,
         "association_source_sha256": plan.association_source_sha256,
         "association_observed_at": plan.association_observed_at.astimezone(UTC).isoformat(),
+        "association_unusable_rows": plan.association_unusable_rows,
         "identity_policy": "discovery_only_never_mapping_evidence",
         "rows": [_discovery_row_payload(row) for row in plan.rows],
     }
@@ -315,6 +338,7 @@ class FilingDiscoveryArtifact:
     rows: int
     discovered_ciks: int
     identity_gaps: int
+    association_unusable_rows: int
     from_cache: bool
 
 
@@ -357,6 +381,7 @@ def materialize_filing_discovery_plan(
             len(plan.rows),
             len(plan.ciks),
             len(plan.identity_gaps),
+            plan.association_unusable_rows,
             True,
         )
     temporary = root / f".{plan.snapshot_id}.{uuid.uuid4().hex}.tmp"
@@ -374,6 +399,7 @@ def materialize_filing_discovery_plan(
                 "rows": len(plan.rows),
                 "discovered_ciks": len(plan.ciks),
                 "identity_gaps": len(plan.identity_gaps),
+                "association_unusable_rows": plan.association_unusable_rows,
             },
             "artifact": {"path": "discovery.json", "sha256": _sha256(plan_path)},
         }
@@ -393,6 +419,7 @@ def materialize_filing_discovery_plan(
         len(plan.rows),
         len(plan.ciks),
         len(plan.identity_gaps),
+        plan.association_unusable_rows,
         False,
     )
 
@@ -422,6 +449,7 @@ def read_filing_discovery_plan(path: str | Path) -> FilingDiscoveryPlan:
             payload["association_source_sha256"],
             datetime.fromisoformat(payload["association_observed_at"]),
             rows,
+            association_unusable_rows=payload["association_unusable_rows"],
         )
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise EdgarPayloadError("filing discovery artifact is invalid") from exc

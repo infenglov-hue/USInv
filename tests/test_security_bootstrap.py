@@ -83,6 +83,7 @@ def test_sec_ticker_file_builds_only_an_immutable_discovery_plan(tmp_path: Path)
                     [1, "Duplicate One", "DUP", "NYSE"],
                     [2, "Duplicate Two", "DUP", "NYSE"],
                     [3, "OTC Corp", "OTC", "OTC"],
+                    [4, "No Exchange", "NONE", None],
                 ],
             }
         )
@@ -95,6 +96,7 @@ def test_sec_ticker_file_builds_only_an_immutable_discovery_plan(tmp_path: Path)
     assert rows["ETF"].status == "unsupported_asset_type"
     assert plan.ciks == (320193,)
     assert plan.association_observed_at > CUTOFF
+    assert plan.association_unusable_rows == 1
     created = materialize_filing_discovery_plan(plan, tmp_path)
     cached = materialize_filing_discovery_plan(plan, tmp_path)
     assert not created.from_cache and cached.from_cache
