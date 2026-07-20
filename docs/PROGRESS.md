@@ -33,12 +33,18 @@
   NKLA 1-for-30 SEC fixture, ex-date handling, conflict quarantine, unsafe or
   corrupted Stooq archives, unknown Stooq basis and credential-safe Tiingo
   retries/schema drift.
-- **The phase is not marked complete yet.** GitHub currently has the Alpaca,
-  Alpha Vantage and EDGAR secrets but no `TIINGO_TOKEN`, so the live Tiingo
-  smoke has not run. The current Stooq site also presents a JavaScript
-  verification challenge to automated downloads, and its official page labels
-  the bulk data personal-use-only. The empirical dividend-basis gate therefore
-  remains pending and the Stooq drift check remains hard-disabled.
+- **The credentialed Tiingo smoke passed on 2026-07-20.** GitHub Actions run
+  `29727595571` returned three AAPL EOD rows for the 2020-08-28 through
+  2020-09-01 window, preserved response hash
+  `f292a3639f7915a2b79d756ee7f8ffb788b6047895d95fa9046889d996169111`
+  and exposed one declared split row. The first live attempt also caught an
+  undocumented `sort=asc` query parameter; removing it aligned the adapter with
+  the official EOD contract while client-side order validation remains strict.
+- **The phase is not marked complete yet.** The current Stooq site presents a
+  JavaScript verification challenge to automated downloads, and its official
+  page labels the bulk data personal-use-only. The empirical dividend-basis
+  gate therefore remains pending and the Stooq drift check remains
+  hard-disabled.
 
 ### BLUEPRINT-DEVIATION — Stooq scheduled downloader is intentionally withheld (D033)
 
