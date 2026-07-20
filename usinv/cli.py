@@ -136,6 +136,11 @@ def _parser() -> argparse.ArgumentParser:
     cover.add_argument("--max-ciks", type=int, help="process a bounded resumable CIK shard")
     cover.add_argument("--start-after-cik", type=int, help="resume after this numeric CIK")
     cover.add_argument("--max-filings-per-cik", type=int, default=4)
+    cover.add_argument(
+        "--require-evidence",
+        action="store_true",
+        help="fail unless this shard yields at least one matched cover filing",
+    )
     cover.add_argument("--refresh", action="store_true")
     live = subcommands.add_parser(
         "edgar-live-sync",
@@ -307,6 +312,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 start_after_cik=args.start_after_cik,
                 refresh=args.refresh,
             )
+            if args.require_evidence and not acquisition.evidence:
+                raise EdgarError("cover acquisition produced no matched filing evidence")
             bootstrap = build_cover_security_master(acquisition.evidence, as_of=args.as_of)
             snapshot = (
                 materialize_security_master(

@@ -17,6 +17,7 @@ jobs:
     timeout-minutes: 10
     env:
       ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+      USINV_EDGAR_EMAIL: ${{ secrets.USINV_EDGAR_EMAIL }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,9 +27,23 @@ jobs:
       - name: Install project
         run: python -m pip install .
       - name: Require Alpha Vantage credential
-        run: test -n "$ALPHA_VANTAGE_API_KEY"
+        run: test -n "$ALPHA_VANTAGE_API_KEY" && test -n "$USINV_EDGAR_EMAIL"
       - name: Verify dated active and delisted listing contracts
         run: >-
           python -m usinv alpha-listing-sync
           --as-of 2026-07-17
           --output-dir "${{ runner.temp }}/usinv-listing-smoke"
+      - name: Verify filing-backed identity bootstrap on a bounded live shard
+        shell: bash
+        run: |
+          listing_snapshot="$(find "${{ runner.temp }}/usinv-listing-smoke/alpha-vantage/listing-status/2026-07-17" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          python -m usinv sec-filing-discovery \
+            --listing-snapshot "$listing_snapshot" \
+            --output-dir "${{ runner.temp }}/usinv-security-smoke"
+          discovery_plan="$(find "${{ runner.temp }}/usinv-security-smoke/security-bootstrap/discovery/2026-07-17" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          python -m usinv sec-cover-bootstrap \
+            --discovery-plan "$discovery_plan" \
+            --as-of 2026-07-17T16:00:00-04:00 \
+            --output-dir "${{ runner.temp }}/usinv-security-smoke" \
+            --max-ciks 5 \
+            --require-evidence

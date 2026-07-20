@@ -355,6 +355,50 @@ def test_sec_cover_bootstrap_reports_partial_progress_without_publishing_a_parti
     assert "master_snapshot=deferred" in output
 
 
+def test_sec_cover_bootstrap_can_require_a_matched_filing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    plan = SimpleNamespace(snapshot_id="a" * 64)
+    acquisition = SimpleNamespace(
+        complete=False,
+        requested_ciks=(1,),
+        deferred_ciks=(),
+        archived_filings=1,
+        evidence=(),
+        gaps=(object(),),
+    )
+
+    monkeypatch.setattr(cli_module, "read_filing_discovery_plan", lambda path: plan)
+    monkeypatch.setattr(
+        EdgarClient,
+        "from_config",
+        staticmethod(lambda config, *, cache_dir=None: object()),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "acquire_cover_evidence",
+        lambda client, plan_value, archive_root, **kwargs: acquisition,
+    )
+
+    result = main(
+        [
+            "sec-cover-bootstrap",
+            "--discovery-plan",
+            str(tmp_path / "plan"),
+            "--as-of",
+            "2026-07-17T16:00:00-04:00",
+            "--require-evidence",
+        ]
+    )
+
+    assert result == 2
+    assert "produced no matched filing evidence" in capsys.readouterr().err
+
+
 def test_edgar_smoke_reports_both_documents_without_dumping_payload(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
