@@ -190,7 +190,13 @@ def _feed(filings: tuple[SubmissionFiling, ...]) -> SubmissionFeed:
     )
 
 
-def _cover_parse(filing: SubmissionFiling, ticker: str) -> FilingParseResult:
+def _cover_parse(
+    filing: SubmissionFiling,
+    ticker: str,
+    *,
+    class_title: str = "Common Stock",
+    dimensions: tuple[tuple[str, str], ...] = (),
+) -> FilingParseResult:
     def fact(tag: str, value: str) -> FilingFact:
         return FilingFact(
             filing.cik,
@@ -207,7 +213,7 @@ def _cover_parse(filing: SubmissionFiling, ticker: str) -> FilingParseResult:
             None,
             None,
             value,
-            (),
+            dimensions,
             filing.accepted,
             filing.form,
             filing.filing_date,
@@ -220,7 +226,7 @@ def _cover_parse(filing: SubmissionFiling, ticker: str) -> FilingParseResult:
         (
             fact("TradingSymbol", ticker),
             fact("SecurityExchangeName", "NASDAQ"),
-            fact("Security12bTitle", "Common Stock"),
+            fact("Security12bTitle", class_title),
         ),
         (),
     )
@@ -257,6 +263,43 @@ def test_cover_filing_selection_and_ticker_change_are_point_in_time() -> None:
             (CoverFilingEvidence(future, _cover_parse(future, "FUT"), True),),
             as_of=CUTOFF,
         )
+
+
+def test_cover_bootstrap_keeps_latest_description_for_one_identity_anchor() -> None:
+    old = _filing(1, "0000000001-25-000001", datetime(2025, 1, 15, 20, tzinfo=UTC), "ONE")
+    new = _filing(1, "0000000001-26-000001", datetime(2026, 1, 15, 20, tzinfo=UTC), "ONE")
+
+    result = build_cover_security_master(
+        (
+            CoverFilingEvidence(
+                old,
+                _cover_parse(
+                    old,
+                    "ONE",
+                    class_title="Common Stock",
+                    dimensions=(("dei:SecurityAxis", "issuer:CommonStockMember"),),
+                ),
+                True,
+            ),
+            CoverFilingEvidence(
+                new,
+                _cover_parse(
+                    new,
+                    "ONE",
+                    class_title="Common Stock, $0.001 par value per share",
+                    dimensions=(("dei:SecurityAxis", "issuer:CommonStockMember"),),
+                ),
+                True,
+            ),
+        ),
+        as_of=CUTOFF,
+    )
+
+    assert len(result.master.securities) == 1
+    security = result.master.securities[0]
+    assert security.class_title == "Common Stock, $0.001 par value per share"
+    assert security.security_type == "common_stock"
+    assert result.master.resolve("ONE", "NASDAQ", date(2026, 6, 1)).status == "mapped"
 
 
 def test_cover_selection_reserves_capacity_for_structural_and_event_reports() -> None:

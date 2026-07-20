@@ -630,19 +630,20 @@ def build_cover_security_master(
             prior = securities.get(security.security_id)
             if prior is not None and (
                 prior.cik,
-                prior.class_title,
-                prior.security_type,
                 prior.domestic_flag,
                 prior.identity_anchor,
             ) != (
                 security.cik,
-                security.class_title,
-                security.security_type,
                 security.domestic_flag,
                 security.identity_anchor,
             ):
                 raise EdgarPayloadError("filing cover evidence conflicts for one security ID")
-            securities.setdefault(security.security_id, security)
+            # Class titles and the inferred display type are filing-time descriptors,
+            # not immutable identity.  SEC issuers regularly reword the same
+            # dimension-anchored class across 10-Q/8-K covers.  Evidence is processed
+            # chronologically, so retain the latest descriptor while keeping a hard
+            # failure for a genuine CIK, regime, or identity-anchor conflict.
+            securities[security.security_id] = security
             symbols.append(symbol)
     master = build_security_master(securities.values(), _collapse_symbol_observations(symbols))
     return CoverSecurityBootstrap(master, filings, cover_count, tuple(gaps))
