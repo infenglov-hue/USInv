@@ -7,6 +7,8 @@ on:
         description: Historical symbol to verify
         required: true
         default: AAPL
+  pull_request:
+    types: [labeled]
 
 permissions:
   contents: read
@@ -17,6 +19,9 @@ concurrency:
 
 jobs:
   smoke:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.label.name == 'alpaca-live-smoke'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
