@@ -25,6 +25,22 @@ def test_exchange_normalization_is_idempotent_for_every_canonical_venue() -> Non
 
 
 @pytest.mark.parametrize(
+    "raw_exchange",
+    [
+        "Nasdaq Global Select Market",
+        "The Nasdaq Global Select Market",
+        "The Nasdaq Global Market",
+        "The Nasdaq Capital Market",
+        "The Nasdaq Stock Market",
+    ],
+)
+def test_exchange_normalization_accepts_filing_cover_nasdaq_labels(
+    raw_exchange: str,
+) -> None:
+    assert normalize_exchange(raw_exchange) == "NASDAQ"
+
+
+@pytest.mark.parametrize(
     "title",
     [
         "Warrants to purchase Common Stock",

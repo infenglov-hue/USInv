@@ -21,6 +21,7 @@ from usinv.data.edgar.securities import SecurityMasterError, normalize_exchange,
 from usinv.data.edgar.security_bootstrap import (
     CoverFilingEvidence,
     FilingDiscoveryPlan,
+    canonical_cover_pair,
     select_cover_filings,
 )
 from usinv.data.edgar.submissions import (
@@ -196,6 +197,29 @@ def _target_pairs(plan: FilingDiscoveryPlan) -> dict[int, frozenset[tuple[str, s
     return {cik: frozenset(values) for cik, values in pairs.items()}
 
 
+def _target_pair_evidence(
+    plan: FilingDiscoveryPlan,
+) -> dict[int, tuple[tuple[str, str, str], ...]]:
+    evidence: dict[int, set[tuple[str, str, str]]] = {}
+    for row in plan.rows:
+        if (
+            row.status != "discovered"
+            or len(row.candidate_ciks) != 1
+            or row.normalized_exchange is None
+        ):
+            continue
+        cik = row.candidate_ciks[0]
+        ticker = normalize_ticker(row.ticker)
+        exchange = normalize_exchange(row.normalized_exchange)
+        association_pointer = (
+            "sec-company-tickers-exchange://"
+            f"{plan.association_source_sha256}/{cik}/{ticker}/{exchange}"
+        )
+        pointer = f"{row.listing_evidence_pointer};{association_pointer}"
+        evidence.setdefault(cik, set()).add((ticker, exchange, pointer))
+    return {cik: tuple(sorted(values)) for cik, values in evidence.items()}
+
+
 def _parsed_pairs(parsed: FilingParseResult) -> frozenset[tuple[str, str]]:
     pairs: set[tuple[str, str]] = set()
     for cover in extract_cover_security_classes(parsed):
@@ -224,6 +248,7 @@ def acquire_cover_evidence(
         raise EdgarPayloadError("cover acquisition limits must be positive")
     cutoff = as_of.astimezone(UTC)
     pairs_by_cik = _target_pairs(plan)
+    pair_evidence_by_cik = _target_pair_evidence(plan)
     eligible = tuple(
         cik for cik in sorted(pairs_by_cik) if start_after_cik is None or cik > start_after_cik
     )
@@ -403,19 +428,27 @@ def acquire_cover_evidence(
                     )
                 )
                 continue
-            if not (_parsed_pairs(parsed) & allowed_pairs):
+            admitted = tuple(
+                (cover, canonical_cover_pair(cover, allowed_pairs))
+                for cover in extract_cover_security_classes(parsed)
+            )
+            admitted = tuple((cover, pair) for cover, pair in admitted if pair is not None)
+            if not admitted:
+                observed = sorted(_parsed_pairs(parsed))
                 gaps.append(
                     CoverAcquisitionGap(
                         cik,
                         filing.accession,
                         "cover_not_in_discovery_plan",
-                        "filing cover classes do not match a discovered ticker/exchange pair",
+                        (
+                            "filing cover classes do not match a discovered ticker/exchange pair; "
+                            f"observed={observed!r} allowed={sorted(allowed_pairs)!r}"
+                        ),
                     )
                 )
                 continue
-            for cover in extract_cover_security_classes(parsed):
+            for cover, pair in admitted:
                 try:
-                    pair = (normalize_ticker(cover.ticker), normalize_exchange(cover.exchange))
                     security, _ = security_evidence_from_cover(
                         filing,
                         cover,
@@ -443,6 +476,7 @@ def acquire_cover_evidence(
                     parsed,
                     domestic_flag,
                     allowed_pairs,
+                    pair_evidence_by_cik[cik],
                 )
             )
 

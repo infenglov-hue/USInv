@@ -15,6 +15,7 @@ from typing import Final, Literal
 
 from usinv.data.edgar.client import EdgarDocument, EdgarPayloadError
 from usinv.data.edgar.filing_xbrl import (
+    CoverSecurityClass,
     FilingParseResult,
     extract_cover_security_classes,
     security_evidence_from_cover,
@@ -521,6 +522,40 @@ class CoverFilingEvidence:
     parsed: FilingParseResult
     domestic_flag: bool
     allowed_pairs: frozenset[tuple[str, str]] | None = None
+    allowed_pair_evidence: tuple[tuple[str, str, str], ...] = ()
+
+
+def canonical_cover_pair(
+    cover: CoverSecurityClass,
+    allowed_pairs: frozenset[tuple[str, str]],
+) -> tuple[str, str] | None:
+    """Admit an exact discovered pair or SEC's contextual NYSE-American label."""
+    try:
+        ticker = normalize_ticker(cover.ticker)
+        exchange = normalize_exchange(cover.exchange)
+    except SecurityMasterError:
+        return None
+    observed = (ticker, exchange)
+    if observed in allowed_pairs:
+        return observed
+    same_ticker = tuple(sorted(pair for pair in allowed_pairs if pair[0] == ticker))
+    if exchange == "NYSE" and same_ticker == ((ticker, "NYSEAMERICAN"),):
+        return same_ticker[0]
+    return None
+
+
+def _pair_evidence_pointer(
+    item: CoverFilingEvidence,
+    pair: tuple[str, str],
+) -> str | None:
+    pointers = tuple(
+        pointer
+        for ticker, exchange, pointer in item.allowed_pair_evidence
+        if (ticker, exchange) == pair
+    )
+    if not pointers:
+        return None
+    return ";".join(sorted(set(pointers)))
 
 
 @dataclass(frozen=True, slots=True)
@@ -589,16 +624,20 @@ def build_cover_security_master(
             raise EdgarPayloadError("future filing reached the cover security bootstrap")
         covers = extract_cover_security_classes(item.parsed)
         if item.allowed_pairs is not None:
+            admitted: list[tuple[CoverSecurityClass, tuple[str, str]]] = []
+            for cover in covers:
+                pair = canonical_cover_pair(cover, item.allowed_pairs)
+                if pair is not None:
+                    admitted.append((cover, pair))
+        else:
             admitted = []
             for cover in covers:
                 try:
                     pair = (normalize_ticker(cover.ticker), normalize_exchange(cover.exchange))
                 except SecurityMasterError:
                     continue
-                if pair in item.allowed_pairs:
-                    admitted.append(cover)
-            covers = tuple(admitted)
-        if not covers:
+                admitted.append((cover, pair))
+        if not admitted:
             gaps.append(
                 CoverBootstrapGap(
                     item.filing.cik,
@@ -616,7 +655,7 @@ def build_cover_security_master(
                 )
             )
             continue
-        for cover in covers:
+        for cover, canonical_pair in admitted:
             try:
                 security, symbol = security_evidence_from_cover(
                     item.filing,
@@ -633,6 +672,26 @@ def build_cover_security_master(
                     )
                 )
                 continue
+            observed_pair = (symbol.ticker, symbol.exchange)
+            if canonical_pair != observed_pair:
+                discovery_pointer = _pair_evidence_pointer(item, canonical_pair)
+                if discovery_pointer is None:
+                    gaps.append(
+                        CoverBootstrapGap(
+                            item.filing.cik,
+                            item.filing.accession,
+                            "missing_pair_reconciliation_evidence",
+                            "contextual exchange reconciliation lacks discovery provenance",
+                        )
+                    )
+                    continue
+                symbol = replace(
+                    symbol,
+                    ticker=canonical_pair[0],
+                    exchange=canonical_pair[1],
+                    source="sec_xbrl_cover+listing_discovery",
+                    evidence_pointer=f"{symbol.evidence_pointer};{discovery_pointer}",
+                )
             cover_count += 1
             prior = securities.get(security.security_id)
             if prior is not None and (

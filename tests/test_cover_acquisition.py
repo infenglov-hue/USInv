@@ -57,7 +57,7 @@ def _filing_payload() -> dict[str, object]:
     }
 
 
-def _inline_xbrl(ticker: str = "ONE") -> bytes:
+def _inline_xbrl(ticker: str = "ONE", exchange: str = "NASDAQ") -> bytes:
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance"
  xmlns:dei="http://xbrl.sec.gov/dei/2025">
@@ -67,7 +67,7 @@ def _inline_xbrl(ticker: str = "ONE") -> bytes:
   <xbrli:period><xbrli:instant>2026-03-31</xbrli:instant></xbrli:period>
  </xbrli:context>
  <dei:TradingSymbol contextRef="cover">{ticker}</dei:TradingSymbol>
- <dei:SecurityExchangeName contextRef="cover">NASDAQ</dei:SecurityExchangeName>
+ <dei:SecurityExchangeName contextRef="cover">{exchange}</dei:SecurityExchangeName>
  <dei:Security12bTitle contextRef="cover">Common Stock</dei:Security12bTitle>
  <dei:EntityCommonStockSharesOutstanding contextRef="cover" unitRef="shares" decimals="0">
   125000000
@@ -77,8 +77,8 @@ def _inline_xbrl(ticker: str = "ONE") -> bytes:
 
 
 class FakeClient:
-    def __init__(self, ticker: str = "ONE") -> None:
-        self.primary = _inline_xbrl(ticker)
+    def __init__(self, ticker: str = "ONE", exchange: str = "NASDAQ") -> None:
+        self.primary = _inline_xbrl(ticker, exchange)
         self.calls: list[str] = []
 
     def submissions(self, cik: int, *, refresh: bool) -> EdgarDocument:
@@ -175,6 +175,69 @@ def test_cover_acquisition_rejects_a_cover_pair_that_does_not_match_discovery(
     assert not result.evidence
     assert not result.share_observations
     assert result.gaps[0].kind == "cover_not_in_discovery_plan"
+
+
+def test_cover_acquisition_normalizes_official_nasdaq_cover_label(tmp_path: Path) -> None:
+    result = acquire_cover_evidence(
+        FakeClient(exchange="The Nasdaq Global Select Market"),
+        _plan(),
+        tmp_path,
+        as_of=CUTOFF,
+        maximum_ciks=1,
+    )
+
+    master = build_cover_security_master(result.evidence, as_of=CUTOFF).master
+    assert not result.gaps
+    assert master.resolve("ONE", "NASDAQ", date(2026, 6, 1)).status == "mapped"
+
+
+def test_cover_acquisition_does_not_reconcile_unrelated_exchanges(tmp_path: Path) -> None:
+    result = acquire_cover_evidence(
+        FakeClient(exchange="NYSE"),
+        _plan(),
+        tmp_path,
+        as_of=CUTOFF,
+        maximum_ciks=1,
+    )
+
+    assert not result.evidence
+    assert result.gaps[0].kind == "cover_not_in_discovery_plan"
+
+
+def test_cover_acquisition_reconciles_contextual_nyse_american_label(tmp_path: Path) -> None:
+    base = _plan()
+    row = base.rows[0]
+    plan = FilingDiscoveryPlan(
+        base.listing_as_of,
+        base.listing_snapshot_id,
+        base.association_source_sha256,
+        base.association_observed_at,
+        (
+            FilingDiscoveryRow(
+                row.ticker,
+                "NYSE American",
+                "NYSEAMERICAN",
+                row.asset_type,
+                row.listing_evidence_pointer,
+                row.status,
+                row.candidate_ciks,
+            ),
+        ),
+    )
+    result = acquire_cover_evidence(
+        FakeClient(exchange="NYSE"),
+        plan,
+        tmp_path,
+        as_of=CUTOFF,
+    )
+
+    bootstrap = build_cover_security_master(result.evidence, as_of=CUTOFF)
+    assert not result.gaps and not bootstrap.gaps
+    mapping = bootstrap.master.resolve("ONE", "NYSEAMERICAN", date(2026, 6, 1))
+    assert mapping.status == "mapped"
+    symbol = next(row for row in bootstrap.master.symbols if row.security_id == mapping.security_id)
+    assert symbol.source == "sec_xbrl_cover+listing_discovery"
+    assert "sec-company-tickers-exchange://" in symbol.evidence_pointer
 
 
 def test_cover_acquisition_quarantines_a_missing_historical_filing_resource(

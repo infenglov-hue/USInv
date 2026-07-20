@@ -445,6 +445,33 @@ def test_common_unit_provider_stock_remains_an_identity_candidate() -> None:
     assert snapshot.identity_mapping_gaps == (row,)
 
 
+@pytest.mark.parametrize("ticker", ["ONE-P-A", "ONE-P", "ONE-WS"])
+def test_nyse_non_common_suffix_is_not_an_identity_gap(ticker: str) -> None:
+    _master, snapshot = _build(
+        _listing_snapshot([(ticker, "One Corp", "NYSE", "Stock")]),
+        [],
+        [],
+        [],
+    )
+
+    row = snapshot.rows[0]
+    assert row.mapping_status == "non_common_listing"
+    assert not snapshot.identity_mapping_gaps
+
+
+def test_nyse_when_issued_suffix_remains_an_identity_candidate() -> None:
+    _master, snapshot = _build(
+        _listing_snapshot([("ONE-W", "One Corp When Issued", "NYSE", "Stock")]),
+        [],
+        [],
+        [],
+    )
+
+    row = snapshot.rows[0]
+    assert row.mapping_status == "unmapped"
+    assert snapshot.identity_mapping_gaps == (row,)
+
+
 def test_company_name_containing_preferred_remains_an_identity_candidate() -> None:
     _master, snapshot = _build(
         _listing_snapshot([("PFBC", "Preferred Bank", "NASDAQ", "Stock")]),

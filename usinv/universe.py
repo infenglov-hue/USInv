@@ -43,6 +43,10 @@ NON_COMMON_LISTING_NAME_PATTERN: Final = re.compile(
 )
 NON_COMMON_LISTING_UNIT_PATTERN: Final = re.compile(r"\bunits?\b", re.IGNORECASE)
 COMMON_UNIT_PATTERN: Final = re.compile(r"\bcommon units?\b", re.IGNORECASE)
+NYSE_NON_COMMON_TICKER_PATTERN: Final = re.compile(
+    r"(?:-P(?:-[A-Z0-9]+)?|-WS(?:-[A-Z0-9]+)?)$",
+    re.IGNORECASE,
+)
 SizeBucket = Literal["core", "large_cap"]
 
 
@@ -672,8 +676,16 @@ def _is_explicit_non_common_listing(listing: AlphaListingRow) -> bool:
     """Recognize provider rows that explicitly describe a non-common instrument."""
     if NON_COMMON_LISTING_NAME_PATTERN.search(listing.name):
         return True
-    return bool(NON_COMMON_LISTING_UNIT_PATTERN.search(listing.name)) and not (
+    if bool(NON_COMMON_LISTING_UNIT_PATTERN.search(listing.name)) and not (
         COMMON_UNIT_PATTERN.search(listing.name)
+    ):
+        return True
+    try:
+        exchange = _normalize_exchange(listing.exchange)
+    except SecurityMasterError:
+        return False
+    return exchange in {"NYSE", "NYSEAMERICAN"} and bool(
+        NYSE_NON_COMMON_TICKER_PATTERN.search(listing.symbol)
     )
 
 

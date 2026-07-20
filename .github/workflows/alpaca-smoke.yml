@@ -15,6 +15,10 @@ on:
         description: Existing complete-evidence run to reconcile (Phase 2.3 branch only)
         required: false
         default: ""
+      bootstrap_plan_run_id:
+        description: Existing discovery-plan run to reuse for a fresh SEC acquisition
+        required: false
+        default: ""
   pull_request:
     types: [labeled]
 
@@ -71,4 +75,14 @@ jobs:
     uses: ./.github/workflows/security-master-bootstrap.yml
     with:
       reconcile_run_id: ${{ inputs.reconcile_run_id }}
+    secrets: inherit
+
+  refresh-filing-backed-security-evidence:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      startsWith(github.ref, 'refs/heads/agent/phase-2-3') &&
+      inputs.bootstrap_plan_run_id != ''
+    uses: ./.github/workflows/security-master-bootstrap.yml
+    with:
+      plan_run_id: ${{ inputs.bootstrap_plan_run_id }}
     secrets: inherit

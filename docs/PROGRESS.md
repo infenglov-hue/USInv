@@ -76,6 +76,28 @@
   derives the immutable evidence package from the exact retained shard IDs. It
   avoids repeating the 90-minute SEC acquisition and does not alter the D032
   thresholds or evidence rules.
+- The reconciled D032 run `29769888331` materially improved the exact gate:
+  unresolved identity mappings fell from 3,723 to 2,666, included securities
+  rose from 912 to 1,170 and evidence gaps fell from 5,246 to 4,076. The gate
+  still failed closed at 89.7497% core and 67.2479% secondary coverage.
+- Filing-level diagnosis of the remaining discovered-but-unmapped rows found
+  an independent exchange-label defect. AAL, ABNB and ACDC use official cover
+  labels such as `The Nasdaq Global Select Market`/`The Nasdaq Stock Market`,
+  while ASM and CVM report `NYSE` on their filings despite an exact
+  CIK+ticker `NYSEAMERICAN` discovery pair. Added enumerated Nasdaq aliases and
+  a narrow provenance-bearing NYSE-American reconciliation; unrelated venue
+  disagreements remain quarantined. A registered dispatcher can now reuse the
+  immutable discovery plan for one fresh SEC acquisition without consuming a
+  new Alpha Vantage listing request; its merge stage automatically applies the
+  already-tested D035 semantic identity reconciliation before publishing the
+  complete evidence artifact.
+- Classified only the empirically observed NYSE-family preferred (`-P`,
+  `-P-<class>`) and warrant (`-WS`) provider suffixes as explicit non-common
+  rows. The rule covers 366 preferred-format gaps in the retained failed gate;
+  `-W` is deliberately excluded because that same snapshot uses it for
+  when-issued common shares.
+- Ruff lint/format, workflow YAML parsing and the complete offline suite pass
+  after this remediation: 309 tests.
 
 ### Acceptance gate remains closed
 

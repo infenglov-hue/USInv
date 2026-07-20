@@ -201,6 +201,11 @@ jobs:
           python -m usinv sec-cover-merge \
             --discovery-plan "$discovery_plan" \
             --evidence-root "${{ runner.temp }}/cover-evidence" \
+            --output-dir "${{ runner.temp }}/security-master-raw"
+          cover_evidence="$(find "${{ runner.temp }}/security-master-raw" -name complete-evidence.json -type f -print -quit | xargs dirname)"
+          test -n "$cover_evidence"
+          python -m usinv sec-cover-reconcile \
+            --cover-evidence "$cover_evidence" \
             --output-dir "${{ runner.temp }}/security-master-final"
       - name: Upload derived complete security evidence
         uses: actions/upload-artifact@v4
