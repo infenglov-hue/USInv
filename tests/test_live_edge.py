@@ -76,6 +76,20 @@ def test_submissions_parser_keeps_current_state_separate_from_filing_history() -
     assert feed.filings[0].accepted == datetime(2025, 5, 2, 20, tzinfo=UTC)
     assert feed.history_files == ("CIK0000320193-submissions-001.json",)
     assert feed.unusable_filings == 0
+    assert feed.unusable_current_symbols == 0
+
+
+def test_submissions_parser_quarantines_incomplete_current_symbol_rows() -> None:
+    payload = _submissions_payload()
+    payload["tickers"] = ["AAPL", "BROKEN"]
+    payload["exchanges"] = ["Nasdaq", None]
+
+    feed = parse_submissions_document(_document(payload))
+
+    assert [(row.ticker, row.exchange) for row in feed.current_symbols] == [
+        ("AAPL", "Nasdaq")
+    ]
+    assert feed.unusable_current_symbols == 1
 
 
 def test_submissions_parser_quarantines_rows_without_a_primary_document() -> None:

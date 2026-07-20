@@ -62,6 +62,7 @@ class SubmissionFeed:
     source_url: str
     source_sha256: str
     unusable_filings: int = 0
+    unusable_current_symbols: int = 0
 
 
 def _text(value: object, field: str, *, required: bool = True) -> str | None:
@@ -219,10 +220,18 @@ def parse_submissions_document(document: EdgarDocument) -> SubmissionFeed:
     exchanges = _sequence(payload.get("exchanges", ()), "exchanges")
     if len(tickers) != len(exchanges):
         raise EdgarPayloadError("submissions current ticker/exchange arrays differ in length")
-    current_symbols = tuple(
-        CurrentSymbol(_text(ticker, "tickers"), _text(exchange, "exchanges"))
-        for ticker, exchange in zip(tickers, exchanges, strict=True)
-    )
+    current_symbols: list[CurrentSymbol] = []
+    unusable_current_symbols = 0
+    for ticker, exchange in zip(tickers, exchanges, strict=True):
+        if (
+            not isinstance(ticker, str)
+            or not ticker.strip()
+            or not isinstance(exchange, str)
+            or not exchange.strip()
+        ):
+            unusable_current_symbols += 1
+            continue
+        current_symbols.append(CurrentSymbol(ticker.strip(), exchange.strip()))
 
     former_names: list[FormerName] = []
     for item in _sequence(payload.get("formerNames", ()), "formerNames"):
@@ -266,7 +275,7 @@ def parse_submissions_document(document: EdgarDocument) -> SubmissionFeed:
             "stateOfIncorporation",
             required=False,
         ),
-        current_symbols=current_symbols,
+        current_symbols=tuple(current_symbols),
         former_names=tuple(former_names),
         filings=recent_rows,
         history_files=tuple(history_files),
@@ -274,6 +283,7 @@ def parse_submissions_document(document: EdgarDocument) -> SubmissionFeed:
         source_url=document.url,
         source_sha256=document.content_sha256,
         unusable_filings=unusable_filings,
+        unusable_current_symbols=unusable_current_symbols,
     )
 
 

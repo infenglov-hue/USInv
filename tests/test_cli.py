@@ -307,6 +307,7 @@ def test_sec_cover_bootstrap_reports_partial_progress_without_publishing_a_parti
         requested_ciks=(1,),
         deferred_ciks=(2, 3),
         archived_filings=2,
+        share_observations=(),
         evidence=(object(),),
         gaps=(object(),),
     )

@@ -115,6 +115,8 @@ class CoverSecurityClass:
     class_title: str
     dimensions: tuple[tuple[str, str], ...]
     evidence_pointers: tuple[str, ...]
+    shares_outstanding: Decimal | None
+    shares_evidence_pointer: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -572,18 +574,28 @@ def extract_cover_security_classes(result: FilingParseResult) -> tuple[CoverSecu
     """Extract filing-time ticker/exchange/class tuples without collapsing dimensions."""
     by_context: dict[str, dict[str, list[FilingFact]]] = defaultdict(lambda: defaultdict(list))
     for fact in result.facts:
-        if fact.text_value:
-            by_context[fact.context_id][fact.tag].append(fact)
+        by_context[fact.context_id][fact.tag].append(fact)
     output: list[CoverSecurityClass] = []
     for context_id, concepts in by_context.items():
         tickers = concepts.get("TradingSymbol", []) + concepts.get("EntityTradingSymbol", [])
         exchanges = concepts.get("SecurityExchangeName", [])
         titles = concepts.get("Security12bTitle", []) + concepts.get("TitleOf12bSecurity", [])
+        shares = concepts.get("EntityCommonStockSharesOutstanding", []) + concepts.get(
+            "CommonStockSharesOutstanding", []
+        )
         if len(tickers) != 1 or len(exchanges) != 1 or len(titles) != 1:
             continue
         facts = (tickers[0], exchanges[0], titles[0])
         if len({fact.dimensions for fact in facts}) != 1:
             continue
+        share_fact = (
+            shares[0]
+            if len(shares) == 1
+            and shares[0].dimensions == tickers[0].dimensions
+            and shares[0].value is not None
+            and shares[0].value > 0
+            else None
+        )
         output.append(
             CoverSecurityClass(
                 context_id,
@@ -592,6 +604,8 @@ def extract_cover_security_classes(result: FilingParseResult) -> tuple[CoverSecu
                 titles[0].text_value,
                 tickers[0].dimensions,
                 tuple(sorted(fact.evidence_pointer for fact in facts)),
+                share_fact.value if share_fact else None,
+                share_fact.evidence_pointer if share_fact else None,
             )
         )
     return tuple(sorted(output, key=lambda item: (item.ticker, item.exchange, item.context_id)))

@@ -61,6 +61,7 @@ def _inline_xbrl(ticker: str = "ONE") -> bytes:
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance"
  xmlns:dei="http://xbrl.sec.gov/dei/2025">
+ <xbrli:unit id="shares"><xbrli:measure>xbrli:shares</xbrli:measure></xbrli:unit>
  <xbrli:context id="cover">
   <xbrli:entity><xbrli:identifier scheme="https://www.sec.gov/CIK">1</xbrli:identifier></xbrli:entity>
   <xbrli:period><xbrli:instant>2026-03-31</xbrli:instant></xbrli:period>
@@ -68,6 +69,9 @@ def _inline_xbrl(ticker: str = "ONE") -> bytes:
  <dei:TradingSymbol contextRef="cover">{ticker}</dei:TradingSymbol>
  <dei:SecurityExchangeName contextRef="cover">NASDAQ</dei:SecurityExchangeName>
  <dei:Security12bTitle contextRef="cover">Common Stock</dei:Security12bTitle>
+ <dei:EntityCommonStockSharesOutstanding contextRef="cover" unitRef="shares" decimals="0">
+  125000000
+ </dei:EntityCommonStockSharesOutstanding>
 </xbrli:xbrl>
 """.encode()
 
@@ -148,6 +152,10 @@ def test_cover_acquisition_is_pit_bounded_shardable_and_filing_backed(tmp_path: 
     assert len(result.evidence) == 1 and not result.gaps
     assert result.evidence[0].filing.accession == ACCESSION
     master = build_cover_security_master(result.evidence, as_of=CUTOFF).master
+    assert len(result.share_observations) == 1
+    assert result.share_observations[0].shares_outstanding == 125_000_000
+    assert result.share_observations[0].security_id == master.securities[0].security_id
+    assert result.share_observations[0].accepted == datetime(2026, 5, 1, 20, tzinfo=UTC)
     assert master.resolve("ONE", "NASDAQ", date(2026, 6, 1)).status == "mapped"
     assert master.resolve("ONE", "NASDAQ", date(2026, 4, 1)).status != "mapped"
     assert tuple(tmp_path.glob(f"accessions/{ACCESSION}/snapshots/*/{PRIMARY}"))
@@ -165,6 +173,7 @@ def test_cover_acquisition_rejects_a_cover_pair_that_does_not_match_discovery(
     )
 
     assert not result.evidence
+    assert not result.share_observations
     assert result.gaps[0].kind == "cover_not_in_discovery_plan"
 
 
@@ -190,8 +199,33 @@ def test_cover_acquisition_quarantines_a_missing_historical_filing_resource(
         maximum_ciks=1,
     )
 
-    assert not result.evidence and result.archived_filings == 0
+    assert not result.evidence and not result.share_observations and result.archived_filings == 0
     assert result.gaps[0].kind == "filing_resource_missing"
+
+
+def test_cover_acquisition_records_incomplete_current_symbols_without_losing_filings(
+    tmp_path: Path,
+) -> None:
+    class IncompleteCurrentSymbolClient(FakeClient):
+        def submissions(self, cik: int, *, refresh: bool) -> EdgarDocument:
+            payload = _filing_payload()
+            payload["tickers"] = ["ONE", "BROKEN"]
+            payload["exchanges"] = ["Nasdaq", None]
+            return _document(
+                payload,
+                "https://data.sec.gov/submissions/CIK0000000001.json",
+            )
+
+    result = acquire_cover_evidence(
+        IncompleteCurrentSymbolClient(),
+        _plan(),
+        tmp_path,
+        as_of=CUTOFF,
+        maximum_ciks=1,
+    )
+
+    assert len(result.evidence) == len(result.share_observations) == 1
+    assert [gap.kind for gap in result.gaps] == ["unusable_current_symbol_rows"]
 
 
 def test_filer_regime_uses_only_forms_accepted_by_the_cutoff() -> None:

@@ -39,6 +39,7 @@ from usinv.data.edgar.cover_acquisition import (
     CoverAcquisitionGap,
     CoverAcquisitionResult,
     CoverArchiveRecord,
+    CoverShareObservation,
     acquire_cover_evidence,
     infer_domestic_flag,
 )
@@ -167,6 +168,7 @@ __all__ = [
     "CoverEvidenceShard",
     "CoverFilingEvidence",
     "CoverSecurityBootstrap",
+    "CoverShareObservation",
     "CoverageInput",
     "CoverageReport",
     "EdgarCacheError",

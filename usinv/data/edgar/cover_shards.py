@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Final
 
@@ -18,6 +19,7 @@ from usinv.data.edgar.cover_acquisition import (
     CoverAcquisitionGap,
     CoverAcquisitionResult,
     CoverArchiveRecord,
+    CoverShareObservation,
 )
 from usinv.data.edgar.securities import (
     SecurityMaster,
@@ -30,7 +32,7 @@ from usinv.data.edgar.security_bootstrap import (
     CoverSecurityBootstrap,
 )
 
-COVER_SHARD_VERSION: Final = "usinv-cover-evidence-shard-v1"
+COVER_SHARD_VERSION: Final = "usinv-cover-evidence-shard-v2"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +45,7 @@ class CoverEvidenceShard:
     deferred_ciks: int
     selected_filings: int
     archives: tuple[CoverArchiveRecord, ...]
+    share_observations: tuple[CoverShareObservation, ...]
     acquisition_gaps: tuple[CoverAcquisitionGap, ...]
     bootstrap_gaps: tuple[CoverBootstrapGap, ...]
     master: SecurityMaster
@@ -56,6 +59,7 @@ class CoverEvidenceMerge:
     requested_ciks: tuple[int, ...]
     shard_snapshot_ids: tuple[str, ...]
     archives: tuple[CoverArchiveRecord, ...]
+    share_observations: tuple[CoverShareObservation, ...]
     acquisition_gaps: tuple[CoverAcquisitionGap, ...]
     bootstrap_gaps: tuple[CoverBootstrapGap, ...]
     master: SecurityMaster
@@ -81,6 +85,16 @@ def _payload(
         "archived_filings": acquisition.archived_filings,
         "evidence_filings": len(acquisition.evidence),
         "archives": [asdict(row) for row in acquisition.archives],
+        "share_observations": [
+            {
+                "security_id": row.security_id,
+                "cik": row.cik,
+                "accepted": row.accepted.astimezone(UTC).isoformat(),
+                "shares_outstanding": str(row.shares_outstanding),
+                "evidence_pointer": row.evidence_pointer,
+            }
+            for row in acquisition.share_observations
+        ],
         "acquisition_gaps": [asdict(row) for row in acquisition.gaps],
         "bootstrap_gaps": [asdict(row) for row in bootstrap.gaps],
         "master_snapshot_id": master_snapshot_id,
@@ -106,6 +120,16 @@ def read_cover_evidence_shard(path: str | Path) -> CoverEvidenceShard:
         master_snapshot_id = payload["master_snapshot_id"]
         master = read_security_master_snapshot(root / "master" / "snapshots" / master_snapshot_id)
         archives = tuple(CoverArchiveRecord(**row) for row in payload["archives"])
+        share_observations = tuple(
+            CoverShareObservation(
+                row["security_id"],
+                row["cik"],
+                datetime.fromisoformat(row["accepted"]),
+                Decimal(row["shares_outstanding"]),
+                row["evidence_pointer"],
+            )
+            for row in payload["share_observations"]
+        )
         acquisition_gaps = tuple(CoverAcquisitionGap(**row) for row in payload["acquisition_gaps"])
         bootstrap_gaps = tuple(CoverBootstrapGap(**row) for row in payload["bootstrap_gaps"])
         as_of = datetime.fromisoformat(payload["as_of"])
@@ -134,6 +158,12 @@ def read_cover_evidence_shard(path: str | Path) -> CoverEvidenceShard:
             for row in archives
         )
         or any(row.cik not in requested_ciks for row in master.securities)
+        or any(
+            row.cik not in requested_ciks
+            or row.security_id not in {security.security_id for security in master.securities}
+            or row.accepted.astimezone(UTC) > as_of.astimezone(UTC)
+            for row in share_observations
+        )
         or any(row.cik not in requested_ciks for row in acquisition_gaps)
         or any(row.cik not in requested_ciks for row in bootstrap_gaps)
     ):
@@ -147,6 +177,7 @@ def read_cover_evidence_shard(path: str | Path) -> CoverEvidenceShard:
         payload["deferred_ciks"],
         payload["selected_filings"],
         archives,
+        share_observations,
         acquisition_gaps,
         bootstrap_gaps,
         master,
@@ -168,6 +199,7 @@ def materialize_cover_evidence_shard(
     if (
         acquisition.archived_filings != len(acquisition.archives)
         or any(row.cik not in requested for row in acquisition.archives)
+        or any(row.cik not in requested for row in acquisition.share_observations)
         or any(row.cik not in requested for row in bootstrap.master.securities)
     ):
         raise EdgarPayloadError("cover evidence shard contains out-of-scope provenance")
@@ -235,6 +267,7 @@ def merge_cover_evidence_shards(
         expected,
         tuple(row.snapshot_id for row in rows),
         tuple(archive for row in rows for archive in row.archives),
+        tuple(observation for row in rows for observation in row.share_observations),
         tuple(gap for row in rows for gap in row.acquisition_gaps),
         tuple(gap for row in rows for gap in row.bootstrap_gaps),
         master,

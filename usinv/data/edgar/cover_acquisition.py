@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path, PurePosixPath
 
 from usinv.data.edgar.client import EdgarClient, EdgarHttpError, EdgarPayloadError
@@ -12,6 +13,7 @@ from usinv.data.edgar.filing_xbrl import (
     archive_filing,
     extract_cover_security_classes,
     parse_filing_xbrl,
+    security_evidence_from_cover,
 )
 from usinv.data.edgar.securities import SecurityMasterError, normalize_exchange, normalize_ticker
 from usinv.data.edgar.security_bootstrap import (
@@ -42,6 +44,26 @@ class CoverArchiveRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class CoverShareObservation:
+    security_id: str
+    cik: int
+    accepted: datetime
+    shares_outstanding: Decimal
+    evidence_pointer: str
+
+    def __post_init__(self) -> None:
+        if (
+            not self.security_id
+            or self.cik <= 0
+            or self.accepted.tzinfo is None
+            or not self.shares_outstanding.is_finite()
+            or self.shares_outstanding <= 0
+            or not self.evidence_pointer
+        ):
+            raise EdgarPayloadError("cover share observation provenance is incomplete")
+
+
+@dataclass(frozen=True, slots=True)
 class CoverAcquisitionResult:
     plan_snapshot_id: str
     as_of: datetime
@@ -51,6 +73,7 @@ class CoverAcquisitionResult:
     selected_filings: int
     archived_filings: int
     archives: tuple[CoverArchiveRecord, ...]
+    share_observations: tuple[CoverShareObservation, ...]
     evidence: tuple[CoverFilingEvidence, ...]
     gaps: tuple[CoverAcquisitionGap, ...]
 
@@ -133,6 +156,7 @@ def acquire_cover_evidence(
     deferred = eligible[len(requested) :]
     evidence: list[CoverFilingEvidence] = []
     archives: list[CoverArchiveRecord] = []
+    share_observations: list[CoverShareObservation] = []
     gaps: list[CoverAcquisitionGap] = []
     selected_count = 0
     archived_count = 0
@@ -148,6 +172,18 @@ def acquire_cover_evidence(
                     None,
                     "unusable_submission_rows",
                     f"{feed.unusable_filings} submissions rows lack an archivable primary document",
+                )
+            )
+        if feed.unusable_current_symbols:
+            gaps.append(
+                CoverAcquisitionGap(
+                    cik,
+                    None,
+                    "unusable_current_symbol_rows",
+                    (
+                        f"{feed.unusable_current_symbols} current ticker/exchange rows "
+                        "are incomplete and were quarantined"
+                    ),
                 )
             )
         domestic_flag = infer_domestic_flag(feed.filings, as_of=cutoff)
@@ -239,6 +275,30 @@ def acquire_cover_evidence(
                     )
                 )
                 continue
+            for cover in extract_cover_security_classes(parsed):
+                try:
+                    pair = (normalize_ticker(cover.ticker), normalize_exchange(cover.exchange))
+                    security, _ = security_evidence_from_cover(
+                        filing,
+                        cover,
+                        domestic_flag=domestic_flag,
+                    )
+                except SecurityMasterError:
+                    continue
+                if (
+                    pair in allowed_pairs
+                    and cover.shares_outstanding is not None
+                    and cover.shares_evidence_pointer is not None
+                ):
+                    share_observations.append(
+                        CoverShareObservation(
+                            security.security_id,
+                            cik,
+                            filing.accepted,
+                            cover.shares_outstanding,
+                            cover.shares_evidence_pointer,
+                        )
+                    )
             evidence.append(
                 CoverFilingEvidence(
                     filing,
@@ -257,6 +317,7 @@ def acquire_cover_evidence(
         selected_count,
         archived_count,
         tuple(archives),
+        tuple(share_observations),
         tuple(evidence),
         tuple(gaps),
     )

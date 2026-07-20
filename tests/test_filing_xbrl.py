@@ -52,6 +52,7 @@ INLINE_XBRL = b"""<?xml version="1.0" encoding="UTF-8"?>
       <ix:resources>
         <xbrli:unit id="USD"><xbrli:measure>iso4217:USD</xbrli:measure></xbrli:unit>
         <xbrli:unit id="pure"><xbrli:measure>xbrli:pure</xbrli:measure></xbrli:unit>
+        <xbrli:unit id="shares"><xbrli:measure>xbrli:shares</xbrli:measure></xbrli:unit>
         <xbrli:context id="duration">
           <xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0000320193</xbrli:identifier></xbrli:entity>
           <xbrli:period><xbrli:startDate>2025-01-01</xbrli:startDate><xbrli:endDate>2025-03-29</xbrli:endDate></xbrli:period>
@@ -82,6 +83,8 @@ INLINE_XBRL = b"""<?xml version="1.0" encoding="UTF-8"?>
       The Nasdaq Stock Market LLC
     </ix:nonNumeric>
     <ix:nonNumeric name="dei:Security12bTitle" contextRef="class-a">Common Stock</ix:nonNumeric>
+    <ix:nonFraction name="dei:EntityCommonStockSharesOutstanding" contextRef="class-a"
+                    unitRef="shares" decimals="0">15000000000</ix:nonFraction>
   </body>
 </html>
 """
@@ -146,6 +149,8 @@ def test_cover_facts_keep_share_class_dimension_together() -> None:
     assert classes[0].exchange == "The Nasdaq Stock Market LLC"
     assert classes[0].class_title == "Common Stock"
     assert classes[0].dimensions == (("dei:StatementClassOfStockAxis", "fixture:ClassAMember"),)
+    assert classes[0].shares_outstanding == Decimal("15000000000")
+    assert classes[0].shares_evidence_pointer is not None
 
     security, symbol = security_evidence_from_cover(_filing(), classes[0])
     master = build_security_master([security], [symbol])

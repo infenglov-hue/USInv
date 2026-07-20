@@ -353,6 +353,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"deferred_ciks={len(acquisition.deferred_ciks)}",
                     f"archived_filings={acquisition.archived_filings}",
                     f"evidence_filings={len(acquisition.evidence)}",
+                    f"share_observations={len(acquisition.share_observations)}",
                     f"evidence_ciks={len({row.cik for row in bootstrap.master.securities})}",
                     f"acquisition_gaps={len(acquisition.gaps)}",
                     f"security_master_gaps={len(bootstrap.gaps)}",
