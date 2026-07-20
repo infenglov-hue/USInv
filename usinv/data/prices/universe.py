@@ -165,6 +165,7 @@ def build_price_universe_plan(
                 row.normalized_exchange,
                 signal_at.date(),
                 minimum_confidence="high",
+                required_security_type="common_stock",
             )
         except SecurityMasterError:
             continue

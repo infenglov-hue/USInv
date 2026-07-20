@@ -217,6 +217,7 @@ def _mapped_issuers(
             candidate.exchange,
             candidate.session,
             minimum_confidence="high",
+            required_security_type="common_stock",
         )
         if result.status != "mapped" or result.security_id is None:
             failures.append(

@@ -158,6 +158,37 @@ def test_cover_facts_keep_share_class_dimension_together() -> None:
     assert master.resolve("AAPL", "NASDAQ", date(2025, 5, 2)).security_id == security.security_id
 
 
+def test_one_day_duration_cover_context_is_valid_identity_evidence() -> None:
+    body = INLINE_XBRL.replace(
+        b"<xbrli:instant>2025-03-29</xbrli:instant>",
+        b"<xbrli:startDate>2025-03-29</xbrli:startDate><xbrli:endDate>2025-03-29</xbrli:endDate>",
+    )
+
+    result = parse_filing_xbrl(
+        body,
+        filing=_filing(),
+        source_document="one-day-cover.htm",
+    )
+
+    classes = extract_cover_security_classes(result)
+    assert len(classes) == 1
+    assert (classes[0].ticker, classes[0].exchange) == (
+        "AAPL",
+        "The Nasdaq Stock Market LLC",
+    )
+    assert classes[0].shares_outstanding == Decimal("15000000000")
+    invalid_tags = {item.tag for item in result.issues if item.kind == "invalid_period"}
+    assert "SegmentRevenue" in invalid_tags
+    assert not invalid_tags.intersection(
+        {
+            "TradingSymbol",
+            "SecurityExchangeName",
+            "Security12bTitle",
+            "EntityCommonStockSharesOutstanding",
+        }
+    )
+
+
 def test_presentation_linkbase_recovers_only_accession_versioned_custom_row() -> None:
     rows = parse_presentation_linkbase(PRESENTATION, accession=ACCN, label_body=LABEL)
 

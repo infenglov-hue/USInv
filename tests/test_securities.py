@@ -23,12 +23,18 @@ def test_exchange_normalization_is_idempotent_for_every_canonical_venue() -> Non
         assert normalize_exchange(normalize_exchange(exchange)) == exchange
 
 
-def _security(cik: int, anchor: str, title: str = "Common Stock") -> Security:
+def _security(
+    cik: int,
+    anchor: str,
+    title: str = "Common Stock",
+    *,
+    security_type: str = "common_stock",
+) -> Security:
     return Security(
         security_id=mint_security_id(cik, anchor),
         cik=cik,
         class_title=title,
-        security_type="common_stock",
+        security_type=security_type,
         domestic_flag=True,
         identity_anchor=anchor,
         source="sec_xbrl_cover",
@@ -120,6 +126,28 @@ def test_overlapping_recycled_ticker_is_quarantined_not_guessed() -> None:
     assert result.status == "quarantined"
     assert set(result.candidate_security_ids) == {first.security_id, second.security_id}
     assert master.issues[0].kind == "ticker_collision"
+
+
+def test_equity_resolution_ignores_same_symbol_non_equity_cover_class() -> None:
+    common = _security(100, "sec-cover:common")
+    note = _security(100, "sec-cover:note", "3.125% Notes", security_type="other")
+    master = build_security_master(
+        [common, note],
+        [
+            _symbol(common, "ONE", date(2020, 1, 1)),
+            _symbol(note, "ONE", date(2020, 1, 1)),
+        ],
+    )
+
+    assert master.resolve("ONE", "NASDAQ", date(2023, 6, 1)).status == "quarantined"
+    equity = master.resolve(
+        "ONE",
+        "NASDAQ",
+        date(2023, 6, 1),
+        required_security_type="common_stock",
+    )
+    assert equity.status == "mapped"
+    assert equity.security_id == common.security_id
 
 
 def test_one_security_cannot_have_two_simultaneous_tickers_on_one_exchange() -> None:

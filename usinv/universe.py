@@ -402,6 +402,7 @@ def build_universe_snapshot(
                     exchange,
                     session,
                     minimum_confidence="high",
+                    required_security_type="common_stock",
                 )
             except SecurityMasterError:
                 mapping_status = "invalid_symbol"

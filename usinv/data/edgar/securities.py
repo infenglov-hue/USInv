@@ -221,10 +221,16 @@ class SecurityMaster:
         session: date,
         *,
         minimum_confidence: Confidence = "high",
+        required_security_type: str | None = None,
     ) -> MappingResult:
         normalized_ticker = normalize_ticker(ticker)
         normalized_exchange = normalize_exchange(exchange)
         threshold = _CONFIDENCE_ORDER[minimum_confidence]
+        admitted_security_ids = {
+            security.security_id
+            for security in self.securities
+            if required_security_type is None or security.security_type == required_security_type
+        }
         evidence = tuple(
             interval
             for interval in self.symbols
@@ -233,6 +239,7 @@ class SecurityMaster:
             and interval.contains(session)
             and _CONFIDENCE_ORDER[interval.confidence] >= threshold
             and interval.scope != "recovery_only"
+            and interval.security_id in admitted_security_ids
         )
         candidates = tuple(sorted({interval.security_id for interval in evidence}))
         active_issues = tuple(
@@ -243,6 +250,11 @@ class SecurityMaster:
             and (
                 issue.ticker in {"*", normalized_ticker}
                 or bool(set(issue.security_ids).intersection(candidates))
+            )
+            and (
+                required_security_type is None
+                or issue.kind != "ticker_collision"
+                or len(set(issue.security_ids).intersection(candidates)) > 1
             )
         )
         pointers = tuple(sorted({item.evidence_pointer for item in evidence}))

@@ -66,6 +66,17 @@ _NUMBER_WORDS: Final = {
     "ninety": 90,
 }
 _NUMBER_SCALES: Final = {"thousand": 1_000, "million": 1_000_000, "billion": 1_000_000_000}
+_COVER_IDENTITY_TAGS: Final = frozenset(
+    {
+        "TradingSymbol",
+        "EntityTradingSymbol",
+        "SecurityExchangeName",
+        "Security12bTitle",
+        "TitleOf12bSecurity",
+        "EntityCommonStockSharesOutstanding",
+        "CommonStockSharesOutstanding",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,8 +433,11 @@ def parse_filing_xbrl(
         try:
             ddate, qtrs = fsds_period(context.start, context.end)
         except EdgarPayloadError as exc:
-            issues.append(FilingXbrlIssue("invalid_period", context_id, tag, str(exc)))
-            continue
+            if tag in _COVER_IDENTITY_TAGS:
+                ddate, qtrs = fsds_period(None, context.end)
+            else:
+                issues.append(FilingXbrlIssue("invalid_period", context_id, tag, str(exc)))
+                continue
         text = _content(node, continuations)
         unit_ref = node.get("unitRef")
         unit = units.get(unit_ref) if unit_ref else None
