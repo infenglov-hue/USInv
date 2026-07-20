@@ -31,7 +31,7 @@ from usinv.data.edgar.submissions import (
     parse_submission_history,
     parse_submissions_document,
 )
-from usinv.data.prices import AlpacaPriceProvider, PriceDataError
+from usinv.data.prices import AlpacaPriceProvider, PriceDataError, TiingoSpotCheckClient
 
 
 def _fsds_quarter(value: str) -> FsdsQuarter:
@@ -91,6 +91,13 @@ def _parser() -> argparse.ArgumentParser:
         type=_iso_date,
         default=date(2020, 9, 30),
     )
+    tiingo = subcommands.add_parser(
+        "tiingo-smoke",
+        help="fetch one symbol-capped Tiingo EOD window and report declared actions",
+    )
+    tiingo.add_argument("--symbol", default="AAPL")
+    tiingo.add_argument("--start", type=_iso_date, default=date(2020, 8, 28))
+    tiingo.add_argument("--end", type=_iso_date, default=date(2020, 9, 1))
     live = subcommands.add_parser(
         "edgar-live-sync",
         help="archive and normalize newly accepted 10-K/10-Q filings for one CIK",
@@ -186,6 +193,32 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"execution={config.settings.execution_mode.value}",
                     f"holdings={config.portfolio.holdings}",
                     f"overlay={config.regime.default_overlay}",
+                )
+            )
+        )
+        return 0
+    if args.command == "tiingo-smoke":
+        config = load_config()
+        try:
+            result = TiingoSpotCheckClient.from_config(config).fetch(
+                symbol=args.symbol,
+                start=args.start,
+                end=args.end,
+            )
+            actions = result.action_observations(security_id=f"smoke:{result.symbol}")
+        except PriceDataError as exc:
+            print(f"tiingo_smoke_failed: {exc}", file=sys.stderr)
+            return 2
+        action_types = ",".join(action.action_type for action in actions) or "none"
+        print(
+            " ".join(
+                (
+                    "tiingo_smoke_ok",
+                    f"symbol={result.symbol}",
+                    f"rows={len(result.rows)}",
+                    f"source_sha256={result.page.content_sha256}",
+                    f"corporate_action_rows={len(actions)}",
+                    f"corporate_action_types={action_types}",
                 )
             )
         )

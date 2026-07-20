@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,7 +15,7 @@ from usinv.data.edgar.pit_store import (
     PitTableArtifact,
 )
 from usinv.data.edgar.tag_chains import CHAIN_VERSION, CoverageReport
-from usinv.data.prices import AlpacaPriceProvider
+from usinv.data.prices import AlpacaPriceProvider, TiingoSpotCheckClient
 
 
 def _document(payload: dict[str, object]) -> EdgarDocument:
@@ -143,6 +143,45 @@ def test_alpaca_smoke_reports_hashes_counts_and_empirical_action_access(
     assert "alpaca_smoke_ok symbol=AAPL raw_rows=2 adjusted_rows=2" in output
     assert f"raw_sha256={'a' * 64} adjusted_sha256={'b' * 64}" in output
     assert "corporate_actions=available corporate_action_rows=3" in output
+
+
+def test_tiingo_smoke_fails_closed_without_credentials(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("TIINGO_TOKEN", raising=False)
+
+    assert main(["tiingo-smoke"]) == 2
+    assert "token is missing" in capsys.readouterr().err
+
+
+def test_tiingo_smoke_reports_hash_count_and_action_types(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    class FakeClient:
+        def fetch(self, **kwargs: object) -> object:
+            assert kwargs == {
+                "symbol": "AAPL",
+                "start": date(2020, 8, 28),
+                "end": date(2020, 9, 1),
+            }
+            return SimpleNamespace(
+                symbol="AAPL",
+                rows=(1, 2, 3),
+                page=SimpleNamespace(content_sha256="c" * 64),
+                action_observations=lambda **kwargs: (SimpleNamespace(action_type="split"),),
+            )
+
+    monkeypatch.setattr(
+        TiingoSpotCheckClient,
+        "from_config",
+        staticmethod(lambda config: FakeClient()),
+    )
+
+    assert main(["tiingo-smoke"]) == 0
+    output = capsys.readouterr().out
+    assert "tiingo_smoke_ok symbol=AAPL rows=3" in output
+    assert f"source_sha256={'c' * 64}" in output
+    assert "corporate_action_rows=1 corporate_action_types=split" in output
 
 
 def test_edgar_smoke_reports_both_documents_without_dumping_payload(

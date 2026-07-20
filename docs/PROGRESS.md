@@ -1,5 +1,57 @@
 # PROGRESS
 
+## 2026-07-20 — Phase 2.2 action reconstruction (implementation in progress)
+
+### Implemented locally
+
+- Added a symbol-capped Tiingo EOD adapter with exact-decimal raw and adjusted
+  OHLCV, `divCash`, `splitFactor`, XNYS validation, credential-safe headers,
+  50-request/hour free-tier pacing, retries, response hashes and a manually
+  gated GitHub Actions smoke. Tiingo row dates are consumed directly as
+  provider ex-dates; no record-date formula exists in the code path.
+- Added a Stooq full-ZIP importer for the current official bulk URL. Every
+  supplied archive is ZIP/CRC/path/size checked, content-addressed and imported
+  as a full replacement—never appended. Adjusted bars remain explicitly
+  `unresolved` until both a declared split and dividend-payer sample distinguish
+  splits-only from total-return adjustment; drift checks cannot run before that
+  empirical basis gate passes.
+- Normalized Alpaca declared forward/reverse splits and cash dividends through
+  date-valid security bindings. Added the independent >25% raw discontinuity
+  detector, rational split matching, adjusted-series continuity, volume
+  confirmation and same-session earnings 8-K exclusion. Cash dividends are
+  never invented by the detector.
+- Added point-in-time three-source reconciliation and as-of anchored split and
+  total-return factors. Historical level rules continue to read immutable raw
+  prices. Stops reject unresolved actions; audit factors reject unresolved,
+  inferred and vendor-frozen adjustments.
+
+### Verification/status
+
+- The focused Phase 2.2/CLI/repository-guard suite passes 55 tests. The complete
+  offline suite passes 192 tests. Tests cover synthetic splits/dividends,
+  future reverse-split non-leakage into a historical $2 rule and stop, a real
+  NKLA 1-for-30 SEC fixture, ex-date handling, conflict quarantine, unsafe or
+  corrupted Stooq archives, unknown Stooq basis and credential-safe Tiingo
+  retries/schema drift.
+- **The phase is not marked complete yet.** GitHub currently has the Alpaca,
+  Alpha Vantage and EDGAR secrets but no `TIINGO_TOKEN`, so the live Tiingo
+  smoke has not run. The current Stooq site also presents a JavaScript
+  verification challenge to automated downloads, and its official page labels
+  the bulk data personal-use-only. The empirical dividend-basis gate therefore
+  remains pending and the Stooq drift check remains hard-disabled.
+
+### BLUEPRINT-DEVIATION — Stooq scheduled downloader is intentionally withheld (D033)
+
+- The blueprint's old direct ZIP path now returns 404; the official bulk page
+  points to `https://stooq.com/db/d/?b=d_us_txt`. Automated requests observed
+  on 2026-07-20 receive a JavaScript proof-of-work page rather than a ZIP.
+- USInv does not bypass that access control. Phase 2.2 ships the immutable full
+  archive importer and explicit unresolved-basis gate, but no weekly GitHub
+  downloader. Unattended Stooq ingestion remains blocked until the provider
+  offers a permitted automatable route or an approved replacement source is
+  selected. This does not weaken Alpaca raw-price immutability or action
+  quarantine.
+
 ## 2026-07-20 — Phase 2.1 Alpaca price foundation (complete in PR #13)
 
 ### Implemented locally

@@ -30,3 +30,14 @@ def test_alpaca_smoke_is_explicitly_gated_and_uses_only_actions_secrets() -> Non
     assert "secrets.ALPACA_KEY_ID" in workflow
     assert "secrets.ALPACA_SECRET_KEY" in workflow
     assert "Require Alpaca credentials" in workflow
+
+
+def test_tiingo_smoke_is_explicitly_gated_and_uses_only_its_secret() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "tiingo-smoke.yml").read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in workflow
+    assert "pull_request:" in workflow and "types: [labeled]" in workflow
+    assert "github.event.label.name == 'tiingo-live-smoke'" in workflow
+    assert "schedule:" not in workflow
+    assert "secrets.TIINGO_TOKEN" in workflow
+    assert "Require Tiingo credential" in workflow
