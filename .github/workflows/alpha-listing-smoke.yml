@@ -54,4 +54,6 @@ jobs:
       github.event_name == 'workflow_dispatch' &&
       startsWith(github.ref, 'refs/heads/agent/phase-2-3')
     uses: ./.github/workflows/security-master-bootstrap.yml
+    with:
+      plan_run_id: "29743405140"
     secrets: inherit
