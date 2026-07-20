@@ -333,7 +333,7 @@ class AlphaVantageListingClient:
             self._pace_and_count()
             response = self._transport.get(
                 request_url,
-                {"Accept": "text/csv", "User-Agent": "USInv/0.1 listing-ingest"},
+                {"User-Agent": "USInv/0.1 listing-ingest"},
                 self._timeout_seconds,
             )
             if response.status == 200:

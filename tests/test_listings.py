@@ -36,7 +36,7 @@ class FakeTransport:
         headers: Mapping[str, str],
         timeout_seconds: float,
     ) -> AlphaListingHttpResponse:
-        assert headers["Accept"] == "text/csv"
+        assert headers == {"User-Agent": "USInv/0.1 listing-ingest"}
         assert timeout_seconds == 4
         self.urls.append(url)
         return self.responses.pop(0)
