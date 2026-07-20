@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -429,6 +430,63 @@ def test_price_universe_batches_are_exact_and_reopenable(tmp_path: Path) -> None
     assert not created.from_cache and cached.from_cache
     assert len(created.price_snapshots) == 1
     assert read_price_universe_snapshot(created.output_dir).plan == plan
+
+
+def test_price_plan_rejects_legacy_common_type_when_title_is_a_warrant(tmp_path: Path) -> None:
+    _security_id, base_cover = _cover_snapshot(tmp_path / "base")
+    warrant_id = mint_security_id(CIK, "sec-cover-class:warrant")
+    warrant = Security(
+        warrant_id,
+        CIK,
+        "Warrants to purchase Common Stock",
+        "common_stock",
+        True,
+        "sec-cover-class:warrant",
+        "sec_xbrl_cover",
+        "sec://cover/warrant",
+    )
+    warrant_symbol = SymbolInterval(
+        warrant_id,
+        "ONEW",
+        "NASDAQ",
+        date(2020, 1, 1),
+        None,
+        "sec_xbrl_cover",
+        "high",
+        "sec://cover/warrant-symbol",
+        datetime(2020, 1, 1, 20, tzinfo=UTC),
+        "historical_interval",
+    )
+    master = build_security_master(
+        (*base_cover.merge.master.securities, warrant),
+        (*base_cover.merge.master.symbols, warrant_symbol),
+    )
+    cover = materialize_cover_evidence_merge(
+        replace(base_cover.merge, master=master),
+        tmp_path / "extended",
+    )
+    discovery = FilingDiscoveryPlan(
+        SIGNAL.date(),
+        "1" * 64,
+        "2" * 64,
+        datetime(2026, 7, 20, 12, tzinfo=UTC),
+        tuple(
+            FilingDiscoveryRow(
+                ticker,
+                "NASDAQ",
+                "NASDAQ",
+                "Stock",
+                f"alpha-vantage://{'3' * 64}/{row_number}",
+                "discovered",
+                (CIK,),
+            )
+            for row_number, ticker in enumerate(("ONE", "ONEW"), start=2)
+        ),
+    )
+
+    plan = build_price_universe_plan(discovery, cover, signal_at=SIGNAL)
+
+    assert [row.ticker for row in plan.targets] == ["ONE"]
 
 
 def test_phase_2_3_composer_rejects_mixed_input_lineage_before_building() -> None:

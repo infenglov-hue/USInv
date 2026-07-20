@@ -22,7 +22,12 @@ import pyarrow.parquet as pq
 from usinv.calendar import CalendarError, XNYSCalendar, default_calendar
 from usinv.config import UniverseConfig
 from usinv.data.edgar.applicability import ApplicabilityCoverageReport, UniverseCandidate
-from usinv.data.edgar.securities import Security, SecurityMaster, SecurityMasterError
+from usinv.data.edgar.securities import (
+    Security,
+    SecurityMaster,
+    SecurityMasterError,
+    is_explicit_non_common_security_title,
+)
 from usinv.data.listings import AlphaListingRow, AlphaListingSnapshot
 from usinv.scoring.sectors import SectorClassification, SectorMappingError, classify_sic
 
@@ -455,6 +460,7 @@ def build_universe_snapshot(
         common_stock_pass = bool(
             security
             and security.security_type == "common_stock"
+            and not is_explicit_non_common_security_title(security.class_title)
             and not explicit_non_common_listing
         )
         fpi_pass = bool(

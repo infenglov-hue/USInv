@@ -11,6 +11,7 @@ from usinv.data.edgar.securities import (
     SymbolInterval,
     build_security_master,
     current_sec_symbol,
+    is_explicit_non_common_security_title,
     materialize_security_master,
     mint_security_id,
     normalize_exchange,
@@ -21,6 +22,34 @@ from usinv.data.edgar.securities import (
 def test_exchange_normalization_is_idempotent_for_every_canonical_venue() -> None:
     for exchange in ("NASDAQ", "NYSE", "NYSEAMERICAN"):
         assert normalize_exchange(normalize_exchange(exchange)) == exchange
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Warrants to purchase Common Stock",
+        "Series A Right to purchase one share of common stock",
+        "American Depositary Shares, each representing two common shares",
+        "7.25% Series A Preferred Stock",
+        "3.125% Senior Notes due 2030",
+        "Units, each consisting of one common share and one warrant",
+    ],
+)
+def test_explicit_non_common_security_titles_are_detected(title: str) -> None:
+    assert is_explicit_non_common_security_title(title)
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Common Stock",
+        "Class A Common Stock",
+        "Common Units Representing Limited Partner Interests",
+        "Common Shares, including associated Share Purchase Rights",
+    ],
+)
+def test_common_equity_titles_are_not_misclassified(title: str) -> None:
+    assert not is_explicit_non_common_security_title(title)
 
 
 def _security(

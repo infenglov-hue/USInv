@@ -10,6 +10,7 @@ import pytest
 
 from usinv.data.edgar.client import EdgarConfigurationError, EdgarPayloadError, EdgarResource
 from usinv.data.edgar.filing_xbrl import (
+    CoverSecurityClass,
     archive_filing,
     extract_cover_security_classes,
     filing_facts_to_raw,
@@ -156,6 +157,23 @@ def test_cover_facts_keep_share_class_dimension_together() -> None:
     master = build_security_master([security], [symbol])
     assert master.resolve("AAPL", "NASDAQ", date(2025, 5, 1)).status == "unmapped"
     assert master.resolve("AAPL", "NASDAQ", date(2025, 5, 2)).security_id == security.security_id
+
+
+def test_warrant_title_mentioning_common_stock_remains_non_common() -> None:
+    cover = CoverSecurityClass(
+        "warrant",
+        "ONEW",
+        "The Nasdaq Stock Market LLC",
+        "Warrants to purchase Common Stock",
+        (),
+        ("fixture://warrant",),
+        None,
+        None,
+    )
+
+    security, _symbol = security_evidence_from_cover(_filing(), cover)
+
+    assert security.security_type == "other"
 
 
 def test_one_day_duration_cover_context_is_valid_identity_evidence() -> None:

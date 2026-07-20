@@ -13,7 +13,12 @@ from typing import Final
 
 from usinv.calendar import EXCHANGE_TIMEZONE, CalendarError, default_calendar
 from usinv.data.edgar.cover_shards import CoverEvidenceSnapshot, read_cover_evidence_snapshot
-from usinv.data.edgar.securities import SecurityMasterError, normalize_exchange, normalize_ticker
+from usinv.data.edgar.securities import (
+    SecurityMasterError,
+    is_explicit_non_common_security_title,
+    normalize_exchange,
+    normalize_ticker,
+)
 from usinv.data.edgar.security_bootstrap import FilingDiscoveryPlan
 from usinv.data.prices.base import (
     PriceDataError,
@@ -25,7 +30,7 @@ from usinv.data.prices.base import (
     read_price_snapshot,
 )
 
-PRICE_UNIVERSE_VERSION: Final = "usinv-price-universe-v1"
+PRICE_UNIVERSE_VERSION: Final = "usinv-price-universe-v2"
 
 
 class PriceUniverseError(PriceDataError):
@@ -181,7 +186,10 @@ def build_price_universe_plan(
             continue
         if mapping.status != "mapped" or mapping.security_id is None:
             continue
-        if securities[mapping.security_id].security_type != "common_stock":
+        security = securities[mapping.security_id]
+        if security.security_type != "common_stock" or (
+            is_explicit_non_common_security_title(security.class_title)
+        ):
             continue
         target = PriceUniverseTarget(mapping.security_id, row.ticker, row.normalized_exchange)
         prior = targets.get(target.security_id)

@@ -22,6 +22,7 @@ from usinv.data.edgar.periods import fsds_period
 from usinv.data.edgar.securities import (
     Security,
     SymbolInterval,
+    is_explicit_non_common_security_title,
     mint_security_id,
     normalize_exchange,
     normalize_ticker,
@@ -658,10 +659,12 @@ def security_evidence_from_cover(
     """Create a conservative class identity and forward-only filing-time symbol interval."""
     title = " ".join(cover.class_title.split())
     lowered = title.casefold()
-    if "common" in lowered:
-        security_type = "common_stock"
-    elif "preferred" in lowered:
+    if "preferred" in lowered:
         security_type = "preferred_stock"
+    elif is_explicit_non_common_security_title(title):
+        security_type = "other"
+    elif "common" in lowered:
+        security_type = "common_stock"
     else:
         security_type = "other"
     anchor_body: object = cover.dimensions or lowered

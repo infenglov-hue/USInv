@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import uuid
 from collections.abc import Iterable
@@ -22,6 +23,17 @@ Confidence = Literal["low", "medium", "high"]
 EvidenceScope = Literal["historical_interval", "live_edge_current", "recovery_only"]
 MappingStatus = Literal["mapped", "unmapped", "quarantined"]
 _CONFIDENCE_ORDER: Final = {"low": 0, "medium": 1, "high": 2}
+_NON_COMMON_SECURITY_TITLE_PATTERN: Final = re.compile(
+    r"\b(?:warrants?|depositary shares?|preferred(?:\s+\w+){0,3}\s+"
+    r"(?:stock|shares?|securities|units?|lp)|notes?|bonds?)\b",
+    re.IGNORECASE,
+)
+_NON_COMMON_SECURITY_RIGHT_PATTERN: Final = re.compile(
+    r"^(?:series\s+\w+\s+)?(?:subscription\s+)?rights?\b|\bright to purchase\b",
+    re.IGNORECASE,
+)
+_SECURITY_UNIT_PATTERN: Final = re.compile(r"\bunits?\b", re.IGNORECASE)
+_COMMON_UNIT_PATTERN: Final = re.compile(r"\bcommon units?\b", re.IGNORECASE)
 _EXCHANGE_ALIASES: Final = {
     "NASDAQ": "NASDAQ",
     "NASDAQ GLOBAL SELECT": "NASDAQ",
@@ -57,6 +69,20 @@ def normalize_exchange(value: str) -> str:
         return _EXCHANGE_ALIASES[exchange]
     except KeyError as exc:
         raise SecurityMasterError(f"unsupported exchange: {value!r}") from exc
+
+
+def is_explicit_non_common_security_title(title: str) -> bool:
+    """Return true only when a security-class title explicitly names a non-common line."""
+    normalized = " ".join(title.strip().split())
+    if not normalized:
+        return False
+    if _NON_COMMON_SECURITY_TITLE_PATTERN.search(normalized):
+        return True
+    if _NON_COMMON_SECURITY_RIGHT_PATTERN.search(normalized):
+        return True
+    return bool(_SECURITY_UNIT_PATTERN.search(normalized)) and not (
+        _COMMON_UNIT_PATTERN.search(normalized)
+    )
 
 
 def mint_security_id(cik: int, identity_anchor: str) -> str:
