@@ -11,6 +11,10 @@ on:
         description: Successful security-evidence run ID (Phase 2.3 branch only)
         required: false
         default: ""
+      reconcile_run_id:
+        description: Existing complete-evidence run to reconcile (Phase 2.3 branch only)
+        required: false
+        default: ""
   pull_request:
     types: [labeled]
 
@@ -57,4 +61,14 @@ jobs:
     uses: ./.github/workflows/phase-2-3-universe.yml
     with:
       cover_run_id: ${{ inputs.cover_run_id }}
+    secrets: inherit
+
+  reconcile-security-identities:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      startsWith(github.ref, 'refs/heads/agent/phase-2-3') &&
+      inputs.reconcile_run_id != ''
+    uses: ./.github/workflows/security-master-bootstrap.yml
+    with:
+      reconcile_run_id: ${{ inputs.reconcile_run_id }}
     secrets: inherit
