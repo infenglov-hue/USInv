@@ -1,6 +1,6 @@
 # PROGRESS
 
-## 2026-07-20 — Phase 2.3 point-in-time universe (implementation ready; gate pending)
+## 2026-07-20 — Phase 2.3 point-in-time universe (gate remediation in progress)
 
 ### Implemented locally
 
@@ -32,7 +32,7 @@
 
 ### Verification/status
 
-- Ruff lint/format and the complete offline suite pass: 230 tests. Tests cover
+- Ruff lint/format and the complete offline suite pass: 297 tests. Tests cover
   future filing/price rejection, raw-price non-rewriting, exact close timing,
   FPI/financial/biotech exclusions, multi-class aggregation, large-cap
   admission, mapping gaps, D030 denominator equality, immutable reopen and
@@ -49,19 +49,42 @@
   can be blank. The final adapter sends the previously proven User-Agent-only
   negotiation, permits blank non-key display names, and still rejects a blank
   symbol, exchange or asset type. No raw CSV was uploaded or committed.
+- **The complete filing-backed SEC bootstrap passed.** GitHub Actions run
+  `29756489491` covered 5,627 CIKs and produced 7,057 securities/symbols from
+  two PIT-bounded cover-capable filings per issuer. The immutable complete
+  evidence snapshot is
+  `1d5745747767089355503628a5662ee1503b8b103aabe736a2d043d3ea12a051`;
+  its security-master snapshot is
+  `fa07ad44d2d3e0dad3d02119632c6a39472579948c9d41d1863932e568d0e8a6`.
+- **The first end-to-end D032 build reached the real gate.** Run
+  `29765974208` fetched all 2,523 planned Alpaca symbols in 26 batches and
+  materialized the universe, then failed closed on 3,723 unresolved identity
+  mappings (2,406 unmapped, 1,315 quarantined, two invalid symbols). The
+  included denominator measured 89.8575% core and 67.5658% secondary coverage;
+  neither result was relabeled as passing.
+- The dominant quarantine cause was filing wording drift, not a vendor/API
+  failure: the same CIK/ticker/class received separate raw IDs when two filings
+  expressed an equivalent class title or XBRL dimension differently. Added a
+  semantic equity-class reconciliation that never includes ticker text in the
+  permanent ID, preserves explicitly distinct classes and refuses concurrent
+  generic-class ambiguity. On the exact complete evidence it collapses 1,057
+  equivalent groups, reduces securities from 7,057 to 5,990 and mapping issues
+  from 1,929 to 849. The approved-exchange active-stock replay changes 1,023
+  rows from quarantined to mapped while leaving 256 quarantined, 2,309 unmapped
+  and two invalid rather than guessing them.
+- Added a merge-only GitHub workflow that derives the reconciled immutable
+  evidence package from the exact retained shard IDs. It avoids repeating the
+  90-minute SEC acquisition and does not alter the D032 thresholds or evidence
+  rules.
 
 ### Acceptance gate remains closed
 
-- The repository currently has no full, high-confidence historical
-  `security_master` snapshot for the Alpha Vantage listed population. Existing
-  local live-edge evidence covers Apple, while current SEC ticker arrays and
-  FSDS filename prefixes are explicitly forbidden as historical identity
-  backfills. Therefore the real final-universe D032 applicability run cannot
-  yet be represented honestly.
-- Phase 2.3 is not marked complete and Phase 3 must not start until the dated
-  membership rows are joined through evidence-backed security validity
-  intervals, the complete price/fundamental evidence is materialized and the
-  90% core / 75% secondary gate passes with no mapping or mandatory-input gap.
+- The full security evidence and first real universe artifact now exist, but
+  the remaining unmapped/ambiguous listings and coverage shortfall are real
+  acceptance failures. Phase 2.3 is not marked complete and Phase 2.4/3 must
+  not start until the reconciled artifact is exercised and every remaining
+  identity, FF49, mandatory-input and 90%/75% coverage gap is resolved with
+  evidence rather than silent exclusion or inferred zeroes.
 
 ## 2026-07-20 — Phase 2.2 action reconstruction (merged as `eba4588` via PR #14)
 

@@ -1,0 +1,61 @@
+name: Reconcile filing-backed security identities
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Successful security-evidence workflow run ID
+        required: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install .
+      - name: Download immutable security discovery
+        uses: actions/download-artifact@v4
+        with:
+          name: security-discovery-plan
+          path: ${{ runner.temp }}/security-inputs/security-discovery-plan
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id }}
+      - name: Download immutable filing evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: filing-backed-security-evidence
+          path: ${{ runner.temp }}/security-inputs/filing-backed-security-evidence
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.source_run_id }}
+      - name: Reconcile semantic equity identities
+        shell: bash
+        run: |
+          cover_evidence="$(find "${{ runner.temp }}/security-inputs/filing-backed-security-evidence" -name complete-evidence.json -type f -print -quit | xargs dirname)"
+          test -n "$cover_evidence"
+          python -m usinv sec-cover-reconcile \
+            --cover-evidence "$cover_evidence" \
+            --output-dir "${{ runner.temp }}/security-master-reconciled"
+      - name: Upload compact discovery plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-discovery-plan
+          path: ${{ runner.temp }}/security-inputs/security-discovery-plan
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload reconciled complete security evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: filing-backed-security-evidence
+          path: ${{ runner.temp }}/security-master-reconciled/security-bootstrap/complete-evidence
+          if-no-files-found: error
+          retention-days: 30

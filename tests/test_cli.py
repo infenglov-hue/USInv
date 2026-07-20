@@ -428,6 +428,49 @@ def test_sec_cover_merge_requires_exact_shards_before_publishing(
     assert f"master_snapshot={'f' * 64}" in output
 
 
+def test_sec_cover_reconcile_reports_identity_rewrite(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    master = SimpleNamespace(securities=(object(),), symbols=(object(),), issues=())
+    source = SimpleNamespace(snapshot_id="a" * 64, merge=object())
+    merge = SimpleNamespace(master=master)
+    result = SimpleNamespace(
+        merge=merge,
+        collapsed_groups=7,
+        rewritten_security_ids=14,
+        ambiguous_groups=2,
+    )
+    snapshot = SimpleNamespace(snapshot_id="e" * 64, master_snapshot_id="f" * 64)
+    monkeypatch.setattr(cli_module, "read_cover_evidence_snapshot", lambda path: source)
+    monkeypatch.setattr(cli_module, "reconcile_cover_evidence_merge", lambda value: result)
+    monkeypatch.setattr(
+        cli_module,
+        "materialize_cover_evidence_merge",
+        lambda merged_value, output: snapshot,
+    )
+
+    assert (
+        main(
+            [
+                "sec-cover-reconcile",
+                "--cover-evidence",
+                str(tmp_path / "cover"),
+                "--output-dir",
+                str(tmp_path / "output"),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "sec_cover_reconcile_ok" in output
+    assert "collapsed_groups=7 rewritten_security_ids=14 ambiguous_groups=2" in output
+    assert f"evidence_snapshot={'e' * 64}" in output
+
+
 def test_universe_price_sync_reports_exact_batch_evidence(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

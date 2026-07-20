@@ -36,6 +36,7 @@ from usinv.data.edgar import (
     read_cover_evidence_shard,
     read_cover_evidence_snapshot,
     read_filing_discovery_plan,
+    reconcile_cover_evidence_merge,
     standardize_pit_snapshot,
 )
 from usinv.data.edgar.companyfacts import parse_companyfacts_document
@@ -170,6 +171,12 @@ def _parser() -> argparse.ArgumentParser:
     cover_merge.add_argument("--discovery-plan", type=Path, required=True)
     cover_merge.add_argument("--evidence-root", type=Path, required=True)
     cover_merge.add_argument("--output-dir", type=Path, help="override the private data root")
+    cover_reconcile = subcommands.add_parser(
+        "sec-cover-reconcile",
+        help="reconcile filing wording drift in one immutable complete cover package",
+    )
+    cover_reconcile.add_argument("--cover-evidence", type=Path, required=True)
+    cover_reconcile.add_argument("--output-dir", type=Path, help="override the private data root")
     universe_prices = subcommands.add_parser(
         "universe-price-sync",
         help="fetch exact raw/all Alpaca batches for a complete filing-backed security master",
@@ -440,6 +447,33 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"share_observations={len(merged.share_observations)}",
                     f"fpi_form_observations={len(merged.fpi_form_observations)}",
                     f"complete_form_histories={len(merged.form_history_proofs)}",
+                    f"evidence_snapshot={snapshot.snapshot_id}",
+                    f"master_snapshot={snapshot.master_snapshot_id}",
+                )
+            )
+        )
+        return 0
+    if args.command == "sec-cover-reconcile":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir)
+        try:
+            source = read_cover_evidence_snapshot(args.cover_evidence)
+            result = reconcile_cover_evidence_merge(source.merge)
+            snapshot = materialize_cover_evidence_merge(result.merge, output_root)
+        except EdgarError as exc:
+            print(f"sec_cover_reconcile_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "sec_cover_reconcile_ok",
+                    f"source_snapshot={source.snapshot_id}",
+                    f"collapsed_groups={result.collapsed_groups}",
+                    f"rewritten_security_ids={result.rewritten_security_ids}",
+                    f"ambiguous_groups={result.ambiguous_groups}",
+                    f"securities={len(result.merge.master.securities)}",
+                    f"symbols={len(result.merge.master.symbols)}",
+                    f"mapping_issues={len(result.merge.master.issues)}",
                     f"evidence_snapshot={snapshot.snapshot_id}",
                     f"master_snapshot={snapshot.master_snapshot_id}",
                 )

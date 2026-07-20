@@ -7,9 +7,10 @@ import json
 import re
 import shutil
 import uuid
+from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Final
@@ -24,19 +25,49 @@ from usinv.data.edgar.cover_acquisition import (
     CoverShareObservation,
 )
 from usinv.data.edgar.securities import (
+    Security,
     SecurityMaster,
+    SymbolInterval,
     build_security_master,
+    is_explicit_non_common_security_title,
     materialize_security_master,
+    mint_security_id,
     read_security_master_snapshot,
 )
 from usinv.data.edgar.security_bootstrap import (
     CoverBootstrapGap,
     CoverSecurityBootstrap,
+    _collapse_symbol_observations,
 )
 
-COVER_MERGE_VERSION: Final = "usinv-cover-evidence-merge-v2"
+COVER_IDENTITY_RECONCILIATION_VERSION: Final = "usinv-cover-semantic-equity-v1"
+COVER_MERGE_VERSION: Final = "usinv-cover-evidence-merge-v3"
 COVER_SHARD_VERSION: Final = "usinv-cover-evidence-shard-v3"
+_SUPPORTED_COVER_MERGE_VERSIONS: Final = frozenset(
+    {"usinv-cover-evidence-merge-v2", COVER_MERGE_VERSION}
+)
 _SHA256_PATTERN: Final = re.compile(r"^[0-9a-f]{64}$")
+_EQUITY_CLASS_PATTERN: Final = re.compile(
+    r"\b(?:class|series)\s+([a-z0-9][a-z0-9-]*)\b",
+    re.IGNORECASE,
+)
+_COMMON_EQUITY_PATTERN: Final = re.compile(
+    r"\bcommon(?:\s+(?:stock|shares?))?\b",
+    re.IGNORECASE,
+)
+_ORDINARY_EQUITY_PATTERN: Final = re.compile(r"\bordinary\s*shares?\b", re.IGNORECASE)
+_DIMENSION_CLASS_PATTERNS: Final = (
+    re.compile(r"commonclass([a-z0-9]+)$", re.IGNORECASE),
+    re.compile(
+        r"class([a-z0-9]+)(?:commonstock|commonshares?|ordinaryshares?)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:commonstock|commonshares?|ordinaryshares?)class([a-z0-9]+)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"^class([a-z0-9]+)$", re.IGNORECASE),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +111,161 @@ class CoverEvidenceSnapshot:
     merge: CoverEvidenceMerge
     master_snapshot_id: str
     from_cache: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CoverIdentityReconciliation:
+    """One deterministic, evidence-preserving semantic identity rewrite."""
+
+    merge: CoverEvidenceMerge
+    collapsed_groups: int
+    rewritten_security_ids: int
+    ambiguous_groups: int
+
+
+def _dimension_equity_class(identity_anchor: str) -> str | None:
+    prefix = "sec-cover-class:"
+    if not identity_anchor.startswith(prefix):
+        return None
+    try:
+        dimensions = json.loads(identity_anchor.removeprefix(prefix))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(dimensions, list):
+        return None
+    classes: set[str] = set()
+    for dimension in dimensions:
+        if not isinstance(dimension, list) or len(dimension) != 2:
+            continue
+        member = re.sub(
+            r"Member$",
+            "",
+            str(dimension[1]).rsplit(":", 1)[-1],
+            flags=re.IGNORECASE,
+        )
+        for pattern in _DIMENSION_CLASS_PATTERNS:
+            match = pattern.search(member)
+            if match and match.group(1).casefold() not in {"common", "of", "ordinary", "stock"}:
+                classes.add(match.group(1).casefold())
+                break
+    return next(iter(classes)) if len(classes) == 1 else None
+
+
+def _semantic_equity_key(security: Security) -> str | None:
+    title = " ".join(security.class_title.casefold().split())
+    if is_explicit_non_common_security_title(title):
+        return None
+    if _COMMON_EQUITY_PATTERN.search(title):
+        kind = "common-stock"
+    elif _ORDINARY_EQUITY_PATTERN.search(title):
+        kind = "ordinary-share"
+    else:
+        return None
+    match = _EQUITY_CLASS_PATTERN.search(title)
+    equity_class = (
+        match.group(1).casefold() if match else _dimension_equity_class(security.identity_anchor)
+    )
+    qualifier: str | None = None
+    if re.search(r"\bnon[- ]?voting\b", title):
+        qualifier = "nonvoting"
+    elif re.search(r"\bvariable\s+voting\b", title):
+        qualifier = "variable-voting"
+    elif re.search(r"\bsubordinate\s+voting\b", title):
+        qualifier = "subordinate-voting"
+    elif re.search(r"\bvoting\b", title):
+        qualifier = "voting"
+    return ":".join(
+        (
+            kind,
+            *((f"class-{equity_class}",) if equity_class else ()),
+            *((qualifier,) if qualifier else ()),
+        )
+    )
+
+
+def reconcile_cover_evidence_merge(merged: CoverEvidenceMerge) -> CoverIdentityReconciliation:
+    """Collapse filing wording drift without using a ticker as permanent identity."""
+    symbols_by_security: dict[str, list[SymbolInterval]] = defaultdict(list)
+    for symbol in merged.master.symbols:
+        symbols_by_security[symbol.security_id].append(symbol)
+    equity_groups: dict[tuple[int, str], list[Security]] = defaultdict(list)
+    untouched: list[Security] = []
+    for security in merged.master.securities:
+        key = _semantic_equity_key(security)
+        if key is None:
+            untouched.append(security)
+        else:
+            equity_groups[(security.cik, key)].append(security)
+    if any(not symbols_by_security[security.security_id] for security in merged.master.securities):
+        raise EdgarPayloadError("cover identity reconciliation requires symbol evidence")
+
+    remapped_ids: dict[str, str] = {}
+    reconciled_securities = untouched
+    collapsed_groups = 0
+    ambiguous_groups = 0
+    for (cik, key), securities in sorted(equity_groups.items()):
+        symbols = [
+            symbol
+            for security in securities
+            for symbol in symbols_by_security[security.security_id]
+        ]
+        pairs_by_start: dict[date, set[tuple[str, str]]] = defaultdict(set)
+        for symbol in symbols:
+            pairs_by_start[symbol.valid_from].add((symbol.ticker, symbol.exchange))
+        distinct_pairs = {(symbol.ticker, symbol.exchange) for symbol in symbols}
+        has_explicit_discriminator = ":" in key
+        ambiguous = (
+            len({security.domestic_flag for security in securities}) != 1
+            or any(len(pairs) > 1 for pairs in pairs_by_start.values())
+            or (len(distinct_pairs) > 1 and not has_explicit_discriminator)
+        )
+        if ambiguous:
+            reconciled_securities.extend(securities)
+            ambiguous_groups += 1
+            continue
+        identity_anchor = f"{COVER_IDENTITY_RECONCILIATION_VERSION}:{key}"
+        security_id = mint_security_id(cik, identity_anchor)
+        latest = max(
+            securities,
+            key=lambda security: (
+                max(symbol.known_at for symbol in symbols_by_security[security.security_id]),
+                security.evidence_pointer,
+                security.security_id,
+            ),
+        )
+        reconciled_securities.append(
+            replace(
+                latest,
+                security_id=security_id,
+                security_type="common_stock" if key.startswith("common-stock") else "other",
+                identity_anchor=identity_anchor,
+            )
+        )
+        if len(securities) > 1:
+            collapsed_groups += 1
+        for security in securities:
+            if security.security_id != security_id:
+                remapped_ids[security.security_id] = security_id
+
+    reconciled_symbols = _collapse_symbol_observations(
+        replace(symbol, security_id=remapped_ids.get(symbol.security_id, symbol.security_id))
+        for symbol in merged.master.symbols
+    )
+    master = build_security_master(reconciled_securities, reconciled_symbols)
+    shares = tuple(
+        replace(
+            observation,
+            security_id=remapped_ids.get(observation.security_id, observation.security_id),
+        )
+        for observation in merged.share_observations
+    )
+    reconciled = replace(merged, share_observations=shares, master=master)
+    return CoverIdentityReconciliation(
+        reconciled,
+        collapsed_groups,
+        len(remapped_ids),
+        ambiguous_groups,
+    )
 
 
 def _canonical(payload: dict[str, object]) -> bytes:
@@ -332,7 +518,7 @@ def merge_cover_evidence_shards(
         (security for row in rows for security in row.master.securities),
         (symbol for row in rows for symbol in row.master.symbols),
     )
-    return CoverEvidenceMerge(
+    merged = CoverEvidenceMerge(
         rows[0].plan_snapshot_id,
         rows[0].as_of,
         expected,
@@ -345,6 +531,7 @@ def merge_cover_evidence_shards(
         tuple(gap for row in rows for gap in row.bootstrap_gaps),
         master,
     )
+    return reconcile_cover_evidence_merge(merged).merge
 
 
 def _merge_payload(
@@ -399,7 +586,7 @@ def _read_merge_payload(path: Path) -> tuple[dict[str, object], str]:
     except (OSError, json.JSONDecodeError) as exc:
         raise EdgarPayloadError("complete cover evidence metadata is unreadable") from exc
     snapshot_id = hashlib.sha256(_canonical(payload)).hexdigest()
-    if path.name != snapshot_id or payload.get("version") != COVER_MERGE_VERSION:
+    if path.name != snapshot_id or payload.get("version") not in _SUPPORTED_COVER_MERGE_VERSIONS:
         raise EdgarPayloadError("complete cover evidence identity is invalid")
     return payload, snapshot_id
 

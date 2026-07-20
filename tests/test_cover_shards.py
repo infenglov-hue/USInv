@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import shutil
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -16,11 +19,13 @@ from usinv.data.edgar.cover_acquisition import (
     CoverShareObservation,
 )
 from usinv.data.edgar.cover_shards import (
+    CoverEvidenceMerge,
     materialize_cover_evidence_merge,
     materialize_cover_evidence_shard,
     merge_cover_evidence_shards,
     read_cover_evidence_shard,
     read_cover_evidence_snapshot,
+    reconcile_cover_evidence_merge,
 )
 from usinv.data.edgar.securities import (
     Security,
@@ -164,3 +169,254 @@ def test_cover_evidence_merge_requires_an_exact_non_overlapping_cik_partition(
         merge_cover_evidence_shards((first,), expected_ciks=(1, 2))
     with pytest.raises(EdgarPayloadError, match="overlap"):
         merge_cover_evidence_shards((first, first), expected_ciks=(1,))
+
+
+def test_complete_cover_reader_accepts_verified_v2_input_for_reconciliation(
+    tmp_path: Path,
+) -> None:
+    merged = merge_cover_evidence_shards(
+        (materialize_cover_evidence_shard(*_inputs(1, "ONE"), tmp_path / "shard"),),
+        expected_ciks=(1,),
+    )
+    created = materialize_cover_evidence_merge(merged, tmp_path / "current")
+    payload = json.loads(created.output_dir.joinpath("complete-evidence.json").read_text())
+    payload["version"] = "usinv-cover-evidence-merge-v2"
+    snapshot_id = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    legacy = tmp_path / "legacy" / snapshot_id
+    shutil.copytree(created.output_dir, legacy)
+    legacy.joinpath("complete-evidence.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    reopened = read_cover_evidence_snapshot(legacy)
+
+    assert reopened.snapshot_id == snapshot_id
+    assert reopened.merge.master == merged.master
+
+
+def test_cover_reconciliation_collapses_equivalent_equity_wording_and_rekeys_shares() -> None:
+    cik = 42
+    first_anchor = 'sec-cover-class:"common stock"'
+    second_anchor = 'sec-cover-class:"common stock, $0.01 par value per share"'
+    first_id = mint_security_id(cik, first_anchor)
+    second_id = mint_security_id(cik, second_anchor)
+    securities = (
+        Security(
+            first_id,
+            cik,
+            "Common Stock",
+            "common_stock",
+            True,
+            first_anchor,
+            "sec_xbrl_cover",
+            "sec://42/first",
+        ),
+        Security(
+            second_id,
+            cik,
+            "Common Stock, $0.01 par value per share",
+            "common_stock",
+            True,
+            second_anchor,
+            "sec_xbrl_cover",
+            "sec://42/second",
+        ),
+    )
+    symbols = (
+        SymbolInterval(
+            first_id,
+            "SAME",
+            "NASDAQ",
+            date(2026, 4, 1),
+            None,
+            "sec_xbrl_cover",
+            "high",
+            "sec://42/first",
+            datetime(2026, 4, 1, 20, tzinfo=UTC),
+            "historical_interval",
+        ),
+        SymbolInterval(
+            second_id,
+            "SAME",
+            "NASDAQ",
+            date(2026, 5, 1),
+            None,
+            "sec_xbrl_cover",
+            "high",
+            "sec://42/second",
+            datetime(2026, 5, 1, 20, tzinfo=UTC),
+            "historical_interval",
+        ),
+    )
+    shares = (
+        CoverShareObservation(
+            first_id,
+            cik,
+            datetime(2026, 4, 1, 20, tzinfo=UTC),
+            Decimal("100"),
+            "sec://42/first#shares",
+        ),
+        CoverShareObservation(
+            second_id,
+            cik,
+            datetime(2026, 5, 1, 20, tzinfo=UTC),
+            Decimal("110"),
+            "sec://42/second#shares",
+        ),
+    )
+    merged = CoverEvidenceMerge(
+        PLAN,
+        CUTOFF,
+        (cik,),
+        ("b" * 64,),
+        (),
+        shares,
+        (),
+        (),
+        (),
+        (),
+        build_security_master(securities, symbols),
+    )
+
+    result = reconcile_cover_evidence_merge(merged)
+
+    assert result.collapsed_groups == 1
+    assert result.rewritten_security_ids == 2
+    assert result.ambiguous_groups == 0
+    assert len(result.merge.master.securities) == 1
+    assert not result.merge.master.issues
+    mapped = result.merge.master.resolve("SAME", "NASDAQ", date(2026, 6, 1))
+    assert mapped.status == "mapped"
+    assert {row.security_id for row in result.merge.share_observations} == {mapped.security_id}
+
+
+def test_cover_reconciliation_keeps_concurrent_generic_classes_ambiguous() -> None:
+    cik = 43
+    anchors = (
+        'sec-cover-class:[["us-gaap:StatementClassOfStockAxis","one:CommonStockMember"]]',
+        'sec-cover-class:[["us-gaap:StatementClassOfStockAxis","two:CommonStockMember"]]',
+    )
+    security_ids = tuple(mint_security_id(cik, anchor) for anchor in anchors)
+    securities = tuple(
+        Security(
+            security_id,
+            cik,
+            "Common Stock",
+            "common_stock",
+            True,
+            anchor,
+            "sec_xbrl_cover",
+            f"sec://43/{ticker}",
+        )
+        for security_id, anchor, ticker in zip(
+            security_ids,
+            anchors,
+            ("CLASSA", "CLASSB"),
+            strict=True,
+        )
+    )
+    symbols = tuple(
+        SymbolInterval(
+            security_id,
+            ticker,
+            "NASDAQ",
+            date(2026, 5, 1),
+            None,
+            "sec_xbrl_cover",
+            "high",
+            f"sec://43/{ticker}",
+            datetime(2026, 5, 1, 20, tzinfo=UTC),
+            "historical_interval",
+        )
+        for security_id, ticker in zip(security_ids, ("CLASSA", "CLASSB"), strict=True)
+    )
+    merged = CoverEvidenceMerge(
+        PLAN,
+        CUTOFF,
+        (cik,),
+        ("b" * 64,),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        build_security_master(securities, symbols),
+    )
+
+    result = reconcile_cover_evidence_merge(merged)
+
+    assert result.ambiguous_groups == 1
+    assert result.rewritten_security_ids == 0
+    assert result.merge.master.securities == merged.master.securities
+
+
+def test_cover_reconciliation_preserves_ticker_change_pit_boundaries() -> None:
+    cik = 44
+    anchors = (
+        'sec-cover-class:"class a common stock"',
+        'sec-cover-class:"class a common stock, $0.01 par value per share"',
+    )
+    security_ids = tuple(mint_security_id(cik, anchor) for anchor in anchors)
+    securities = tuple(
+        Security(
+            security_id,
+            cik,
+            title,
+            "common_stock",
+            True,
+            anchor,
+            "sec_xbrl_cover",
+            f"sec://44/{ticker}",
+        )
+        for security_id, anchor, title, ticker in zip(
+            security_ids,
+            anchors,
+            ("Class A Common Stock", "Class A Common Stock, $0.01 par value per share"),
+            ("OLD", "NEW"),
+            strict=True,
+        )
+    )
+    symbols = tuple(
+        SymbolInterval(
+            security_id,
+            ticker,
+            "NASDAQ",
+            valid_from,
+            None,
+            "sec_xbrl_cover",
+            "high",
+            f"sec://44/{ticker}",
+            datetime.combine(valid_from, datetime.min.time(), tzinfo=UTC),
+            "historical_interval",
+        )
+        for security_id, ticker, valid_from in zip(
+            security_ids,
+            ("OLD", "NEW"),
+            (date(2026, 4, 1), date(2026, 6, 1)),
+            strict=True,
+        )
+    )
+    merged = CoverEvidenceMerge(
+        PLAN,
+        CUTOFF,
+        (cik,),
+        ("b" * 64,),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        build_security_master(securities, symbols),
+    )
+
+    master = reconcile_cover_evidence_merge(merged).merge.master
+
+    assert master.resolve("OLD", "NASDAQ", date(2026, 5, 31)).status == "mapped"
+    assert master.resolve("OLD", "NASDAQ", date(2026, 6, 1)).status == "unmapped"
+    assert master.resolve("NEW", "NASDAQ", date(2026, 5, 31)).status == "unmapped"
+    assert master.resolve("NEW", "NASDAQ", date(2026, 6, 1)).status == "mapped"
