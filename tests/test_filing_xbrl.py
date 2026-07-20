@@ -189,6 +189,33 @@ def test_one_day_duration_cover_context_is_valid_identity_evidence() -> None:
     )
 
 
+def test_dimensionless_entity_shares_attach_only_to_the_single_common_class() -> None:
+    body = INLINE_XBRL.replace(
+        b"</ix:resources>",
+        b"""<xbrli:context id="entity-shares">
+          <xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0000320193</xbrli:identifier></xbrli:entity>
+          <xbrli:period><xbrli:instant>2025-04-25</xbrli:instant></xbrli:period>
+        </xbrli:context></ix:resources>""",
+    ).replace(
+        b'name="dei:EntityCommonStockSharesOutstanding" contextRef="class-a"',
+        b'name="dei:EntityCommonStockSharesOutstanding" contextRef="entity-shares"',
+    )
+
+    result = parse_filing_xbrl(
+        body,
+        filing=_filing(),
+        source_document="dimensionless-shares.htm",
+    )
+
+    classes = extract_cover_security_classes(result)
+    assert len(classes) == 1
+    assert classes[0].shares_outstanding == Decimal("15000000000")
+    assert classes[0].shares_evidence_pointer is not None
+    assert "/entity-shares/EntityCommonStockSharesOutstanding" in (
+        classes[0].shares_evidence_pointer
+    )
+
+
 def test_presentation_linkbase_recovers_only_accession_versioned_custom_row() -> None:
     rows = parse_presentation_linkbase(PRESENTATION, accession=ACCN, label_body=LABEL)
 

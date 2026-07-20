@@ -9,7 +9,7 @@ import shutil
 import uuid
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path, PurePosixPath
@@ -622,6 +622,30 @@ def extract_cover_security_classes(result: FilingParseResult) -> tuple[CoverSecu
                 share_fact.evidence_pointer if share_fact else None,
             )
         )
+    common_indexes = [
+        index for index, cover in enumerate(output) if "common" in cover.class_title.casefold()
+    ]
+    if len(common_indexes) == 1 and output[common_indexes[0]].shares_outstanding is None:
+        candidates = [
+            fact
+            for fact in result.facts
+            if fact.tag == "EntityCommonStockSharesOutstanding"
+            and not fact.dimensions
+            and fact.value is not None
+            and fact.value > 0
+        ]
+        if candidates:
+            latest_period = max(fact.period_end for fact in candidates)
+            latest = [fact for fact in candidates if fact.period_end == latest_period]
+            values = {fact.value for fact in latest}
+            if len(values) == 1:
+                share_fact = min(latest, key=lambda fact: fact.evidence_pointer)
+                index = common_indexes[0]
+                output[index] = replace(
+                    output[index],
+                    shares_outstanding=share_fact.value,
+                    shares_evidence_pointer=share_fact.evidence_pointer,
+                )
     return tuple(sorted(output, key=lambda item: (item.ticker, item.exchange, item.context_id)))
 
 
