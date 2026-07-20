@@ -51,6 +51,8 @@ def _listing_snapshot() -> AlphaListingSnapshot:
         header
         + "AAPL,Apple Inc.,NASDAQ,Stock,1980-12-12,,Active\n"
         + "DUP,Duplicate Corp,NYSE,Stock,2020-01-01,,Active\n"
+        + "MOVE,Venue Moved Corp,AMEX,Stock,2020-01-01,,Active\n"
+        + "CROSS,Cross Venue Corp,AMEX,Stock,2020-01-01,,Active\n"
         + "ETF,Fund,NASDAQ,ETF,2020-01-01,,Active\n"
     )
     delisted = header + "OLD,Old Corp,NYSE,Stock,2000-01-01,2020-01-01,Delisted\n"
@@ -82,6 +84,9 @@ def test_sec_ticker_file_builds_only_an_immutable_discovery_plan(tmp_path: Path)
                     [320193, "Apple Inc.", "AAPL", "Nasdaq"],
                     [1, "Duplicate One", "DUP", "NYSE"],
                     [2, "Duplicate Two", "DUP", "NYSE"],
+                    [10, "Venue Moved Corp", "MOVE", "NYSE"],
+                    [11, "Cross Venue One", "CROSS", "NYSE"],
+                    [12, "Cross Venue Two", "CROSS", "Nasdaq"],
                     [3, "OTC Corp", "OTC", "OTC"],
                     [4, "No Exchange", "NONE", None],
                     [5, "Unsupported Series", "BC/PB", "NYSE"],
@@ -94,8 +99,10 @@ def test_sec_ticker_file_builds_only_an_immutable_discovery_plan(tmp_path: Path)
     rows = {row.ticker: row for row in plan.rows}
     assert rows["AAPL"].status == "discovered" and rows["AAPL"].candidate_ciks == (320193,)
     assert rows["DUP"].status == "ambiguous" and rows["DUP"].candidate_ciks == (1, 2)
+    assert rows["MOVE"].status == "discovered" and rows["MOVE"].candidate_ciks == (10,)
+    assert rows["CROSS"].status == "ambiguous" and rows["CROSS"].candidate_ciks == (11, 12)
     assert rows["ETF"].status == "unsupported_asset_type"
-    assert plan.ciks == (320193,)
+    assert plan.ciks == (10, 320193)
     assert plan.association_observed_at > CUTOFF
     assert plan.association_unusable_rows == 2
     created = materialize_filing_discovery_plan(plan, tmp_path)

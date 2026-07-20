@@ -32,7 +32,7 @@ from usinv.data.edgar.submissions import SubmissionFeed, SubmissionFiling
 from usinv.data.listings import AlphaListingSnapshot
 
 SEC_TICKER_FIELDS: Final = ("cik", "name", "ticker", "exchange")
-DISCOVERY_VERSION: Final = "usinv-sec-filing-discovery-v3"
+DISCOVERY_VERSION: Final = "usinv-sec-filing-discovery-v4"
 COVER_FORMS: Final = frozenset(
     {
         "10-K",
@@ -246,12 +246,14 @@ def build_filing_discovery_plan(
 ) -> FilingDiscoveryPlan:
     """Locate CIKs to inspect; results are deliberately ineligible as identity mappings."""
     index: dict[tuple[str, str], set[int]] = defaultdict(set)
+    ticker_index: dict[str, set[int]] = defaultdict(set)
     for item in associations.rows:
         try:
             exchange = normalize_exchange(item.exchange)
         except SecurityMasterError:
             continue
         index[(item.ticker, exchange)].add(item.cik)
+        ticker_index[item.ticker].add(item.cik)
 
     rows: list[FilingDiscoveryRow] = []
     for listing in sorted(
@@ -303,6 +305,11 @@ def build_filing_discovery_plan(
             )
             continue
         candidates = tuple(sorted(index.get((ticker, exchange), ())))
+        if not candidates:
+            # Current SEC exchange labels can lag a venue migration.  This is
+            # discovery only: the filing cover must still corroborate the exact
+            # Alpha ticker/exchange pair before any symbol interval is created.
+            candidates = tuple(sorted(ticker_index.get(ticker, ())))
         status: DiscoveryStatus
         if len(candidates) == 1:
             status = "discovered"
