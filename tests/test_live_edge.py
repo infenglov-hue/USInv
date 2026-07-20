@@ -17,6 +17,7 @@ from usinv.data.edgar.submissions import (
     SubmissionFiling,
     detect_new_periodic_filings,
     parse_submission_history,
+    parse_submission_history_forms,
     parse_submissions_document,
 )
 from usinv.data.edgar.tag_chains import RawFact
@@ -74,6 +75,7 @@ def test_submissions_parser_keeps_current_state_separate_from_filing_history() -
     assert feed.former_names[0].name == "Apple Computer, Inc."
     assert feed.former_names[0].valid_to == date(2007, 1, 10)
     assert feed.filings[0].accepted == datetime(2025, 5, 2, 20, tzinfo=UTC)
+    assert len(feed.form_history) == 2
     assert feed.history_files == ("CIK0000320193-submissions-001.json",)
     assert feed.unusable_filings == 0
     assert feed.unusable_current_symbols == 0
@@ -117,6 +119,7 @@ def test_submission_arrays_and_history_filenames_fail_closed() -> None:
     payload["filings"]["recent"]["primaryDocument"][0] = "../escape.htm"  # type: ignore[index]
     feed = parse_submissions_document(_document(payload))
     assert feed.unusable_filings == 1 and len(feed.filings) == 1
+    assert len(feed.form_history) == 2
 
 
 def test_periodic_detection_cannot_see_a_future_acceptance() -> None:
@@ -148,6 +151,15 @@ def test_older_submission_page_uses_same_acceptance_contract() -> None:
 
     assert len(filings) == 2
     assert all(item.accepted.tzinfo is UTC for item in filings)
+
+    recent["primaryDocument"][0] = None
+    forms = parse_submission_history_forms(
+        recent,
+        cik=CIK,
+        source_url="https://data.sec.gov/submissions/history.json",
+        source_sha256=SHA,
+    )
+    assert len(forms) == 2 and forms[0].accession == ACCN
 
 
 def test_period_normalization_ignores_filing_fy_fp() -> None:

@@ -355,6 +355,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"archived_filings={acquisition.archived_filings}",
                     f"evidence_filings={len(acquisition.evidence)}",
                     f"share_observations={len(acquisition.share_observations)}",
+                    f"fpi_form_observations={len(acquisition.fpi_form_observations)}",
+                    f"complete_form_histories={len(acquisition.form_history_proofs)}",
                     f"evidence_ciks={len({row.cik for row in bootstrap.master.securities})}",
                     f"acquisition_gaps={len(acquisition.gaps)}",
                     f"security_master_gaps={len(bootstrap.gaps)}",
@@ -393,6 +395,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"acquisition_gaps={len(merged.acquisition_gaps)}",
                     f"bootstrap_gaps={len(merged.bootstrap_gaps)}",
                     f"share_observations={len(merged.share_observations)}",
+                    f"fpi_form_observations={len(merged.fpi_form_observations)}",
+                    f"complete_form_histories={len(merged.form_history_proofs)}",
                     f"evidence_snapshot={snapshot.snapshot_id}",
                     f"master_snapshot={snapshot.master_snapshot_id}",
                 )

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -21,10 +23,16 @@ from usinv.data.edgar.security_bootstrap import (
     FilingDiscoveryPlan,
     select_cover_filings,
 )
-from usinv.data.edgar.submissions import SubmissionFiling, parse_submissions_document
+from usinv.data.edgar.submissions import (
+    SubmissionFiling,
+    SubmissionFormObservation,
+    parse_submission_history_forms,
+    parse_submissions_document,
+)
 
 _DOMESTIC_FORMS = frozenset({"10-K", "10-Q", "S-1"})
 _FOREIGN_FORMS = frozenset({"20-F", "40-F", "F-1"})
+_FPI_CLASSIFICATION_FORMS = frozenset({"20-F", "6-K", "F-1"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +72,43 @@ class CoverShareObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class CoverFpiFormObservation:
+    cik: int
+    accession: str
+    form: str
+    accepted: datetime
+    evidence_pointer: str
+
+    def __post_init__(self) -> None:
+        if (
+            self.cik <= 0
+            or not self.accession
+            or self.form.upper().removesuffix("/A") not in _FPI_CLASSIFICATION_FORMS
+            or self.accepted.tzinfo is None
+            or not self.evidence_pointer
+        ):
+            raise EdgarPayloadError("FPI form observation provenance is incomplete")
+
+
+@dataclass(frozen=True, slots=True)
+class CoverFormHistoryProof:
+    cik: int
+    as_of: datetime
+    source_documents: tuple[str, ...]
+    evidence_pointer: str
+
+    def __post_init__(self) -> None:
+        if (
+            self.cik <= 0
+            or self.as_of.tzinfo is None
+            or not self.source_documents
+            or tuple(sorted(set(self.source_documents))) != self.source_documents
+            or not self.evidence_pointer
+        ):
+            raise EdgarPayloadError("form-history completion proof is invalid")
+
+
+@dataclass(frozen=True, slots=True)
 class CoverAcquisitionResult:
     plan_snapshot_id: str
     as_of: datetime
@@ -76,6 +121,8 @@ class CoverAcquisitionResult:
     share_observations: tuple[CoverShareObservation, ...]
     evidence: tuple[CoverFilingEvidence, ...]
     gaps: tuple[CoverAcquisitionGap, ...]
+    fpi_form_observations: tuple[CoverFpiFormObservation, ...] = ()
+    form_history_proofs: tuple[CoverFormHistoryProof, ...] = ()
 
     @property
     def complete(self) -> bool:
@@ -83,7 +130,7 @@ class CoverAcquisitionResult:
 
 
 def infer_domestic_flag(
-    filings: tuple[SubmissionFiling, ...],
+    filings: tuple[SubmissionFiling | SubmissionFormObservation, ...],
     *,
     as_of: datetime,
 ) -> bool | None:
@@ -103,6 +150,34 @@ def infer_domestic_flag(
     if not observations:
         return None
     return max(observations)[2]
+
+
+def _merge_form_observations(
+    observations: tuple[SubmissionFormObservation, ...],
+) -> tuple[SubmissionFormObservation, ...]:
+    rows: dict[str, SubmissionFormObservation] = {}
+    for observation in observations:
+        prior = rows.get(observation.accession)
+        if prior is not None and (
+            prior.cik,
+            prior.accession,
+            prior.form,
+            prior.accepted,
+        ) != (
+            observation.cik,
+            observation.accession,
+            observation.form,
+            observation.accepted,
+        ):
+            raise EdgarPayloadError(
+                f"conflicting submissions form history for {observation.accession}"
+            )
+        if prior is None or (observation.source_url, observation.source_sha256) < (
+            prior.source_url,
+            prior.source_sha256,
+        ):
+            rows[observation.accession] = observation
+    return tuple(sorted(rows.values(), key=lambda row: (row.accepted, row.accession)))
 
 
 def _target_pairs(plan: FilingDiscoveryPlan) -> dict[int, frozenset[tuple[str, str]]]:
@@ -157,12 +232,15 @@ def acquire_cover_evidence(
     evidence: list[CoverFilingEvidence] = []
     archives: list[CoverArchiveRecord] = []
     share_observations: list[CoverShareObservation] = []
+    fpi_form_observations: list[CoverFpiFormObservation] = []
+    form_history_proofs: list[CoverFormHistoryProof] = []
     gaps: list[CoverAcquisitionGap] = []
     selected_count = 0
     archived_count = 0
 
     for cik in requested:
-        feed = parse_submissions_document(client.submissions(cik, refresh=refresh))
+        submissions_document = client.submissions(cik, refresh=refresh)
+        feed = parse_submissions_document(submissions_document)
         if feed.cik != cik:
             raise EdgarPayloadError("SEC submissions CIK does not match the discovery plan")
         if feed.unusable_filings:
@@ -186,7 +264,71 @@ def acquire_cover_evidence(
                     ),
                 )
             )
-        domestic_flag = infer_domestic_flag(feed.filings, as_of=cutoff)
+        form_rows = list(feed.form_history)
+        source_documents = [
+            f"{submissions_document.url}#{submissions_document.content_sha256}"
+        ]
+        form_history_complete = True
+        for filename in feed.history_files:
+            try:
+                history_document = client.submission_history(filename, refresh=refresh)
+            except EdgarHttpError as exc:
+                if exc.status != 404:
+                    raise
+                form_history_complete = False
+                gaps.append(
+                    CoverAcquisitionGap(
+                        cik,
+                        None,
+                        "submission_history_missing",
+                        f"SEC returned HTTP 404 for declared submissions history {filename}",
+                    )
+                )
+                continue
+            form_rows.extend(
+                parse_submission_history_forms(
+                    history_document.payload,
+                    cik=cik,
+                    source_url=history_document.url,
+                    source_sha256=history_document.content_sha256,
+                )
+            )
+            source_documents.append(
+                f"{history_document.url}#{history_document.content_sha256}"
+            )
+        form_history = _merge_form_observations(tuple(form_rows))
+        for row in form_history:
+            base_form = row.form.upper().removesuffix("/A")
+            if row.accepted <= cutoff and base_form in _FPI_CLASSIFICATION_FORMS:
+                fpi_form_observations.append(
+                    CoverFpiFormObservation(
+                        cik,
+                        row.accession,
+                        row.form,
+                        row.accepted,
+                        f"{row.source_url}#{row.source_sha256}:{row.accession}",
+                    )
+                )
+        if form_history_complete:
+            proof_sources = tuple(sorted(set(source_documents)))
+            proof_payload = {
+                "cik": cik,
+                "as_of": cutoff.isoformat(),
+                "declared_history_files": list(feed.history_files),
+                "source_documents": list(proof_sources),
+            }
+            digest = hashlib.sha256(
+                json.dumps(proof_payload, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            form_history_proofs.append(
+                CoverFormHistoryProof(
+                    cik,
+                    cutoff,
+                    proof_sources,
+                    f"sec-submissions-complete://{cik}/{digest}",
+                )
+            )
+        domestic_flag = infer_domestic_flag(form_history, as_of=cutoff)
         if domestic_flag is None:
             gaps.append(
                 CoverAcquisitionGap(
@@ -320,4 +462,6 @@ def acquire_cover_evidence(
         tuple(share_observations),
         tuple(evidence),
         tuple(gaps),
+        tuple(fpi_form_observations),
+        tuple(form_history_proofs),
     )

@@ -228,6 +228,43 @@ def test_cover_acquisition_records_incomplete_current_symbols_without_losing_fil
     assert [gap.kind for gap in result.gaps] == ["unusable_current_symbol_rows"]
 
 
+def test_cover_acquisition_archives_complete_fpi_form_history_proof(tmp_path: Path) -> None:
+    history_name = "CIK0000000001-submissions-001.json"
+
+    class HistoryClient(FakeClient):
+        def submissions(self, cik: int, *, refresh: bool) -> EdgarDocument:
+            payload = _filing_payload()
+            payload["filings"]["files"] = [{"name": history_name}]  # type: ignore[index]
+            return _document(
+                payload,
+                "https://data.sec.gov/submissions/CIK0000000001.json",
+            )
+
+        def submission_history(self, filename: str, *, refresh: bool) -> EdgarDocument:
+            assert filename == history_name and not refresh
+            return _document(
+                {
+                    "accessionNumber": ["0000000001-20-000001"],
+                    "acceptanceDateTime": ["2020-03-01T20:00:00Z"],
+                    "form": ["20-F"],
+                    "primaryDocument": [None],
+                },
+                f"https://data.sec.gov/submissions/{history_name}",
+            )
+
+    result = acquire_cover_evidence(
+        HistoryClient(),
+        _plan(),
+        tmp_path,
+        as_of=CUTOFF,
+        maximum_ciks=1,
+    )
+
+    assert [row.form for row in result.fpi_form_observations] == ["20-F"]
+    assert len(result.form_history_proofs) == 1
+    assert len(result.form_history_proofs[0].source_documents) == 2
+
+
 def test_filer_regime_uses_only_forms_accepted_by_the_cutoff() -> None:
     domestic = SubmissionFiling(
         1,

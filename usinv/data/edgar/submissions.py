@@ -48,6 +48,16 @@ class SubmissionFiling:
 
 
 @dataclass(frozen=True, slots=True)
+class SubmissionFormObservation:
+    cik: int
+    accession: str
+    form: str
+    accepted: datetime
+    source_url: str
+    source_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class SubmissionFeed:
     cik: int
     name: str
@@ -63,6 +73,7 @@ class SubmissionFeed:
     source_sha256: str
     unusable_filings: int = 0
     unusable_current_symbols: int = 0
+    form_history: tuple[SubmissionFormObservation, ...] = ()
 
 
 def _text(value: object, field: str, *, required: bool = True) -> str | None:
@@ -183,6 +194,38 @@ def _filing_rows(
     return rows
 
 
+def _form_rows(
+    payload: Mapping[str, object],
+    *,
+    cik: int,
+    source_url: str,
+    source_sha256: str,
+) -> tuple[SubmissionFormObservation, ...]:
+    names = ("accessionNumber", "acceptanceDateTime", "form")
+    columns = {name: _sequence(payload.get(name), name) for name in names}
+    row_count = len(columns["accessionNumber"])
+    if any(len(values) != row_count for values in columns.values()):
+        raise EdgarPayloadError("submissions form-history arrays have different lengths")
+    rows: dict[str, SubmissionFormObservation] = {}
+    for index in range(row_count):
+        accession = _text(columns["accessionNumber"][index], "accessionNumber")
+        if not ACCESSION_PATTERN.fullmatch(accession):
+            raise EdgarPayloadError(f"invalid SEC accession: {accession!r}")
+        observation = SubmissionFormObservation(
+            cik,
+            accession,
+            _text(columns["form"][index], "form"),
+            _accepted(columns["acceptanceDateTime"][index]),
+            source_url,
+            source_sha256,
+        )
+        prior = rows.get(accession)
+        if prior is not None and prior != observation:
+            raise EdgarPayloadError(f"conflicting submissions form rows for {accession}")
+        rows[accession] = observation
+    return tuple(sorted(rows.values(), key=lambda item: (item.accepted, item.accession)))
+
+
 def parse_submission_history(
     payload: Mapping[str, object],
     *,
@@ -192,6 +235,22 @@ def parse_submission_history(
 ) -> tuple[SubmissionFiling, ...]:
     """Parse one paginated older submissions file, which is a columnar object."""
     return _filing_rows(
+        payload,
+        cik=cik,
+        source_url=source_url,
+        source_sha256=source_sha256,
+    )
+
+
+def parse_submission_history_forms(
+    payload: Mapping[str, object],
+    *,
+    cik: int,
+    source_url: str,
+    source_sha256: str,
+) -> tuple[SubmissionFormObservation, ...]:
+    """Parse form metadata even when an older row has no archivable primary document."""
+    return _form_rows(
         payload,
         cik=cik,
         source_url=source_url,
@@ -265,6 +324,12 @@ def parse_submissions_document(document: EdgarDocument) -> SubmissionFeed:
         source_url=document.url,
         source_sha256=document.content_sha256,
     )
+    form_history = _form_rows(
+        recent,
+        cik=cik,
+        source_url=document.url,
+        source_sha256=document.content_sha256,
+    )
     return SubmissionFeed(
         cik=cik,
         name=_text(payload.get("name"), "name"),
@@ -284,6 +349,7 @@ def parse_submissions_document(document: EdgarDocument) -> SubmissionFeed:
         source_sha256=document.content_sha256,
         unusable_filings=unusable_filings,
         unusable_current_symbols=unusable_current_symbols,
+        form_history=form_history,
     )
 
 

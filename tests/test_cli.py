@@ -308,6 +308,8 @@ def test_sec_cover_bootstrap_reports_partial_progress_without_publishing_a_parti
         deferred_ciks=(2, 3),
         archived_filings=2,
         share_observations=(),
+        fpi_form_observations=(),
+        form_history_proofs=(),
         evidence=(object(),),
         gaps=(object(),),
     )
@@ -385,6 +387,8 @@ def test_sec_cover_merge_requires_exact_shards_before_publishing(
         requested_ciks=(1, 2),
         master=master,
         share_observations=(),
+        fpi_form_observations=(),
+        form_history_proofs=(),
         acquisition_gaps=(),
         bootstrap_gaps=(),
     )

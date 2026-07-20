@@ -19,6 +19,8 @@ from usinv.data.edgar.cover_acquisition import (
     CoverAcquisitionGap,
     CoverAcquisitionResult,
     CoverArchiveRecord,
+    CoverFormHistoryProof,
+    CoverFpiFormObservation,
     CoverShareObservation,
 )
 from usinv.data.edgar.securities import (
@@ -32,8 +34,8 @@ from usinv.data.edgar.security_bootstrap import (
     CoverSecurityBootstrap,
 )
 
-COVER_MERGE_VERSION: Final = "usinv-cover-evidence-merge-v1"
-COVER_SHARD_VERSION: Final = "usinv-cover-evidence-shard-v2"
+COVER_MERGE_VERSION: Final = "usinv-cover-evidence-merge-v2"
+COVER_SHARD_VERSION: Final = "usinv-cover-evidence-shard-v3"
 _SHA256_PATTERN: Final = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -48,6 +50,8 @@ class CoverEvidenceShard:
     selected_filings: int
     archives: tuple[CoverArchiveRecord, ...]
     share_observations: tuple[CoverShareObservation, ...]
+    fpi_form_observations: tuple[CoverFpiFormObservation, ...]
+    form_history_proofs: tuple[CoverFormHistoryProof, ...]
     acquisition_gaps: tuple[CoverAcquisitionGap, ...]
     bootstrap_gaps: tuple[CoverBootstrapGap, ...]
     master: SecurityMaster
@@ -62,6 +66,8 @@ class CoverEvidenceMerge:
     shard_snapshot_ids: tuple[str, ...]
     archives: tuple[CoverArchiveRecord, ...]
     share_observations: tuple[CoverShareObservation, ...]
+    fpi_form_observations: tuple[CoverFpiFormObservation, ...]
+    form_history_proofs: tuple[CoverFormHistoryProof, ...]
     acquisition_gaps: tuple[CoverAcquisitionGap, ...]
     bootstrap_gaps: tuple[CoverBootstrapGap, ...]
     master: SecurityMaster
@@ -106,6 +112,25 @@ def _payload(
             }
             for row in acquisition.share_observations
         ],
+        "fpi_form_observations": [
+            {
+                "cik": row.cik,
+                "accession": row.accession,
+                "form": row.form,
+                "accepted": row.accepted.astimezone(UTC).isoformat(),
+                "evidence_pointer": row.evidence_pointer,
+            }
+            for row in acquisition.fpi_form_observations
+        ],
+        "form_history_proofs": [
+            {
+                "cik": row.cik,
+                "as_of": row.as_of.astimezone(UTC).isoformat(),
+                "source_documents": list(row.source_documents),
+                "evidence_pointer": row.evidence_pointer,
+            }
+            for row in acquisition.form_history_proofs
+        ],
         "acquisition_gaps": [asdict(row) for row in acquisition.gaps],
         "bootstrap_gaps": [asdict(row) for row in bootstrap.gaps],
         "master_snapshot_id": master_snapshot_id,
@@ -145,6 +170,25 @@ def read_cover_evidence_shard(path: str | Path) -> CoverEvidenceShard:
             )
             for row in payload["share_observations"]
         )
+        fpi_form_observations = tuple(
+            CoverFpiFormObservation(
+                row["cik"],
+                row["accession"],
+                row["form"],
+                datetime.fromisoformat(row["accepted"]),
+                row["evidence_pointer"],
+            )
+            for row in payload["fpi_form_observations"]
+        )
+        form_history_proofs = tuple(
+            CoverFormHistoryProof(
+                row["cik"],
+                datetime.fromisoformat(row["as_of"]),
+                tuple(row["source_documents"]),
+                row["evidence_pointer"],
+            )
+            for row in payload["form_history_proofs"]
+        )
         acquisition_gaps = tuple(CoverAcquisitionGap(**row) for row in payload["acquisition_gaps"])
         bootstrap_gaps = tuple(CoverBootstrapGap(**row) for row in payload["bootstrap_gaps"])
         as_of = datetime.fromisoformat(payload["as_of"])
@@ -178,6 +222,17 @@ def read_cover_evidence_shard(path: str | Path) -> CoverEvidenceShard:
             or row.accepted.astimezone(UTC) > as_of.astimezone(UTC)
             for row in share_observations
         )
+        or any(
+            row.cik not in requested_ciks
+            or row.accepted.astimezone(UTC) > as_of.astimezone(UTC)
+            for row in fpi_form_observations
+        )
+        or len({row.cik for row in form_history_proofs}) != len(form_history_proofs)
+        or any(
+            row.cik not in requested_ciks
+            or row.as_of.astimezone(UTC) != as_of.astimezone(UTC)
+            for row in form_history_proofs
+        )
         or any(row.cik not in requested_ciks for row in acquisition_gaps)
         or any(row.cik not in requested_ciks for row in bootstrap_gaps)
     ):
@@ -192,6 +247,8 @@ def read_cover_evidence_shard(path: str | Path) -> CoverEvidenceShard:
         payload["selected_filings"],
         archives,
         share_observations,
+        fpi_form_observations,
+        form_history_proofs,
         acquisition_gaps,
         bootstrap_gaps,
         master,
@@ -214,6 +271,8 @@ def materialize_cover_evidence_shard(
         acquisition.archived_filings != len(acquisition.archives)
         or any(row.cik not in requested for row in acquisition.archives)
         or any(row.cik not in requested for row in acquisition.share_observations)
+        or any(row.cik not in requested for row in acquisition.fpi_form_observations)
+        or any(row.cik not in requested for row in acquisition.form_history_proofs)
         or any(row.cik not in requested for row in bootstrap.master.securities)
     ):
         raise EdgarPayloadError("cover evidence shard contains out-of-scope provenance")
@@ -282,6 +341,8 @@ def merge_cover_evidence_shards(
         tuple(row.snapshot_id for row in rows),
         tuple(archive for row in rows for archive in row.archives),
         tuple(observation for row in rows for observation in row.share_observations),
+        tuple(observation for row in rows for observation in row.fpi_form_observations),
+        tuple(proof for row in rows for proof in row.form_history_proofs),
         tuple(gap for row in rows for gap in row.acquisition_gaps),
         tuple(gap for row in rows for gap in row.bootstrap_gaps),
         master,
@@ -308,6 +369,25 @@ def _merge_payload(
                 "evidence_pointer": row.evidence_pointer,
             }
             for row in merged.share_observations
+        ],
+        "fpi_form_observations": [
+            {
+                "cik": row.cik,
+                "accession": row.accession,
+                "form": row.form,
+                "accepted": row.accepted.astimezone(UTC).isoformat(),
+                "evidence_pointer": row.evidence_pointer,
+            }
+            for row in merged.fpi_form_observations
+        ],
+        "form_history_proofs": [
+            {
+                "cik": row.cik,
+                "as_of": row.as_of.astimezone(UTC).isoformat(),
+                "source_documents": list(row.source_documents),
+                "evidence_pointer": row.evidence_pointer,
+            }
+            for row in merged.form_history_proofs
         ],
         "acquisition_gaps": [asdict(row) for row in merged.acquisition_gaps],
         "bootstrap_gaps": [asdict(row) for row in merged.bootstrap_gaps],
@@ -351,6 +431,25 @@ def read_cover_evidence_snapshot(path: str | Path) -> CoverEvidenceSnapshot:
             )
             for row in payload["share_observations"]
         )
+        fpi_forms = tuple(
+            CoverFpiFormObservation(
+                row["cik"],
+                row["accession"],
+                row["form"],
+                datetime.fromisoformat(row["accepted"]),
+                row["evidence_pointer"],
+            )
+            for row in payload["fpi_form_observations"]
+        )
+        form_history_proofs = tuple(
+            CoverFormHistoryProof(
+                row["cik"],
+                datetime.fromisoformat(row["as_of"]),
+                tuple(row["source_documents"]),
+                row["evidence_pointer"],
+            )
+            for row in payload["form_history_proofs"]
+        )
         acquisition_gaps = tuple(CoverAcquisitionGap(**row) for row in payload["acquisition_gaps"])
         bootstrap_gaps = tuple(CoverBootstrapGap(**row) for row in payload["bootstrap_gaps"])
         plan_snapshot_id = payload["plan_snapshot_id"]
@@ -379,6 +478,17 @@ def read_cover_evidence_snapshot(path: str | Path) -> CoverEvidenceSnapshot:
         )
         or any(
             row.cik not in requested
+            or row.accepted.astimezone(UTC) > as_of.astimezone(UTC)
+            for row in fpi_forms
+        )
+        or len({row.cik for row in form_history_proofs}) != len(form_history_proofs)
+        or any(
+            row.cik not in requested
+            or row.as_of.astimezone(UTC) != as_of.astimezone(UTC)
+            for row in form_history_proofs
+        )
+        or any(
+            row.cik not in requested
             or not re.fullmatch(r"\d{10}-\d{2}-\d{6}", row.accession)
             or len(row.archive_snapshot_id) != 64
             or len(row.primary_sha256) != 64
@@ -395,6 +505,8 @@ def read_cover_evidence_snapshot(path: str | Path) -> CoverEvidenceSnapshot:
         shard_snapshot_ids,
         archives,
         shares,
+        fpi_forms,
+        form_history_proofs,
         acquisition_gaps,
         bootstrap_gaps,
         master,

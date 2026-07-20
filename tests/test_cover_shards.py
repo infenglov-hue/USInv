@@ -11,6 +11,8 @@ from usinv.data.edgar.cover_acquisition import (
     CoverAcquisitionGap,
     CoverAcquisitionResult,
     CoverArchiveRecord,
+    CoverFormHistoryProof,
+    CoverFpiFormObservation,
     CoverShareObservation,
 )
 from usinv.data.edgar.cover_shards import (
@@ -85,6 +87,23 @@ def _inputs(cik: int, ticker: str):
         ),
         evidence=(object(),),  # type: ignore[arg-type]
         gaps=(CoverAcquisitionGap(cik, None, "fixture_gap", "visible fixture gap"),),
+        fpi_form_observations=(
+            CoverFpiFormObservation(
+                cik,
+                f"{cik:010d}-20-000001",
+                "20-F",
+                datetime(2020, 3, 1, 20, tzinfo=UTC),
+                f"sec://{cik}/history#20-f",
+            ),
+        ),
+        form_history_proofs=(
+            CoverFormHistoryProof(
+                cik,
+                CUTOFF,
+                (f"https://data.sec.gov/submissions/{cik}#" + "d" * 64,),
+                f"sec-submissions-complete://{cik}/" + "e" * 64,
+            ),
+        ),
     )
     bootstrap = CoverSecurityBootstrap(master, 1, 1, ())
     return acquisition, bootstrap
@@ -104,6 +123,8 @@ def test_cover_evidence_shard_is_immutable_compact_and_verified(tmp_path: Path) 
     reopened = read_cover_evidence_shard(created.output_dir)
     assert reopened.snapshot_id == created.snapshot_id
     assert reopened.share_observations == created.share_observations
+    assert reopened.fpi_form_observations == created.fpi_form_observations
+    assert reopened.form_history_proofs == created.form_history_proofs
 
     created.output_dir.joinpath("shard.json").write_text("{}", encoding="utf-8")
     with pytest.raises(EdgarPayloadError, match="identity"):
@@ -121,6 +142,8 @@ def test_cover_evidence_merge_requires_an_exact_non_overlapping_cik_partition(
     assert merged.requested_ciks == (1, 2)
     assert len(merged.master.securities) == 2
     assert len(merged.share_observations) == 2
+    assert len(merged.fpi_form_observations) == 2
+    assert len(merged.form_history_proofs) == 2
     assert merged.master.resolve("TWO", "NASDAQ", date(2026, 6, 1)).status == "mapped"
 
     created = materialize_cover_evidence_merge(merged, tmp_path / "final")
@@ -129,6 +152,8 @@ def test_cover_evidence_merge_requires_an_exact_non_overlapping_cik_partition(
     assert not created.from_cache and cached.from_cache
     reopened = read_cover_evidence_snapshot(created.output_dir)
     assert reopened.merge.share_observations == merged.share_observations
+    assert reopened.merge.fpi_form_observations == merged.fpi_form_observations
+    assert reopened.merge.form_history_proofs == merged.form_history_proofs
     assert reopened.merge.master == merged.master
 
     created.output_dir.joinpath("complete-evidence.json").write_text("{}", encoding="utf-8")
