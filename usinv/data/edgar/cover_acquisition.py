@@ -131,6 +131,15 @@ def acquire_cover_evidence(
         feed = parse_submissions_document(client.submissions(cik, refresh=refresh))
         if feed.cik != cik:
             raise EdgarPayloadError("SEC submissions CIK does not match the discovery plan")
+        if feed.unusable_filings:
+            gaps.append(
+                CoverAcquisitionGap(
+                    cik,
+                    None,
+                    "unusable_submission_rows",
+                    f"{feed.unusable_filings} submissions rows lack an archivable primary document",
+                )
+            )
         domestic_flag = infer_domestic_flag(feed.filings, as_of=cutoff)
         if domestic_flag is None:
             gaps.append(

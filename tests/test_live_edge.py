@@ -75,6 +75,17 @@ def test_submissions_parser_keeps_current_state_separate_from_filing_history() -
     assert feed.former_names[0].valid_to == date(2007, 1, 10)
     assert feed.filings[0].accepted == datetime(2025, 5, 2, 20, tzinfo=UTC)
     assert feed.history_files == ("CIK0000320193-submissions-001.json",)
+    assert feed.unusable_filings == 0
+
+
+def test_submissions_parser_quarantines_rows_without_a_primary_document() -> None:
+    payload = _submissions_payload()
+    payload["filings"]["recent"]["primaryDocument"][0] = ""  # type: ignore[index]
+
+    feed = parse_submissions_document(_document(payload))
+
+    assert feed.unusable_filings == 1
+    assert len(feed.filings) == 1
 
 
 def test_submission_arrays_and_history_filenames_fail_closed() -> None:

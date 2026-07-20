@@ -61,6 +61,7 @@ class SubmissionFeed:
     observed_at: datetime
     source_url: str
     source_sha256: str
+    unusable_filings: int = 0
 
 
 def _text(value: object, field: str, *, required: bool = True) -> str | None:
@@ -106,13 +107,13 @@ def _sequence(value: object, field: str) -> Sequence[object]:
     return value
 
 
-def _filing_rows(
+def _filing_rows_with_gaps(
     payload: Mapping[str, object],
     *,
     cik: int,
     source_url: str,
     source_sha256: str,
-) -> tuple[SubmissionFiling, ...]:
+) -> tuple[tuple[SubmissionFiling, ...], int]:
     columns = {name: _sequence(payload.get(name), name) for name in _REQUIRED_COLUMNS}
     row_count = len(columns["accessionNumber"])
     if any(len(values) != row_count for values in columns.values()):
@@ -127,11 +128,16 @@ def _filing_rows(
             optional[name] = values
 
     rows: dict[str, SubmissionFiling] = {}
+    unusable_filings = 0
     for index in range(row_count):
         accession = _text(columns["accessionNumber"][index], "accessionNumber")
         if not ACCESSION_PATTERN.fullmatch(accession):
             raise EdgarPayloadError(f"invalid SEC accession: {accession!r}")
-        primary_document = _text(columns["primaryDocument"][index], "primaryDocument")
+        primary_raw = columns["primaryDocument"][index]
+        if not isinstance(primary_raw, str) or not primary_raw.strip():
+            unusable_filings += 1
+            continue
+        primary_document = primary_raw.strip()
         if ".." in primary_document or primary_document.startswith(("/", "\\")):
             raise EdgarPayloadError("unsafe SEC primaryDocument path")
         filing = SubmissionFiling(
@@ -153,7 +159,26 @@ def _filing_rows(
         if prior is not None and prior != filing:
             raise EdgarPayloadError(f"conflicting submissions rows for {accession}")
         rows[accession] = filing
-    return tuple(sorted(rows.values(), key=lambda item: (item.accepted, item.accession)))
+    return (
+        tuple(sorted(rows.values(), key=lambda item: (item.accepted, item.accession))),
+        unusable_filings,
+    )
+
+
+def _filing_rows(
+    payload: Mapping[str, object],
+    *,
+    cik: int,
+    source_url: str,
+    source_sha256: str,
+) -> tuple[SubmissionFiling, ...]:
+    rows, _ = _filing_rows_with_gaps(
+        payload,
+        cik=cik,
+        source_url=source_url,
+        source_sha256=source_sha256,
+    )
+    return rows
 
 
 def parse_submission_history(
@@ -224,6 +249,12 @@ def parse_submissions_document(document: EdgarDocument) -> SubmissionFeed:
         sic = int(sic_value) if sic_value not in (None, "") else None
     except (TypeError, ValueError) as exc:
         raise EdgarPayloadError("submissions sic is invalid") from exc
+    recent_rows, unusable_filings = _filing_rows_with_gaps(
+        recent,
+        cik=cik,
+        source_url=document.url,
+        source_sha256=document.content_sha256,
+    )
     return SubmissionFeed(
         cik=cik,
         name=_text(payload.get("name"), "name"),
@@ -236,16 +267,12 @@ def parse_submissions_document(document: EdgarDocument) -> SubmissionFeed:
         ),
         current_symbols=current_symbols,
         former_names=tuple(former_names),
-        filings=_filing_rows(
-            recent,
-            cik=cik,
-            source_url=document.url,
-            source_sha256=document.content_sha256,
-        ),
+        filings=recent_rows,
         history_files=tuple(history_files),
         observed_at=document.validated_at,
         source_url=document.url,
         source_sha256=document.content_sha256,
+        unusable_filings=unusable_filings,
     )
 
 
