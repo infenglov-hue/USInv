@@ -15,8 +15,10 @@ from usinv.data.prices.alpaca import (
 )
 from usinv.data.prices.base import (
     PriceConfigurationError,
+    PriceMappingError,
     PricePayloadError,
     PriceQuery,
+    PriceSecurityBinding,
 )
 
 NOW = datetime(2026, 7, 19, 12, tzinfo=UTC)
@@ -315,3 +317,97 @@ def test_corporate_actions_forbidden_is_an_empirical_outcome_not_schema_guess() 
     assert not probe.entitled
     assert probe.outcome == "forbidden"
     assert probe.status == 403
+
+
+def test_declared_actions_are_mapped_by_dated_security_binding_and_ex_date() -> None:
+    body = json.dumps(
+        {
+            "corporate_actions": {
+                "reverse_splits": [
+                    {
+                        "id": "nikola-reverse-split",
+                        "symbol": "NKLA",
+                        "old_cusip": "654110105",
+                        "new_cusip": "654110303",
+                        "new_rate": 1,
+                        "old_rate": 30,
+                        "process_date": "2024-06-25",
+                        "ex_date": "2024-06-25",
+                    }
+                ],
+                "cash_dividends": [
+                    {
+                        "id": "fixture-dividend",
+                        "symbol": "NKLA",
+                        "cusip": "654110303",
+                        "rate": 0.25,
+                        "special": False,
+                        "foreign": False,
+                        "process_date": "2024-06-26",
+                        "ex_date": "2024-06-26",
+                        "record_date": "2024-06-28",
+                    }
+                ],
+            },
+            "next_page_token": None,
+        }
+    ).encode()
+    transport = FakeTransport([_response(body)])
+    binding = PriceSecurityBinding(
+        "nikola-common",
+        "NKLA",
+        "NASDAQ",
+        date(2020, 1, 1),
+        None,
+        "sec://nkla/common",
+    )
+
+    result = _provider(transport).fetch_corporate_actions(
+        bindings=(binding,),
+        start=date(2024, 6, 25),
+        end=date(2024, 6, 26),
+    )
+
+    assert [item.action_type for item in result.observations] == ["split", "cash_dividend"]
+    assert result.observations[0].ratio_or_cash == Decimal(1) / Decimal(30)
+    assert result.observations[0].effective_session == date(2024, 6, 25)
+    assert result.observations[1].effective_session == date(2024, 6, 26)
+    assert result.observations[1].ratio_or_cash == Decimal("0.25")
+    assert all(item.security_id == "nikola-common" for item in result.observations)
+    assert all(item.batch_id == result.batch_id for item in result.observations)
+    query = parse_qs(urlsplit(transport.calls[0][0]).query)
+    assert query["types"] == ["forward_split,reverse_split,cash_dividend"]
+
+
+def test_declared_action_rejects_overlapping_duplicate_bindings() -> None:
+    body = json.dumps(
+        {
+            "corporate_actions": {
+                "reverse_splits": [
+                    {
+                        "id": "nikola-reverse-split",
+                        "symbol": "NKLA",
+                        "new_rate": 1,
+                        "old_rate": 30,
+                        "ex_date": "2024-06-25",
+                    }
+                ]
+            },
+            "next_page_token": None,
+        }
+    ).encode()
+    bindings = (
+        PriceSecurityBinding(
+            "nikola-common", "NKLA", "NASDAQ", date(2020, 1, 1), None, "fixture://one"
+        ),
+        PriceSecurityBinding(
+            "nikola-common", "NKLA", "NASDAQ", date(2020, 1, 1), None, "fixture://two"
+        ),
+    )
+
+    with pytest.raises(PriceMappingError, match="exactly one"):
+        _provider(FakeTransport([_response(body)])).fetch_corporate_actions(
+            bindings=bindings,
+            start=date(2024, 6, 25),
+            end=date(2024, 6, 25),
+        )

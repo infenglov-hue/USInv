@@ -1,5 +1,72 @@
 # PROGRESS
 
+## 2026-07-20 — Phase 2.2 action reconstruction (complete in PR #14)
+
+### Implemented locally
+
+- Added a symbol-capped Tiingo EOD adapter with exact-decimal raw and adjusted
+  OHLCV, `divCash`, `splitFactor`, XNYS validation, credential-safe headers,
+  50-request/hour free-tier pacing, retries, response hashes and a manually
+  gated GitHub Actions smoke. Tiingo row dates are consumed directly as
+  provider ex-dates; no record-date formula exists in the code path.
+- Added a Stooq full-ZIP importer for the current official bulk URL. Every
+  supplied archive is ZIP/CRC/path/size checked, content-addressed and imported
+  as a full replacement—never appended. Adjusted bars remain explicitly
+  `unresolved` until both a declared split and dividend-payer sample distinguish
+  splits-only from total-return adjustment. A resolved assessment is bound to
+  the exact archive SHA-256; every different archive starts unresolved.
+- Normalized Alpaca declared forward/reverse splits and cash dividends through
+  date-valid security bindings. Added the independent >25% raw discontinuity
+  detector, rational split matching, adjusted-series continuity, volume
+  confirmation and same-session earnings 8-K exclusion. Cash dividends are
+  never invented by the detector.
+- Added point-in-time three-source reconciliation and as-of anchored split and
+  total-return factors. Historical level rules continue to read immutable raw
+  prices. Stops reject unresolved actions; audit factors reject unresolved,
+  inferred and vendor-frozen adjustments.
+
+### Verification/status
+
+- Ruff passes, the complete offline suite passes 197 tests and an isolated
+  wheel build succeeds. Tests cover synthetic splits/dividends,
+  future reverse-split non-leakage into a historical $2 rule and stop, a real
+  NKLA 1-for-30 SEC fixture, ex-date handling, conflict quarantine, unsafe or
+  corrupted Stooq archives, unknown or cross-archive Stooq basis, pre-calendar
+  rows, fractional adjusted volume, entry/row ticker mismatch and
+  credential-safe Tiingo retries/schema drift.
+- **The credentialed Tiingo smoke passed on 2026-07-20.** GitHub Actions run
+  `29727595571` returned three AAPL EOD rows for the 2020-08-28 through
+  2020-09-01 window, preserved response hash
+  `f292a3639f7915a2b79d756ee7f8ffb788b6047895d95fa9046889d996169111`
+  and exposed one declared split row. The first live attempt also caught an
+  undocumented `sort=asc` query parameter; removing it aligned the adapter with
+  the official EOD contract while client-side order validation remains strict.
+- **The Stooq empirical basis gate passed on 2026-07-20.** The manually supplied
+  537,357,305-byte archive has SHA-256
+  `dbfbe12bec5b78daeabb7811e3d1c41a2f964699c68f17d7dd200b45f40eec33`.
+  AAPL's declared 2026-05-11 cash dividend separates split-only from total
+  return, while SNAL's declared 1-for-5 reverse split confirms split
+  continuity. The classifier selected `splits_only` from two samples with zero
+  drift issues and re-read 10,122 requested AAPL/SNAL bars under the SHA-bound
+  gate. Git commits only the redacted evidence manifest, never the licensed
+  archive or vendor prices.
+- **Phase 2.2 acceptance is complete.** Tiingo provides the credentialed
+  detector-flagged spot check; the immutable Stooq archive supplies the
+  independently classified cross-check; unresolved actions and adjustments
+  continue to fail closed.
+
+### BLUEPRINT-DEVIATION — Stooq scheduled downloader is intentionally withheld (D034)
+
+- The blueprint's old direct ZIP path now returns 404; the official bulk page
+  points to `https://stooq.com/db/d/?b=d_us_txt`. Automated requests observed
+  on 2026-07-20 receive a JavaScript proof-of-work page rather than a ZIP.
+- USInv does not bypass that access control. Phase 2.2 ships the immutable full
+  archive importer and enables drift checks only for an empirically assessed,
+  exact archive hash, but no weekly GitHub downloader. Unattended Stooq
+  ingestion remains blocked until the provider offers a permitted automatable
+  route or an approved replacement source is selected. This does not weaken
+  Alpaca raw-price immutability or action quarantine.
+
 ## 2026-07-20 — Phase 2.1 Alpaca price foundation (complete in PR #13)
 
 ### Implemented locally

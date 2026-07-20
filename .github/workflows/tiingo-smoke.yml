@@ -1,0 +1,43 @@
+name: Tiingo corporate-action smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: Historical symbol to spot-check
+        required: true
+        default: AAPL
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tiingo-corporate-action-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.label.name == 'tiingo-live-smoke'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TIINGO_TOKEN: ${{ secrets.TIINGO_TOKEN }}
+      TIINGO_SMOKE_SYMBOL: ${{ inputs.symbol || 'AAPL' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Require Tiingo credential
+        run: test -n "$TIINGO_TOKEN"
+      - name: Install project
+        run: python -m pip install --disable-pip-version-check .
+      - name: Verify Tiingo raw, adjusted, split and dividend fields
+        run: python -m usinv tiingo-smoke --symbol "$TIINGO_SMOKE_SYMBOL"

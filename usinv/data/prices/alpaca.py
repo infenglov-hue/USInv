@@ -20,12 +20,15 @@ from urllib.request import Request, urlopen
 from usinv.calendar import EXCHANGE_TIMEZONE, CalendarError, XNYSCalendar, default_calendar
 from usinv.config import AppConfig
 from usinv.data.edgar.securities import SecurityMasterError, normalize_ticker
+from usinv.data.prices.actions import CorporateActionObservation
 from usinv.data.prices.base import (
     PriceConfigurationError,
     PriceFetchResult,
+    PriceMappingError,
     PricePayloadError,
     PriceProvider,
     PriceQuery,
+    PriceSecurityBinding,
     PriceSourcePage,
     VendorDailyBar,
 )
@@ -142,6 +145,36 @@ class CorporateActionsProbe:
     @property
     def entitled(self) -> bool:
         return self.outcome == "available"
+
+
+@dataclass(frozen=True, slots=True)
+class CorporateActionsFetchResult:
+    """Mapped split/dividend evidence; other action semantics remain later work."""
+
+    start: date
+    end: date
+    pages: tuple[PriceSourcePage, ...]
+    observations: tuple[CorporateActionObservation, ...]
+
+    @property
+    def batch_id(self) -> str:
+        payload = {
+            "provider": ALPACA_PROVIDER,
+            "start": self.start.isoformat(),
+            "end": self.end.isoformat(),
+            "pages": [
+                {
+                    "url": page.url,
+                    "retrieved_at": page.retrieved_at.astimezone(UTC).isoformat(),
+                    "sha256": page.content_sha256,
+                    "request_id": page.request_id,
+                }
+                for page in self.pages
+            ],
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
 
 
 class AlpacaPriceProvider(PriceProvider):
@@ -445,6 +478,203 @@ class AlpacaPriceProvider(PriceProvider):
         raw = self.fetch_daily_bars(PriceQuery(symbols, start, end, "raw"))
         adjusted = self.fetch_daily_bars(PriceQuery(symbols, start, end, "all"))
         return raw, adjusted
+
+    @staticmethod
+    def _action_binding(
+        symbol: str,
+        session: date,
+        bindings: tuple[PriceSecurityBinding, ...],
+    ) -> PriceSecurityBinding:
+        matches = tuple(
+            binding
+            for binding in bindings
+            if binding.ticker == symbol and binding.contains(session)
+        )
+        if len(matches) != 1:
+            raise PriceMappingError(
+                "Alpaca action requires exactly one security/exchange/date binding"
+            )
+        return matches[0]
+
+    def _parse_declared_action(
+        self,
+        *,
+        category: str,
+        item: object,
+        page: PriceSourcePage,
+        batch_id: str,
+        bindings: tuple[PriceSecurityBinding, ...],
+    ) -> CorporateActionObservation:
+        allowed_by_category = {
+            "forward_splits": {
+                "id",
+                "symbol",
+                "cusip",
+                "new_rate",
+                "old_rate",
+                "process_date",
+                "ex_date",
+                "record_date",
+                "payable_date",
+                "due_bill_redemption_date",
+            },
+            "reverse_splits": {
+                "id",
+                "symbol",
+                "old_cusip",
+                "new_cusip",
+                "new_rate",
+                "old_rate",
+                "process_date",
+                "ex_date",
+                "record_date",
+                "payable_date",
+            },
+            "cash_dividends": {
+                "id",
+                "symbol",
+                "cusip",
+                "rate",
+                "special",
+                "foreign",
+                "process_date",
+                "ex_date",
+                "record_date",
+                "payable_date",
+                "due_bill_on_date",
+                "due_bill_off_date",
+            },
+        }
+        required_by_category = {
+            "forward_splits": {"id", "symbol", "new_rate", "old_rate", "ex_date"},
+            "reverse_splits": {"id", "symbol", "new_rate", "old_rate", "ex_date"},
+            "cash_dividends": {"id", "symbol", "rate", "ex_date"},
+        }
+        if not isinstance(item, dict):
+            raise PricePayloadError("Alpaca declared action must be an object")
+        keys = set(item)
+        if not required_by_category[category] <= keys or not keys <= allowed_by_category[category]:
+            raise PricePayloadError("Alpaca declared-action schema drifted")
+        symbol_value = item["symbol"]
+        action_id = item["id"]
+        ex_date_value = item["ex_date"]
+        if not isinstance(symbol_value, str) or not isinstance(action_id, str) or not action_id:
+            raise PricePayloadError("Alpaca declared-action identity is invalid")
+        try:
+            symbol = normalize_ticker(symbol_value)
+            effective_session = date.fromisoformat(ex_date_value)
+            known_at = self._calendar.session(effective_session).close_at.astimezone(UTC)
+        except (SecurityMasterError, TypeError, ValueError, CalendarError) as exc:
+            raise PricePayloadError("Alpaca declared-action symbol/ex-date is invalid") from exc
+        binding = self._action_binding(symbol, effective_session, bindings)
+        if category == "cash_dividends":
+            value = self._decimal(item["rate"], "cash dividend rate")
+            action_type = "cash_dividend"
+            currency = "USD"
+        else:
+            new_rate = self._decimal(item["new_rate"], "split new_rate")
+            old_rate = self._decimal(item["old_rate"], "split old_rate")
+            if old_rate <= 0:
+                raise PricePayloadError("Alpaca split old_rate must be positive")
+            value = new_rate / old_rate
+            action_type = "split"
+            currency = None
+        return CorporateActionObservation(
+            binding.security_id,
+            effective_session,
+            action_type,  # type: ignore[arg-type]
+            value,
+            currency,
+            ALPACA_PROVIDER,
+            known_at,
+            f"alpaca://{page.content_sha256}/{category}/{action_id}",
+            batch_id,
+        )
+
+    def fetch_corporate_actions(
+        self,
+        *,
+        bindings: tuple[PriceSecurityBinding, ...],
+        start: date,
+        end: date,
+    ) -> CorporateActionsFetchResult:
+        """Fetch and date-map declared splits/cash dividends for reconciliation."""
+        if not bindings or start > end:
+            raise PriceConfigurationError("Alpaca action bindings/bounds are invalid")
+        symbols = tuple(sorted({binding.ticker for binding in bindings}))
+        pages: list[PriceSourcePage] = []
+        payload_pages: list[tuple[Mapping[str, Any], PriceSourcePage]] = []
+        token: str | None = None
+        seen_tokens: set[str] = set()
+        while True:
+            params: dict[str, str | int] = {
+                "symbols": ",".join(symbols),
+                "types": "forward_split,reverse_split,cash_dividend",
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "sort": "asc",
+                "region": "us",
+                "limit": 1000,
+            }
+            if token is not None:
+                params["page_token"] = token
+            url = self._url(ALPACA_CORPORATE_ACTIONS_PATH, params)
+            response, observed_at = self._get(url)
+            request_id = _header(response.headers, "X-Request-ID")
+            if response.status != 200:
+                raise AlpacaHttpError(
+                    response.status,
+                    url,
+                    request_id,
+                    "Alpaca declared-actions request failed "
+                    f"status={response.status} request_id={request_id}",
+                )
+            page = self._source_page(url, response, observed_at)
+            pages.append(page)
+            payload = self._json(response.body, context="declared-actions")
+            if not set(payload).issubset({"corporate_actions", "next_page_token"}):
+                raise PricePayloadError("Alpaca declared-actions top-level schema drifted")
+            envelope = payload.get("corporate_actions")
+            if not isinstance(envelope, dict) or not set(envelope).issubset(
+                {"forward_splits", "reverse_splits", "cash_dividends"}
+            ):
+                raise PricePayloadError("Alpaca declared-actions envelope drifted")
+            if any(not isinstance(items, list) for items in envelope.values()):
+                raise PricePayloadError("Alpaca declared-action category must be an array")
+            payload_pages.append((payload, page))
+            next_token = payload.get("next_page_token")
+            if next_token is None:
+                break
+            if not isinstance(next_token, str) or not next_token or next_token in seen_tokens:
+                raise PricePayloadError("Alpaca declared-action pagination token is invalid")
+            seen_tokens.add(next_token)
+            token = next_token
+        base = CorporateActionsFetchResult(start, end, tuple(pages), ())
+        observations: list[CorporateActionObservation] = []
+        for payload, page in payload_pages:
+            envelope = payload["corporate_actions"]
+            assert isinstance(envelope, dict)
+            for category, items in sorted(envelope.items()):
+                assert isinstance(items, list)
+                observations.extend(
+                    self._parse_declared_action(
+                        category=category,
+                        item=item,
+                        page=page,
+                        batch_id=base.batch_id,
+                        bindings=bindings,
+                    )
+                    for item in items
+                )
+        observations.sort(
+            key=lambda item: (
+                item.security_id,
+                item.effective_session,
+                item.action_type,
+                item.evidence_pointer,
+            )
+        )
+        return CorporateActionsFetchResult(start, end, tuple(pages), tuple(observations))
 
     def probe_corporate_actions(
         self,
