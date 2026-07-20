@@ -1,6 +1,6 @@
 # USInv — Systematic US Equity Picker
 
-**Status: PHASE 1 BUILD — security master/live edge in progress.** This repository contains the
+**Status: PHASE 2 BUILD — the point-in-time universe gate is in progress.** This repository contains the
 design specification for a point-in-time-correct, factor-based US stock
 selection research system. It is intentionally not called implementation-ready
 until the Phase-0 historical-data feasibility gate is completed and the user
@@ -121,6 +121,19 @@ presentation evidence, writes immutable full-filing and canonical
 seen accession can be prevented with `--seen-accession`; raw filings and
 generated Parquet remain in ignored user-controlled storage. The SEC contact is
 read only from the environment and is never printed or embedded in artifacts.
+
+Capture one private, dated active+delisted Alpha Vantage membership snapshot:
+
+```powershell
+$env:ALPHA_VANTAGE_API_KEY = "your-personal-key"
+python -m usinv alpha-listing-sync --as-of 2026-07-17
+```
+
+The two calls are paced and stored under ignored, content-addressed local
+storage. The command reports only counts and hashes; raw CSV payloads are never
+committed. Membership is not identity: universe selection still requires a
+unique high-confidence security-master interval for the same ticker, exchange
+and date.
 
 The account-free historical feasibility checks validate the 36-security sample,
 provider contracts and metadata-only evidence matrix; public demo responses are

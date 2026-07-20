@@ -74,6 +74,30 @@ def test_experiment_count_drift_is_rejected(tmp_path: Path) -> None:
         load_config(directory)
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("domestic_only", False, "domestic common stock"),
+        ("common_stock_only", False, "domestic common stock"),
+        ("excluded_groups", ["financials", "reits", "fpi_adr"], "scope exclusions"),
+    ],
+)
+def test_v1_universe_scope_cannot_be_silently_weakened(
+    tmp_path: Path,
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    directory = _copy_config(tmp_path)
+    path = directory / "universe.yaml"
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    payload[field] = value
+    path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+
+    with pytest.raises(ConfigError, match=message):
+        load_config(directory)
+
+
 def test_live_mode_requires_selected_evidence_mode(tmp_path: Path) -> None:
     directory = _copy_config(tmp_path)
     path = directory / "settings.yaml"

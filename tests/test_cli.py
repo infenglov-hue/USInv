@@ -15,6 +15,7 @@ from usinv.data.edgar.pit_store import (
     PitTableArtifact,
 )
 from usinv.data.edgar.tag_chains import CHAIN_VERSION, CoverageReport
+from usinv.data.listings import AlphaVantageListingClient
 from usinv.data.prices import AlpacaPriceProvider, TiingoSpotCheckClient
 
 
@@ -182,6 +183,55 @@ def test_tiingo_smoke_reports_hash_count_and_action_types(
     assert "tiingo_smoke_ok symbol=AAPL rows=3" in output
     assert f"source_sha256={'c' * 64}" in output
     assert "corporate_action_rows=1 corporate_action_types=split" in output
+
+
+def test_alpha_listing_sync_writes_private_snapshot_and_reports_only_counts(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    snapshot = SimpleNamespace(as_of=date(2026, 7, 17))
+    artifact = SimpleNamespace(
+        from_cache=False,
+        snapshot_id="d" * 64,
+        active_rows=10,
+        delisted_rows=20,
+    )
+
+    class FakeClient:
+        def fetch_snapshot(self, *, as_of: date) -> object:
+            assert as_of == date(2026, 7, 17)
+            return snapshot
+
+    monkeypatch.setattr(
+        AlphaVantageListingClient,
+        "from_config",
+        staticmethod(lambda config: FakeClient()),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "materialize_alpha_listing_snapshot",
+        lambda value, output: artifact,
+    )
+
+    assert (
+        main(
+            [
+                "alpha-listing-sync",
+                "--as-of",
+                "2026-07-17",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "alpha_listing_sync_ok as_of=2026-07-17 state=created" in output
+    assert "active_rows=10 delisted_rows=20" in output
+    assert "Apple" not in output
 
 
 def test_edgar_smoke_reports_both_documents_without_dumping_payload(

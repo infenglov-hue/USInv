@@ -576,6 +576,11 @@ def _validate(config: AppConfig) -> None:
     universe = config.universe
     if universe.include_otc:
         raise ConfigError("OTC cannot be enabled in v1")
+    if not universe.domestic_only or not universe.common_stock_only:
+        raise ConfigError("v1 universe must remain domestic common stock only")
+    required_exclusions = {"financials", "reits", "pre_revenue_biotech", "fpi_adr"}
+    if not required_exclusions <= set(universe.excluded_groups):
+        raise ConfigError("v1 universe scope exclusions cannot be disabled")
     if not 0 < universe.core_market_cap_min < universe.core_market_cap_max:
         raise ConfigError("core market-cap bounds are invalid")
     if universe.large_cap_min_exclusive != universe.core_market_cap_max:

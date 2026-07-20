@@ -41,3 +41,17 @@ def test_tiingo_smoke_is_explicitly_gated_and_uses_only_its_secret() -> None:
     assert "schedule:" not in workflow
     assert "secrets.TIINGO_TOKEN" in workflow
     assert "Require Tiingo credential" in workflow
+
+
+def test_alpha_listing_smoke_is_gated_and_never_publishes_raw_payloads() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "alpha-listing-smoke.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "workflow_dispatch:" in workflow
+    assert "pull_request:" in workflow and "types: [labeled]" in workflow
+    assert "github.event.label.name == 'alpha-listing-live-smoke'" in workflow
+    assert "schedule:" not in workflow
+    assert "secrets.ALPHA_VANTAGE_API_KEY" in workflow
+    assert "Require Alpha Vantage credential" in workflow
+    assert "upload-artifact" not in workflow

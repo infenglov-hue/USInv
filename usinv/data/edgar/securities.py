@@ -561,3 +561,38 @@ def materialize_security_master(
         len(master.issues),
         False,
     )
+
+
+def read_security_master_snapshot(path: str | Path) -> SecurityMaster:
+    """Open a verified immutable security-master snapshot."""
+    root = Path(path)
+    snapshot_id = root.name
+    if len(snapshot_id) != 64:
+        raise SecurityMasterError("security master snapshot directory is not content-addressed")
+    _verify_snapshot(root, snapshot_id)
+    try:
+        security_rows = pq.read_table(root / "securities.parquet").to_pylist()
+        symbol_rows = pq.read_table(root / "security_symbols.parquet").to_pylist()
+        issue_rows = pq.read_table(root / "security_mapping_issues.parquet").to_pylist()
+        securities = tuple(Security(**row) for row in security_rows)
+        symbols = tuple(SymbolInterval(**row) for row in symbol_rows)
+    except (OSError, TypeError, ValueError) as exc:
+        raise SecurityMasterError("security master snapshot rows are invalid") from exc
+    master = build_security_master(securities, symbols)
+    expected_issues = _jsonable(master)["issues"]
+    normalized_issues = [
+        {
+            **row,
+            "valid_from": row["valid_from"].isoformat(),
+            "valid_to": row["valid_to"].isoformat() if row["valid_to"] else None,
+            "security_ids": tuple(row["security_ids"]),
+            "evidence_pointers": tuple(row["evidence_pointers"]),
+        }
+        for row in issue_rows
+    ]
+    if normalized_issues != expected_issues:
+        raise SecurityMasterError("security master issue reconstruction mismatch")
+    canonical = json.dumps(_jsonable(master), sort_keys=True, separators=(",", ":")).encode()
+    if hashlib.sha256(canonical).hexdigest() != snapshot_id:
+        raise SecurityMasterError("security master canonical identity mismatch")
+    return master

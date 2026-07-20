@@ -1,0 +1,34 @@
+name: Alpha Vantage listing smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  listing-smoke:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.label.name == 'alpha-listing-live-smoke'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install .
+      - name: Require Alpha Vantage credential
+        run: test -n "$ALPHA_VANTAGE_API_KEY"
+      - name: Verify dated active and delisted listing contracts
+        run: >-
+          python -m usinv alpha-listing-sync
+          --as-of 2026-07-17
+          --output-dir "${{ runner.temp }}/usinv-listing-smoke"

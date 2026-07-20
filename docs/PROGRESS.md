@@ -1,5 +1,62 @@
 # PROGRESS
 
+## 2026-07-20 — Phase 2.3 point-in-time universe (implementation ready; gate pending)
+
+### Implemented locally
+
+- Added a credential-safe Alpha Vantage `LISTING_STATUS` adapter for paired
+  active/delisted snapshots at one explicit date. It enforces the documented
+  post-2010 date boundary, exact CSV schema, 15-second pacing, a 25-request
+  process budget, retry policy and immutable content-addressed private storage.
+  Raw licensed CSV pages are never committed or uploaded from the live smoke.
+- Added the point-in-time universe builder and `universe_snapshots` audit
+  table. It requires the official XNYS close, exactly 21 raw-price sessions,
+  high-confidence date-valid security mappings, complete FPI form-history
+  evidence, instant shares outstanding and point-in-time SIC evidence. Every
+  listing candidate is retained with filter results, evidence pointers and
+  explicit exclusion reasons.
+- Implemented the v1 domestic-common-stock, exchange, raw-close, median-dollar-
+  volume and issuer-market-cap rules. Multiple share classes stay separate;
+  issuer capitalization is aggregated only across explicitly linked classes,
+  and only the most-liquid eligible line can enter selection. Core and large-
+  cap names remain separate size buckets.
+- Added the official Fama-French 12/49 SIC definitions as a generated,
+  hash-pinned package resource. Financials, REITs and evidence-backed pre-
+  revenue biotech exclusions fail closed. The Phase 3.1 hygiene columns are
+  present as the explicit `phase-2.3-pass-through-v1` stub required by the
+  build plan.
+- Wired the Phase 1.5 D030 applicability report to the exact included-universe
+  denominator. The Phase 2.3 gate rejects any identity/FF49 gap, missing
+  mandatory scoring input, empty final universe or sub-threshold core/secondary
+  coverage.
+
+### Verification/status
+
+- Ruff lint/format and the complete offline suite pass: 230 tests. Tests cover
+  future filing/price rejection, raw-price non-rewriting, exact close timing,
+  FPI/financial/biotech exclusions, multi-class aggregation, large-cap
+  admission, mapping gaps, D030 denominator equality, immutable reopen and
+  corruption detection.
+- An isolated wheel build succeeds and includes `usinv/data/listings.py`,
+  `usinv/universe.py` and the generated `usinv/scoring/sic_ranges_v1.json`
+  resource.
+- The credentialed Alpha Vantage Actions smoke and its run identifier are
+  pending until this branch is published. It is deliberately manual/PR-label
+  gated and publishes only redacted counts and hashes.
+
+### Acceptance gate remains closed
+
+- The repository currently has no full, high-confidence historical
+  `security_master` snapshot for the Alpha Vantage listed population. Existing
+  local live-edge evidence covers Apple, while current SEC ticker arrays and
+  FSDS filename prefixes are explicitly forbidden as historical identity
+  backfills. Therefore the real final-universe D032 applicability run cannot
+  yet be represented honestly.
+- Phase 2.3 is not marked complete and Phase 3 must not start until the dated
+  membership rows are joined through evidence-backed security validity
+  intervals, the complete price/fundamental evidence is materialized and the
+  90% core / 75% secondary gate passes with no mapping or mandatory-input gap.
+
 ## 2026-07-20 — Phase 2.2 action reconstruction (merged as `eba4588` via PR #14)
 
 ### Implemented locally

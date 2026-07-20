@@ -13,6 +13,7 @@ from usinv.data.edgar.securities import (
     current_sec_symbol,
     materialize_security_master,
     mint_security_id,
+    read_security_master_snapshot,
 )
 
 
@@ -142,6 +143,8 @@ def test_security_master_snapshot_is_content_addressed_and_verified(tmp_path: Pa
     assert not created.from_cache and cached.from_cache
     assert created.snapshot_id == cached.snapshot_id
     assert created.output_dir.joinpath("securities.parquet").is_file()
+    reopened = read_security_master_snapshot(created.output_dir)
+    assert reopened == master
 
     created.output_dir.joinpath("security_symbols.parquet").write_bytes(b"tampered")
     with pytest.raises(SecurityMasterError, match="failed verification"):

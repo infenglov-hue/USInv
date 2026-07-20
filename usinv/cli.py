@@ -31,6 +31,11 @@ from usinv.data.edgar.submissions import (
     parse_submission_history,
     parse_submissions_document,
 )
+from usinv.data.listings import (
+    AlphaVantageListingClient,
+    ListingDataError,
+    materialize_alpha_listing_snapshot,
+)
 from usinv.data.prices import AlpacaPriceProvider, PriceDataError, TiingoSpotCheckClient
 
 
@@ -98,6 +103,12 @@ def _parser() -> argparse.ArgumentParser:
     tiingo.add_argument("--symbol", default="AAPL")
     tiingo.add_argument("--start", type=_iso_date, default=date(2020, 8, 28))
     tiingo.add_argument("--end", type=_iso_date, default=date(2020, 9, 1))
+    listings = subcommands.add_parser(
+        "alpha-listing-sync",
+        help="archive one dated active+delisted Alpha Vantage listing snapshot",
+    )
+    listings.add_argument("--as-of", type=_iso_date, required=True)
+    listings.add_argument("--output-dir", type=Path, help="override the private data root")
     live = subcommands.add_parser(
         "edgar-live-sync",
         help="archive and normalize newly accepted 10-K/10-Q filings for one CIK",
@@ -193,6 +204,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"execution={config.settings.execution_mode.value}",
                     f"holdings={config.portfolio.holdings}",
                     f"overlay={config.regime.default_overlay}",
+                )
+            )
+        )
+        return 0
+    if args.command == "alpha-listing-sync":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir)
+        try:
+            snapshot = AlphaVantageListingClient.from_config(config).fetch_snapshot(
+                as_of=args.as_of
+            )
+            artifact = materialize_alpha_listing_snapshot(snapshot, output_root)
+        except ListingDataError as exc:
+            print(f"alpha_listing_sync_failed: {exc}", file=sys.stderr)
+            return 2
+        state = "cache" if artifact.from_cache else "created"
+        print(
+            " ".join(
+                (
+                    "alpha_listing_sync_ok",
+                    f"as_of={snapshot.as_of.isoformat()}",
+                    f"state={state}",
+                    f"snapshot_id={artifact.snapshot_id}",
+                    f"active_rows={artifact.active_rows}",
+                    f"delisted_rows={artifact.delisted_rows}",
                 )
             )
         )

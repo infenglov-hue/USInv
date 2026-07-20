@@ -5,6 +5,7 @@ from usinv.config.loader import (
     ConfigError,
     EvidenceMode,
     ExecutionMode,
+    UniverseConfig,
     load_config,
 )
 
@@ -13,5 +14,6 @@ __all__ = [
     "ConfigError",
     "EvidenceMode",
     "ExecutionMode",
+    "UniverseConfig",
     "load_config",
 ]

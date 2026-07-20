@@ -84,6 +84,7 @@ from usinv.data.edgar.securities import (
     current_sec_symbol,
     materialize_security_master,
     mint_security_id,
+    read_security_master_snapshot,
 )
 from usinv.data.edgar.submissions import (
     PERIODIC_FORMS,
@@ -194,6 +195,7 @@ __all__ = [
     "parse_submissions_document",
     "read_consolidated_facts_as_of",
     "read_pit_facts_as_of",
+    "read_security_master_snapshot",
     "security_evidence_from_cover",
     "standardize_facts",
     "standardize_pit_snapshot",
