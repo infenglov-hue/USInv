@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import uuid
 from abc import ABC, abstractmethod
@@ -649,3 +650,34 @@ def materialize_price_snapshot(
         raise
     _verify_snapshot(target, snapshot_id)
     return PriceSnapshot(snapshot_id, target, len(raw_rows), len(adjusted_rows), issues, False)
+
+
+def read_price_snapshot(path: str | Path) -> PriceSnapshot:
+    """Open a verified immutable price snapshot without refetching provider data."""
+    root = Path(path)
+    snapshot_id = root.name
+    if not re.fullmatch(r"[0-9a-f]{64}", snapshot_id):
+        raise PriceStoreError("price snapshot directory is not content-addressed")
+    _verify_snapshot(root, snapshot_id)
+    try:
+        raw_rows = pq.ParquetFile(root / "prices_raw.parquet").metadata.num_rows
+        adjusted_rows = pq.ParquetFile(
+            root / "prices_vendor_adjusted.parquet"
+        ).metadata.num_rows
+        issue_rows = pq.read_table(root / "price_mapping_issues.parquet").to_pylist()
+        issues = tuple(
+            PriceMappingIssue(
+                row["batch_id"],
+                row["adjustment"],
+                row["vendor_symbol"],
+                row["session"],
+                row["kind"],
+                tuple(row["candidate_security_ids"]),
+                tuple(row["candidate_exchanges"]),
+                row["detail"],
+            )
+            for row in issue_rows
+        )
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        raise PriceStoreError("price snapshot rows are invalid") from exc
+    return PriceSnapshot(snapshot_id, root, raw_rows, adjusted_rows, issues, True)

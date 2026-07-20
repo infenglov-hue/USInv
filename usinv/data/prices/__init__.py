@@ -43,6 +43,7 @@ from usinv.data.prices.base import (
     VendorDailyBar,
     materialize_price_snapshot,
     price_bindings_from_security_master,
+    read_price_snapshot,
 )
 from usinv.data.prices.stooq import (
     STOOQ_BAR_DEFINITION,
@@ -112,6 +113,7 @@ __all__ = [
     "materialize_price_snapshot",
     "price_bindings_from_security_master",
     "raw_price_for_level_rule",
+    "read_price_snapshot",
     "read_stooq_bulk",
     "reconcile_corporate_actions",
 ]
