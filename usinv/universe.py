@@ -402,8 +402,17 @@ def build_universe_snapshot(
                     exchange,
                     session,
                     minimum_confidence="high",
-                    required_security_type="common_stock",
                 )
+                if mapping.status != "mapped":
+                    common_mapping = master.resolve(
+                        listing.symbol,
+                        exchange,
+                        session,
+                        minimum_confidence="high",
+                        required_security_type="common_stock",
+                    )
+                    if common_mapping.status == "mapped":
+                        mapping = common_mapping
             except SecurityMasterError:
                 mapping_status = "invalid_symbol"
             else:

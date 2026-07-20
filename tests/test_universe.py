@@ -48,12 +48,19 @@ EVIDENCE_AT = datetime(2026, 6, 1, 10, tzinfo=UTC)
 CONFIG = load_config().universe
 
 
-def _security(cik: int, anchor: str, *, domestic: bool = True) -> Security:
+def _security(
+    cik: int,
+    anchor: str,
+    *,
+    domestic: bool = True,
+    security_type: str = "common_stock",
+    title: str = "Common Stock",
+) -> Security:
     return Security(
         mint_security_id(cik, anchor),
         cik,
-        "Common Stock",
-        "common_stock",
+        title,
+        security_type,
         domestic,
         anchor,
         "fixture",
@@ -390,6 +397,41 @@ def test_phase_gate_blocks_any_approved_exchange_identity_gap() -> None:
 
     missing = next(row for row in snapshot.rows if row.ticker == "MISSING")
     assert "identity_unmapped" in missing.exclusion_reasons
+
+
+def test_non_common_cover_mapping_is_an_exclusion_not_an_identity_gap() -> None:
+    warrant = _security(
+        1,
+        "sec-cover:warrant",
+        security_type="other",
+        title="Redeemable Warrant",
+    )
+    _master, snapshot = _build(
+        _listing_snapshot([("ONEW", "One Corp Warrants", "NASDAQ", "Stock")]),
+        [warrant],
+        [_symbol(warrant, "ONEW")],
+        [],
+    )
+
+    row = snapshot.rows[0]
+    assert row.mapping_pass and not row.common_stock_pass
+    assert "not_common_stock" in row.exclusion_reasons
+    assert not snapshot.identity_mapping_gaps
+
+
+def test_common_cover_wins_only_when_same_symbol_non_equity_causes_collision() -> None:
+    common = _security(1, "sec-cover:common")
+    note = _security(1, "sec-cover:note", security_type="other", title="3.125% Notes")
+    _master, snapshot = _build(
+        _listing_snapshot([("ONE", "One Corp", "NASDAQ", "Stock")]),
+        [common, note],
+        [_symbol(common, "ONE"), _symbol(note, "ONE")],
+        [_evidence(common)],
+    )
+
+    row = snapshot.rows[0]
+    assert row.mapping_pass and row.security_id == common.security_id
+    assert row.included and not snapshot.identity_mapping_gaps
 
 
 def test_missing_form_history_and_sic_are_quarantined_not_assumed_safe() -> None:

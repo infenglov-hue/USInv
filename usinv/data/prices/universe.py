@@ -150,6 +150,7 @@ def build_price_universe_plan(
     start_at = datetime.combine(first, time.min, EXCHANGE_TIMEZONE).astimezone(UTC)
 
     master = verified_cover.merge.master
+    securities = {security.security_id: security for security in master.securities}
     targets: dict[str, PriceUniverseTarget] = {}
     tickers: dict[str, str] = {}
     for row in discovery.rows:
@@ -165,11 +166,22 @@ def build_price_universe_plan(
                 row.normalized_exchange,
                 signal_at.date(),
                 minimum_confidence="high",
-                required_security_type="common_stock",
             )
+            if mapping.status != "mapped":
+                common_mapping = master.resolve(
+                    row.ticker,
+                    row.normalized_exchange,
+                    signal_at.date(),
+                    minimum_confidence="high",
+                    required_security_type="common_stock",
+                )
+                if common_mapping.status == "mapped":
+                    mapping = common_mapping
         except SecurityMasterError:
             continue
         if mapping.status != "mapped" or mapping.security_id is None:
+            continue
+        if securities[mapping.security_id].security_type != "common_stock":
             continue
         target = PriceUniverseTarget(mapping.security_id, row.ticker, row.normalized_exchange)
         prior = targets.get(target.security_id)
