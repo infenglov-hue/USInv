@@ -363,7 +363,6 @@ class TiingoSpotCheckClient:
                 "endDate": end.isoformat(),
                 "format": "json",
                 "resampleFreq": "daily",
-                "sort": "asc",
             }
         )
         url = f"{TIINGO_BASE_URL}{path}?{query}"

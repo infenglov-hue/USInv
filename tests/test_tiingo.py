@@ -94,6 +94,8 @@ def test_tiingo_spot_check_keeps_token_in_header_and_emits_ex_date_actions() -> 
     assert "private-token" not in url
     assert headers["Authorization"] == "Token private-token"
     assert "startDate=2024-01-04" in url and "endDate=2024-01-04" in url
+    assert "format=json" in url and "resampleFreq=daily" in url
+    assert "sort=" not in url
 
 
 def test_tiingo_ex_date_comes_from_row_not_record_date_formula() -> None:
