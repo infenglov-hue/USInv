@@ -104,9 +104,8 @@ def filing_sic_observations(
         if artifact is None:
             raise UniverseEvidenceError("FSDS result has no filings artifact")
         path = result.table_path("filings")
-        if (
-            _sha256(path) != artifact.content_sha256
-            or not pq.ParquetFile(path).schema_arrow.equals(FILINGS_SCHEMA, check_metadata=True)
+        if _sha256(path) != artifact.content_sha256 or not pq.ParquetFile(path).schema_arrow.equals(
+            FILINGS_SCHEMA, check_metadata=True
         ):
             raise UniverseEvidenceError("FSDS filings artifact failed verification")
         rows = pq.read_table(

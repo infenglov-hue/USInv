@@ -661,9 +661,7 @@ def read_price_snapshot(path: str | Path) -> PriceSnapshot:
     _verify_snapshot(root, snapshot_id)
     try:
         raw_rows = pq.ParquetFile(root / "prices_raw.parquet").metadata.num_rows
-        adjusted_rows = pq.ParquetFile(
-            root / "prices_vendor_adjusted.parquet"
-        ).metadata.num_rows
+        adjusted_rows = pq.ParquetFile(root / "prices_vendor_adjusted.parquet").metadata.num_rows
         issue_rows = pq.read_table(root / "price_mapping_issues.parquet").to_pylist()
         issues = tuple(
             PriceMappingIssue(

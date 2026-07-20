@@ -265,9 +265,7 @@ def acquire_cover_evidence(
                 )
             )
         form_rows = list(feed.form_history)
-        source_documents = [
-            f"{submissions_document.url}#{submissions_document.content_sha256}"
-        ]
+        source_documents = [f"{submissions_document.url}#{submissions_document.content_sha256}"]
         form_history_complete = True
         for filename in feed.history_files:
             try:
@@ -293,9 +291,7 @@ def acquire_cover_evidence(
                     source_sha256=history_document.content_sha256,
                 )
             )
-            source_documents.append(
-                f"{history_document.url}#{history_document.content_sha256}"
-            )
+            source_documents.append(f"{history_document.url}#{history_document.content_sha256}")
         form_history = _merge_form_observations(tuple(form_rows))
         for row in form_history:
             base_form = row.form.upper().removesuffix("/A")

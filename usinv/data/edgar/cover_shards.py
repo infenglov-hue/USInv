@@ -223,14 +223,12 @@ def read_cover_evidence_shard(path: str | Path) -> CoverEvidenceShard:
             for row in share_observations
         )
         or any(
-            row.cik not in requested_ciks
-            or row.accepted.astimezone(UTC) > as_of.astimezone(UTC)
+            row.cik not in requested_ciks or row.accepted.astimezone(UTC) > as_of.astimezone(UTC)
             for row in fpi_form_observations
         )
         or len({row.cik for row in form_history_proofs}) != len(form_history_proofs)
         or any(
-            row.cik not in requested_ciks
-            or row.as_of.astimezone(UTC) != as_of.astimezone(UTC)
+            row.cik not in requested_ciks or row.as_of.astimezone(UTC) != as_of.astimezone(UTC)
             for row in form_history_proofs
         )
         or any(row.cik not in requested_ciks for row in acquisition_gaps)
@@ -477,14 +475,12 @@ def read_cover_evidence_snapshot(path: str | Path) -> CoverEvidenceSnapshot:
             for row in shares
         )
         or any(
-            row.cik not in requested
-            or row.accepted.astimezone(UTC) > as_of.astimezone(UTC)
+            row.cik not in requested or row.accepted.astimezone(UTC) > as_of.astimezone(UTC)
             for row in fpi_forms
         )
         or len({row.cik for row in form_history_proofs}) != len(form_history_proofs)
         or any(
-            row.cik not in requested
-            or row.as_of.astimezone(UTC) != as_of.astimezone(UTC)
+            row.cik not in requested or row.as_of.astimezone(UTC) != as_of.astimezone(UTC)
             for row in form_history_proofs
         )
         or any(

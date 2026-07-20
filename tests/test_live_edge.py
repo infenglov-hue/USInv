@@ -88,9 +88,7 @@ def test_submissions_parser_quarantines_incomplete_current_symbol_rows() -> None
 
     feed = parse_submissions_document(_document(payload))
 
-    assert [(row.ticker, row.exchange) for row in feed.current_symbols] == [
-        ("AAPL", "Nasdaq")
-    ]
+    assert [(row.ticker, row.exchange) for row in feed.current_symbols] == [("AAPL", "Nasdaq")]
     assert feed.unusable_current_symbols == 1
 
 

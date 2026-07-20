@@ -255,9 +255,7 @@ def acquire_price_universe(
             start=plan.start_at.astimezone(EXCHANGE_TIMEZONE).date(),
             end=plan.signal_at.astimezone(EXCHANGE_TIMEZONE).date(),
         )
-        raw = provider.fetch_daily_bars(
-            PriceQuery(symbols, plan.start_at, plan.signal_at, "raw")
-        )
+        raw = provider.fetch_daily_bars(PriceQuery(symbols, plan.start_at, plan.signal_at, "raw"))
         adjusted = provider.fetch_daily_bars(
             PriceQuery(symbols, plan.start_at, plan.signal_at, "all")
         )
