@@ -170,6 +170,23 @@ def test_raw_and_all_are_fetched_as_physically_separate_requests() -> None:
     assert parse_qs(urlsplit(transport.calls[1][0]).query)["adjustment"] == ["all"]
 
 
+def test_share_class_symbol_is_translated_only_at_alpaca_boundary() -> None:
+    transport = FakeTransport([_response(_body(symbol="CRD.A"))])
+    query = PriceQuery(
+        ("CRD-A",),
+        datetime(2024, 1, 2, tzinfo=UTC),
+        datetime(2024, 1, 4, tzinfo=UTC),
+        "raw",
+    )
+
+    result = _provider(transport).fetch_daily_bars(query)
+
+    params = parse_qs(urlsplit(transport.calls[0][0]).query)
+    assert params["symbols"] == ["CRD.A"]
+    assert result.query.symbols == ("CRD-A",)
+    assert result.bars[0].vendor_symbol == "CRD-A"
+
+
 @pytest.mark.parametrize(
     ("mutator", "message"),
     [
