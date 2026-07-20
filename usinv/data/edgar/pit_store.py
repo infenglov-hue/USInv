@@ -23,8 +23,8 @@ from usinv.config import AppConfig
 from usinv.data.edgar.client import EdgarConfigurationError, EdgarError
 from usinv.data.edgar.fsds import FACTS_RAW_SCHEMA, FsdsIngestResult
 
-PIT_STORE_SCHEMA_VERSION: Final = 1
-PIT_STORE_BUILDER_VERSION: Final = "usinv-pit-store-v1"
+PIT_STORE_SCHEMA_VERSION: Final = 2
+PIT_STORE_BUILDER_VERSION: Final = "usinv-pit-store-v2"
 SUPPORTED_DUCKDB_VERSION: Final = "1.5.4"
 PIT_KEY: Final = ("cik", "tag", "ddate", "qtrs", "uom")
 _HASH_PATTERN: Final = "0123456789abcdef"
@@ -32,11 +32,12 @@ _VIEW_METADATA_KEY: Final = b"usinv.fact_view"
 _EXPECTED_ARTIFACT_PATHS: Final = {
     "facts_pit": "facts_pit.parquet",
     "facts_latest": "facts_latest.parquet",
+    "facts_conflicts": "facts_conflicts.parquet",
 }
 _SELECTION_CONTRACT: Final = {
     "facts_pit": "minimum accepted",
     "facts_latest": "maximum accepted",
-    "equal_time_conflicts": "fail_closed",
+    "equal_time_conflicts": "quarantine_key_and_count",
 }
 
 _FACT_VIEW_FIELDS: Final = [
@@ -62,6 +63,21 @@ _FACT_VIEW_FIELDS: Final = [
 PIT_FACT_SCHEMA: Final = pa.schema(_FACT_VIEW_FIELDS, metadata={_VIEW_METADATA_KEY: b"facts_pit"})
 LATEST_FACT_SCHEMA: Final = pa.schema(
     _FACT_VIEW_FIELDS, metadata={_VIEW_METADATA_KEY: b"facts_latest"}
+)
+PIT_CONFLICT_SCHEMA: Final = pa.schema(
+    [
+        pa.field("cik", pa.int64()),
+        pa.field("tag", pa.string()),
+        pa.field("ddate", pa.date32()),
+        pa.field("qtrs", pa.int16()),
+        pa.field("uom", pa.string()),
+        pa.field("accepted", pa.timestamp("us", tz="UTC")),
+        pa.field("distinct_values", pa.int64()),
+        pa.field("candidate_rows", pa.int64()),
+        pa.field("adshs", pa.list_(pa.field("element", pa.string()))),
+        pa.field("values", pa.list_(pa.field("element", pa.string()))),
+    ],
+    metadata={_VIEW_METADATA_KEY: b"facts_conflicts"},
 )
 _FACT_COLUMNS_SQL: Final = ", ".join(field.name for field in _FACT_VIEW_FIELDS)
 _KEY_SQL: Final = ", ".join(PIT_KEY)
@@ -304,7 +320,7 @@ class PitStoreBuilder:
         direction = "ASC" if ascending else "DESC"
         query = f"""
             SELECT {_FACT_COLUMNS_SQL}
-            FROM candidates
+            FROM eligible_candidates
             QUALIFY ROW_NUMBER() OVER (
                 PARTITION BY {_KEY_SQL}
                 ORDER BY accepted {direction}, adsh {direction}, version {direction},
@@ -331,6 +347,41 @@ class PitStoreBuilder:
                 row_count += table.num_rows
         return row_count
 
+    def _write_conflicts(
+        self,
+        connection: duckdb.DuckDBPyConnection,
+        destination: Path,
+    ) -> int:
+        query = f"""
+            SELECT {_KEY_SQL}, accepted,
+                   COUNT(DISTINCT {_LOGICAL_VALUE_SQL})::BIGINT AS distinct_values,
+                   COUNT(*)::BIGINT AS candidate_rows,
+                   list_sort(list_distinct(list(adsh))) AS adshs,
+                   list_sort(list_distinct(list({_LOGICAL_VALUE_SQL}))) AS values
+            FROM candidates
+            GROUP BY {_KEY_SQL}, accepted
+            HAVING COUNT(DISTINCT {_LOGICAL_VALUE_SQL}) > 1
+            ORDER BY {_KEY_SQL}, accepted
+        """
+        reader = connection.execute(query).to_arrow_reader(self.batch_size)
+        row_count = 0
+        with pq.ParquetWriter(
+            destination,
+            PIT_CONFLICT_SCHEMA,
+            compression="zstd",
+            version="2.6",
+            use_dictionary=True,
+        ) as writer:
+            for batch in reader:
+                table = (
+                    pa.Table.from_batches([batch])
+                    .cast(PIT_CONFLICT_SCHEMA)
+                    .replace_schema_metadata(PIT_CONFLICT_SCHEMA.metadata)
+                )
+                writer.write_table(table)
+                row_count += table.num_rows
+        return row_count
+
     @staticmethod
     def _assert_candidates(connection: duckdb.DuckDBPyConnection) -> None:
         invalid = connection.execute(
@@ -352,19 +403,6 @@ class PitStoreBuilder:
         ).fetchone()
         if invalid is None or invalid[0] != 0:
             raise PitStoreError("normalized facts violate PIT key or consolidation invariants")
-        ambiguous = connection.execute(
-            f"""
-            SELECT {_KEY_SQL}, accepted
-            FROM candidates
-            GROUP BY {_KEY_SQL}, accepted
-            HAVING COUNT(DISTINCT {_LOGICAL_VALUE_SQL}) > 1
-            LIMIT 1
-            """
-        ).fetchone()
-        if ambiguous is not None:
-            raise PitStoreConflictError(
-                "equal acceptance timestamps contain conflicting facts for one PIT key"
-            )
 
     def _materialize(self, root: Path, inputs: Sequence[PitInputBatch]) -> None:
         temporary = root / "duckdb-tmp"
@@ -395,6 +433,34 @@ class PitStoreBuilder:
                 """
             )
             self._assert_candidates(connection)
+            connection.execute(
+                f"""
+                CREATE TEMP VIEW conflict_keys AS
+                SELECT DISTINCT {_KEY_SQL}
+                FROM (
+                    SELECT {_KEY_SQL}, accepted
+                    FROM candidates
+                    GROUP BY {_KEY_SQL}, accepted
+                    HAVING COUNT(DISTINCT {_LOGICAL_VALUE_SQL}) > 1
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TEMP VIEW eligible_candidates AS
+                SELECT candidates.*
+                FROM candidates
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM conflict_keys
+                    WHERE conflict_keys.cik = candidates.cik
+                      AND conflict_keys.tag = candidates.tag
+                      AND conflict_keys.ddate = candidates.ddate
+                      AND conflict_keys.qtrs = candidates.qtrs
+                      AND conflict_keys.uom = candidates.uom
+                )
+                """
+            )
             self._write_view(
                 connection,
                 root / "facts_pit.parquet",
@@ -407,6 +473,7 @@ class PitStoreBuilder:
                 ascending=False,
                 schema=LATEST_FACT_SCHEMA,
             )
+            self._write_conflicts(connection, root / "facts_conflicts.parquet")
         except duckdb.Error as exc:
             raise PitStoreError("DuckDB could not materialize PIT fact views") from exc
         finally:
@@ -483,7 +550,11 @@ class PitStoreBuilder:
                 parquet = pq.ParquetFile(path)
             except (OSError, pa.ArrowException) as exc:
                 raise PitStoreError(f"PIT snapshot verification failed: {name}") from exc
-            expected_schema = PIT_FACT_SCHEMA if name == "facts_pit" else LATEST_FACT_SCHEMA
+            expected_schema = {
+                "facts_pit": PIT_FACT_SCHEMA,
+                "facts_latest": LATEST_FACT_SCHEMA,
+                "facts_conflicts": PIT_CONFLICT_SCHEMA,
+            }[name]
             if (
                 value.get("content_sha256") != actual_hash
                 or value.get("byte_count") != actual_bytes
