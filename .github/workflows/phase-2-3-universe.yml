@@ -21,7 +21,7 @@ on:
       fsds_end:
         required: false
         type: string
-        default: "2026q2"
+        default: "2026q1"
   workflow_dispatch:
     inputs:
       cover_run_id:
@@ -42,7 +42,7 @@ on:
       fsds_end:
         description: Last available FSDS quarter at the cutoff
         required: true
-        default: "2026q2"
+        default: "2026q1"
 
 permissions:
   actions: read
@@ -136,6 +136,7 @@ jobs:
           path: |
             ${{ runner.temp }}/phase-2-3
             ${{ runner.temp }}/universe-prices
+            ${{ runner.temp }}/private-listing
           if-no-files-found: warn
           retention-days: 30
       - name: Require the real gate to pass

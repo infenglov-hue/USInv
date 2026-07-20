@@ -43,6 +43,28 @@ class Phase23Build:
     ttm_facts: int
 
 
+def _active_listing_matches_discovery(
+    listing: AlphaListingSnapshot,
+    discovery: FilingDiscoveryPlan,
+) -> bool:
+    """Verify exact active CSV content while allowing a later retrieval timestamp."""
+    active = tuple(
+        (
+            f"alpha-vantage://{row.source_sha256}/{row.row_number}",
+            row.exchange,
+            row.asset_type,
+        )
+        for row in sorted(
+            (row for row in listing.rows if row.state == "active"),
+            key=lambda row: (row.exchange, row.symbol, row.row_number),
+        )
+    )
+    planned = tuple(
+        (row.listing_evidence_pointer, row.raw_exchange, row.asset_type) for row in discovery.rows
+    )
+    return bool(active) and active == planned
+
+
 def build_phase_2_3(
     listing: AlphaListingSnapshot,
     discovery: FilingDiscoveryPlan,
@@ -59,8 +81,8 @@ def build_phase_2_3(
         raise Phase23BuildError("Phase 2.3 signal must be timezone-aware")
     cutoff = signal_at.astimezone(UTC)
     if (
-        listing.snapshot_id != discovery.listing_snapshot_id
-        or listing.as_of != discovery.listing_as_of
+        listing.as_of != discovery.listing_as_of
+        or not _active_listing_matches_discovery(listing, discovery)
         or listing.as_of != signal_at.date()
         or cover.merge.as_of.astimezone(UTC) != cutoff
         or prices.plan.signal_at.astimezone(UTC) != cutoff

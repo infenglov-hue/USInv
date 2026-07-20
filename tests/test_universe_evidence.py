@@ -50,7 +50,11 @@ from usinv.data.universe_evidence import (
     build_security_universe_evidence,
     filing_sic_observations,
 )
-from usinv.phase_2_3 import Phase23BuildError, build_phase_2_3
+from usinv.phase_2_3 import (
+    Phase23BuildError,
+    _active_listing_matches_discovery,
+    build_phase_2_3,
+)
 
 SIGNAL = datetime(2026, 7, 17, 20, tzinfo=UTC)
 CIK = 1
@@ -428,11 +432,31 @@ def test_price_universe_batches_are_exact_and_reopenable(tmp_path: Path) -> None
 
 
 def test_phase_2_3_composer_rejects_mixed_input_lineage_before_building() -> None:
-    listing = SimpleNamespace(snapshot_id="a" * 64, as_of=SIGNAL.date())
+    listing = SimpleNamespace(
+        snapshot_id="a" * 64,
+        as_of=SIGNAL.date(),
+        rows=(
+            SimpleNamespace(
+                state="active",
+                exchange="NASDAQ",
+                symbol="ONE",
+                row_number=2,
+                source_sha256="f" * 64,
+                asset_type="Stock",
+            ),
+        ),
+    )
     discovery = SimpleNamespace(
         listing_snapshot_id="b" * 64,
         listing_as_of=SIGNAL.date(),
         snapshot_id="c" * 64,
+        rows=(
+            SimpleNamespace(
+                listing_evidence_pointer=f"alpha-vantage://{'e' * 64}/2",
+                raw_exchange="NASDAQ",
+                asset_type="Stock",
+            ),
+        ),
     )
     cover = SimpleNamespace(
         snapshot_id="d" * 64,
@@ -459,3 +483,37 @@ def test_phase_2_3_composer_rejects_mixed_input_lineage_before_building() -> Non
             signal_at=SIGNAL,
             config=object(),
         )
+
+
+def test_phase_2_3_lineage_allows_same_content_retrieved_at_a_new_instant() -> None:
+    listing = SimpleNamespace(
+        rows=(
+            SimpleNamespace(
+                state="active",
+                exchange="NASDAQ",
+                symbol="ONE",
+                row_number=2,
+                source_sha256="f" * 64,
+                asset_type="Stock",
+            ),
+            SimpleNamespace(
+                state="delisted",
+                exchange="NYSE",
+                symbol="OLD",
+                row_number=2,
+                source_sha256="d" * 64,
+                asset_type="Stock",
+            ),
+        )
+    )
+    discovery = SimpleNamespace(
+        rows=(
+            SimpleNamespace(
+                listing_evidence_pointer=f"alpha-vantage://{'f' * 64}/2",
+                raw_exchange="NASDAQ",
+                asset_type="Stock",
+            ),
+        )
+    )
+
+    assert _active_listing_matches_discovery(listing, discovery)
