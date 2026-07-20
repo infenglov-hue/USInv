@@ -32,7 +32,7 @@ from usinv.data.edgar.submissions import SubmissionFeed, SubmissionFiling
 from usinv.data.listings import AlphaListingSnapshot
 
 SEC_TICKER_FIELDS: Final = ("cik", "name", "ticker", "exchange")
-DISCOVERY_VERSION: Final = "usinv-sec-filing-discovery-v2"
+DISCOVERY_VERSION: Final = "usinv-sec-filing-discovery-v3"
 COVER_FORMS: Final = frozenset(
     {
         "10-K",
@@ -56,10 +56,18 @@ DiscoveryStatus = Literal[
     "unmapped",
     "ambiguous",
     "unsupported_exchange",
+    "unsupported_ticker",
     "unsupported_asset_type",
 ]
 _DISCOVERY_STATUSES: Final = frozenset(
-    {"discovered", "unmapped", "ambiguous", "unsupported_exchange", "unsupported_asset_type"}
+    {
+        "discovered",
+        "unmapped",
+        "ambiguous",
+        "unsupported_exchange",
+        "unsupported_ticker",
+        "unsupported_asset_type",
+    }
 )
 
 
@@ -131,8 +139,9 @@ def parse_sec_ticker_associations(document: EdgarDocument) -> SecTickerAssociati
             raise EdgarPayloadError("SEC ticker association symbol fields must be text")
         try:
             ticker = normalize_ticker(ticker_raw)
-        except SecurityMasterError as exc:
-            raise EdgarPayloadError("SEC ticker association ticker is invalid") from exc
+        except SecurityMasterError:
+            unusable_rows += 1
+            continue
         exchange = " ".join(exchange_raw.strip().split())
         if not exchange:
             raise EdgarPayloadError("SEC ticker association exchange is empty")
@@ -193,13 +202,14 @@ class FilingDiscoveryPlan:
                 "discovered": 1,
                 "unmapped": 0,
                 "unsupported_exchange": 0,
+                "unsupported_ticker": 0,
                 "unsupported_asset_type": 0,
             }.get(row.status)
             if expected_candidates is not None and len(row.candidate_ciks) != expected_candidates:
                 raise EdgarPayloadError("filing discovery status contradicts its CIK candidates")
             if row.status == "ambiguous" and len(row.candidate_ciks) < 2:
                 raise EdgarPayloadError("ambiguous filing discovery needs multiple CIK candidates")
-            if row.ticker != normalize_ticker(row.ticker):
+            if row.status != "unsupported_ticker" and row.ticker != normalize_ticker(row.ticker):
                 raise EdgarPayloadError("filing discovery ticker is not normalized")
             if (
                 row.normalized_exchange is not None
@@ -250,6 +260,21 @@ def build_filing_discovery_plan(
     ):
         pointer = f"alpha-vantage://{listing.source_sha256}/{listing.row_number}"
         try:
+            ticker = normalize_ticker(listing.symbol)
+        except SecurityMasterError:
+            rows.append(
+                FilingDiscoveryRow(
+                    listing.symbol,
+                    listing.exchange,
+                    None,
+                    listing.asset_type,
+                    pointer,
+                    "unsupported_ticker",
+                    (),
+                )
+            )
+            continue
+        try:
             exchange = normalize_exchange(listing.exchange)
         except SecurityMasterError:
             rows.append(
@@ -277,7 +302,7 @@ def build_filing_discovery_plan(
                 )
             )
             continue
-        candidates = tuple(sorted(index.get((listing.symbol, exchange), ())))
+        candidates = tuple(sorted(index.get((ticker, exchange), ())))
         status: DiscoveryStatus
         if len(candidates) == 1:
             status = "discovered"
@@ -287,7 +312,7 @@ def build_filing_discovery_plan(
             status = "unmapped"
         rows.append(
             FilingDiscoveryRow(
-                listing.symbol,
+                ticker,
                 listing.exchange,
                 exchange,
                 listing.asset_type,
