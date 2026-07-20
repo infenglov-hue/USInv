@@ -135,6 +135,26 @@ committed. Membership is not identity: universe selection still requires a
 unique high-confidence security-master interval for the same ticker, exchange
 and date.
 
+Build a discovery-only CIK plan from that private snapshot, then archive
+filing-time cover evidence in resumable CIK shards:
+
+```powershell
+$env:USINV_EDGAR_EMAIL = "your-monitored-address@your-domain.tld"
+python -m usinv sec-filing-discovery `
+  --listing-snapshot <listing-snapshot-directory>
+python -m usinv sec-cover-bootstrap `
+  --discovery-plan <discovery-plan-directory> `
+  --as-of 2026-07-17T16:00:00-04:00 `
+  --max-ciks 250
+```
+
+The current SEC ticker file locates candidate filings only; it never becomes
+historical identity evidence. A share class enters the security master only
+when an as-filed cover fact accepted by the cutoff supplies a matching ticker,
+exchange and class title. Every accession is content-addressed as it is fetched,
+so an interrupted shard can resume without publishing a partial security
+master; mismatches remain explicit gaps rather than guessed joins.
+
 The account-free historical feasibility checks validate the 36-security sample,
 provider contracts and metadata-only evidence matrix; public demo responses are
 written only to the ignored artifacts directory:

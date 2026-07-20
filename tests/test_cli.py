@@ -234,6 +234,127 @@ def test_alpha_listing_sync_writes_private_snapshot_and_reports_only_counts(
     assert "Apple" not in output
 
 
+def test_sec_filing_discovery_reports_only_plan_counts(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    listings = SimpleNamespace(as_of=date(2026, 7, 17))
+    plan = SimpleNamespace(listing_as_of=date(2026, 7, 17))
+    artifact = SimpleNamespace(
+        from_cache=False,
+        snapshot_id="e" * 64,
+        rows=100,
+        discovered_ciks=80,
+        identity_gaps=5,
+    )
+
+    class FakeClient:
+        def company_tickers_exchange(self, *, refresh: bool) -> object:
+            assert refresh
+            return object()
+
+    monkeypatch.setattr(cli_module, "read_alpha_listing_snapshot", lambda path: listings)
+    monkeypatch.setattr(
+        EdgarClient,
+        "from_config",
+        staticmethod(lambda config: FakeClient()),
+    )
+    monkeypatch.setattr(cli_module, "parse_sec_ticker_associations", lambda value: object())
+    monkeypatch.setattr(
+        cli_module,
+        "build_filing_discovery_plan",
+        lambda listing_value, association_value: plan,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "materialize_filing_discovery_plan",
+        lambda value, output: artifact,
+    )
+
+    assert (
+        main(
+            [
+                "sec-filing-discovery",
+                "--listing-snapshot",
+                str(tmp_path / "listing"),
+                "--output-dir",
+                str(tmp_path),
+                "--refresh",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "sec_filing_discovery_ok listing_as_of=2026-07-17 state=created" in output
+    assert "rows=100 discovered_ciks=80 identity_gaps=5" in output
+
+
+def test_sec_cover_bootstrap_reports_partial_progress_without_publishing_a_partial_master(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    plan = SimpleNamespace(snapshot_id="a" * 64)
+    acquisition = SimpleNamespace(
+        complete=False,
+        requested_ciks=(1,),
+        deferred_ciks=(2, 3),
+        archived_filings=2,
+        evidence=(object(),),
+        gaps=(object(),),
+    )
+    bootstrap = SimpleNamespace(master=object(), gaps=())
+
+    class FakeClient:
+        pass
+
+    monkeypatch.setattr(cli_module, "read_filing_discovery_plan", lambda path: plan)
+    monkeypatch.setattr(
+        EdgarClient,
+        "from_config",
+        staticmethod(lambda config, *, cache_dir=None: FakeClient()),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "acquire_cover_evidence",
+        lambda client, plan_value, archive_root, **kwargs: acquisition,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "build_cover_security_master",
+        lambda evidence, *, as_of: bootstrap,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "materialize_security_master",
+        lambda master, output: pytest.fail("partial acquisition must not publish a master"),
+    )
+
+    assert (
+        main(
+            [
+                "sec-cover-bootstrap",
+                "--discovery-plan",
+                str(tmp_path / "plan"),
+                "--as-of",
+                "2026-07-17T16:00:00-04:00",
+                "--max-ciks",
+                "1",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "sec_cover_bootstrap_ok" in output and "state=partial" in output
+    assert "requested_ciks=1 deferred_ciks=2 archived_filings=2" in output
+    assert "master_snapshot=deferred" in output
+
+
 def test_edgar_smoke_reports_both_documents_without_dumping_payload(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

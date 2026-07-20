@@ -104,6 +104,21 @@ def test_endpoints_declared_user_agent_and_fresh_cache(tmp_path: Path) -> None:
     assert transport.calls[0][1]["Accept-Encoding"] == "gzip, deflate"
 
 
+def test_current_ticker_association_endpoint_is_explicitly_supported(tmp_path: Path) -> None:
+    payload = {
+        "fields": ["cik", "name", "ticker", "exchange"],
+        "data": [[320193, "Apple Inc.", "AAPL", "Nasdaq"]],
+    }
+    transport = FakeTransport(_response(payload))
+    client = _client(tmp_path, transport)
+
+    document = client.company_tickers_exchange()
+
+    assert document.payload == payload
+    assert transport.calls[0][0] == "https://www.sec.gov/files/company_tickers_exchange.json"
+    assert transport.calls[0][1]["User-Agent"] == "USInv/0.1.0 ops@usinv.dev"
+
+
 @pytest.mark.parametrize(
     ("value", "normalized"),
     [(320193, "0000320193"), ("320193", "0000320193"), ("CIK0000320193", "0000320193")],

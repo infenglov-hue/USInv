@@ -25,6 +25,7 @@ from usinv.config import AppConfig
 
 BASE_URL: Final = "https://data.sec.gov"
 ARCHIVE_BASE_URL: Final = "https://www.sec.gov/Archives/edgar/data"
+COMPANY_TICKERS_EXCHANGE_URL: Final = "https://www.sec.gov/files/company_tickers_exchange.json"
 ALLOWED_SEC_HOSTS: Final = frozenset({"data.sec.gov", "www.sec.gov"})
 RETRIABLE_STATUS_CODES: Final = frozenset({403, 429, 500, 502, 503, 504})
 EMAIL_PATTERN: Final = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -556,6 +557,29 @@ class EdgarClient:
         normalized = self.normalize_cik(cik)
         document = self._request(f"/api/xbrl/companyfacts/CIK{normalized}.json", refresh=refresh)
         return self._require_fields(document, ("cik", "entityName", "facts"), "companyfacts")
+
+    def company_tickers_exchange(self, *, refresh: bool = False) -> EdgarDocument:
+        """Fetch the SEC's current discovery-only CIK/ticker/exchange associations."""
+        resource = self._request_resource(
+            COMPANY_TICKERS_EXCHANGE_URL,
+            refresh=refresh,
+            accept="application/json",
+        )
+        try:
+            payload = self._decode_payload(resource.body, resource.url)
+        except EdgarPayloadError:
+            self._cache.delete(resource.url)
+            raise
+        document = EdgarDocument(
+            url=resource.url,
+            retrieved_at=resource.retrieved_at,
+            validated_at=resource.validated_at,
+            content_sha256=resource.content_sha256,
+            payload=payload,
+            from_cache=resource.from_cache,
+            revalidated=resource.revalidated,
+        )
+        return self._require_fields(document, ("fields", "data"), "company tickers exchange")
 
     def submission_history(self, filename: str, *, refresh: bool = False) -> EdgarDocument:
         """Fetch one SEC-declared older submissions page by its safe filename."""

@@ -18,10 +18,17 @@ from usinv.data.edgar import (
     FsdsQuarter,
     PitInputBatch,
     PitStoreBuilder,
+    acquire_cover_evidence,
+    build_cover_security_master,
     build_coverage_report,
+    build_filing_discovery_plan,
     coverage_input,
     eligible_ciks_from_filings,
     fsds_quarter_range,
+    materialize_filing_discovery_plan,
+    materialize_security_master,
+    parse_sec_ticker_associations,
+    read_filing_discovery_plan,
     standardize_pit_snapshot,
 )
 from usinv.data.edgar.companyfacts import parse_companyfacts_document
@@ -35,6 +42,7 @@ from usinv.data.listings import (
     AlphaVantageListingClient,
     ListingDataError,
     materialize_alpha_listing_snapshot,
+    read_alpha_listing_snapshot,
 )
 from usinv.data.prices import AlpacaPriceProvider, PriceDataError, TiingoSpotCheckClient
 
@@ -109,6 +117,26 @@ def _parser() -> argparse.ArgumentParser:
     )
     listings.add_argument("--as-of", type=_iso_date, required=True)
     listings.add_argument("--output-dir", type=Path, help="override the private data root")
+    discovery = subcommands.add_parser(
+        "sec-filing-discovery",
+        help="build a discovery-only SEC filing plan from one private listing snapshot",
+    )
+    discovery.add_argument("--listing-snapshot", type=Path, required=True)
+    discovery.add_argument("--output-dir", type=Path, help="override the private data root")
+    discovery.add_argument("--refresh", action="store_true")
+    cover = subcommands.add_parser(
+        "sec-cover-bootstrap",
+        help="archive filing-time cover evidence for one immutable SEC discovery plan",
+    )
+    cover.add_argument("--discovery-plan", type=Path, required=True)
+    cover.add_argument("--as-of", type=_aware_datetime, required=True)
+    cover.add_argument("--cache-dir", type=Path, help="override the EDGAR cache directory")
+    cover.add_argument("--archive-dir", type=Path, help="override the as-filed archive root")
+    cover.add_argument("--output-dir", type=Path, help="override the private data root")
+    cover.add_argument("--max-ciks", type=int, help="process a bounded resumable CIK shard")
+    cover.add_argument("--start-after-cik", type=int, help="resume after this numeric CIK")
+    cover.add_argument("--max-filings-per-cik", type=int, default=4)
+    cover.add_argument("--refresh", action="store_true")
     live = subcommands.add_parser(
         "edgar-live-sync",
         help="archive and normalize newly accepted 10-K/10-Q filings for one CIK",
@@ -229,6 +257,81 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"snapshot_id={artifact.snapshot_id}",
                     f"active_rows={artifact.active_rows}",
                     f"delisted_rows={artifact.delisted_rows}",
+                )
+            )
+        )
+        return 0
+    if args.command == "sec-filing-discovery":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir)
+        try:
+            listings = read_alpha_listing_snapshot(args.listing_snapshot)
+            client = EdgarClient.from_config(config)
+            associations = parse_sec_ticker_associations(
+                client.company_tickers_exchange(refresh=args.refresh)
+            )
+            plan = build_filing_discovery_plan(listings, associations)
+            artifact = materialize_filing_discovery_plan(plan, output_root)
+        except (EdgarError, ListingDataError) as exc:
+            print(f"sec_filing_discovery_failed: {exc}", file=sys.stderr)
+            return 2
+        state = "cache" if artifact.from_cache else "created"
+        print(
+            " ".join(
+                (
+                    "sec_filing_discovery_ok",
+                    f"listing_as_of={plan.listing_as_of.isoformat()}",
+                    f"state={state}",
+                    f"snapshot_id={artifact.snapshot_id}",
+                    f"rows={artifact.rows}",
+                    f"discovered_ciks={artifact.discovered_ciks}",
+                    f"identity_gaps={artifact.identity_gaps}",
+                )
+            )
+        )
+        return 0
+    if args.command == "sec-cover-bootstrap":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir)
+        archive_root = args.archive_dir or output_root / "sec" / "filing-security"
+        try:
+            plan = read_filing_discovery_plan(args.discovery_plan)
+            client = EdgarClient.from_config(config, cache_dir=args.cache_dir)
+            acquisition = acquire_cover_evidence(
+                client,
+                plan,
+                archive_root,
+                as_of=args.as_of,
+                maximum_filings_per_cik=args.max_filings_per_cik,
+                maximum_ciks=args.max_ciks,
+                start_after_cik=args.start_after_cik,
+                refresh=args.refresh,
+            )
+            bootstrap = build_cover_security_master(acquisition.evidence, as_of=args.as_of)
+            snapshot = (
+                materialize_security_master(
+                    bootstrap.master,
+                    output_root / "security-bootstrap" / "master" / plan.snapshot_id,
+                )
+                if acquisition.complete
+                else None
+            )
+        except EdgarError as exc:
+            print(f"sec_cover_bootstrap_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "sec_cover_bootstrap_ok",
+                    f"plan={plan.snapshot_id}",
+                    f"state={'complete' if acquisition.complete else 'partial'}",
+                    f"requested_ciks={len(acquisition.requested_ciks)}",
+                    f"deferred_ciks={len(acquisition.deferred_ciks)}",
+                    f"archived_filings={acquisition.archived_filings}",
+                    f"evidence_filings={len(acquisition.evidence)}",
+                    f"acquisition_gaps={len(acquisition.gaps)}",
+                    f"security_master_gaps={len(bootstrap.gaps)}",
+                    f"master_snapshot={snapshot.snapshot_id if snapshot else 'deferred'}",
                 )
             )
         )
