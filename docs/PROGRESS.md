@@ -1,6 +1,6 @@
 # PROGRESS
 
-## 2026-07-20 — Phase 2.2 action reconstruction (complete in PR #14)
+## 2026-07-20 — Phase 2.2 action reconstruction (merged as `eba4588` via PR #14)
 
 ### Implemented locally
 
