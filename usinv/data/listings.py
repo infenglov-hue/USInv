@@ -143,8 +143,8 @@ class AlphaListingRow:
     source_sha256: str
 
     def __post_init__(self) -> None:
-        if not self.symbol or not self.name or not self.exchange or not self.asset_type:
-            raise ListingPayloadError("listing row identity fields cannot be empty")
+        if not self.symbol or not self.exchange or not self.asset_type:
+            raise ListingPayloadError("listing symbol, exchange and asset type cannot be empty")
         if self.symbol != self.symbol.strip().upper():
             raise ListingPayloadError("listing symbol is not normalized")
         if len(self.symbol) > 32 or any(character in self.symbol for character in "\r\n\0"):

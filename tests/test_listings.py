@@ -107,6 +107,12 @@ def test_listing_schema_status_and_future_dates_fail_closed() -> None:
     with pytest.raises(ListingPayloadError, match="post-cutoff IPO"):
         parse_alpha_listing_page(page(future))
 
+    blank_name = HEADER + "AAPL,,NASDAQ,Stock,1980-12-12,,Active\n"
+    assert parse_alpha_listing_page(page(blank_name))[0].name == ""
+    blank_exchange = HEADER + "AAPL,Apple Inc.,,Stock,1980-12-12,,Active\n"
+    with pytest.raises(ListingPayloadError, match="symbol, exchange and asset type"):
+        parse_alpha_listing_page(page(blank_exchange))
+
 
 def test_listing_retry_is_bounded_and_error_does_not_leak_key() -> None:
     client, _transport = _client(
