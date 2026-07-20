@@ -237,15 +237,25 @@ def test_transient_network_error_is_retried_without_leaking_credentials() -> Non
 
 
 def test_corporate_actions_probe_uses_current_endpoint_and_counts_categories() -> None:
-    body = json.dumps(
+    first_page = json.dumps(
         {
-            "forward_splits": [{"symbol": "AAPL"}],
-            "cash_dividends": [{"symbol": "AAPL"}, {"symbol": "AAPL"}],
-            "partial_calls": [{"symbol": "AAPL"}],
+            "corporate_actions": {
+                "forward_splits": [{"id": "split-1", "symbol": "AAPL"}],
+                "cash_dividends": [{"id": "dividend-1", "cusip": "037833100", "symbol": "AAPL"}],
+                "partial_calls": [{"id": "call-1", "symbol": "AAPL"}],
+            },
+            "next_page_token": "page-2",
+        }
+    ).encode()
+    second_page = json.dumps(
+        {
+            "corporate_actions": {
+                "cash_dividends": [{"id": "dividend-2", "cusip": "037833100", "symbol": "AAPL"}]
+            },
             "next_page_token": None,
         }
     ).encode()
-    transport = FakeTransport([_response(body)])
+    transport = FakeTransport([_response(first_page), _response(second_page)])
     probe = _provider(transport).probe_corporate_actions(
         symbols=("AAPL",),
         start=date(2020, 8, 1),
@@ -258,6 +268,40 @@ def test_corporate_actions_probe_uses_current_endpoint_and_counts_categories() -
     assert probe.category_counts["partial_calls"] == 1
     assert urlsplit(transport.calls[0][0]).path == ALPACA_CORPORATE_ACTIONS_PATH
     assert parse_qs(urlsplit(transport.calls[0][0]).query)["region"] == ["us"]
+    assert parse_qs(urlsplit(transport.calls[1][0]).query)["page_token"] == ["page-2"]
+
+
+@pytest.mark.parametrize(
+    "payload, message",
+    [
+        (
+            {"forward_splits": [], "next_page_token": None},
+            "top-level schema drifted",
+        ),
+        (
+            {"corporate_actions": [], "next_page_token": None},
+            "envelope must be an object",
+        ),
+        (
+            {
+                "corporate_actions": {"surprise_action": []},
+                "next_page_token": None,
+            },
+            "categories drifted",
+        ),
+    ],
+)
+def test_corporate_actions_probe_fails_closed_on_envelope_drift(
+    payload: object, message: str
+) -> None:
+    transport = FakeTransport([_response(json.dumps(payload).encode())])
+
+    with pytest.raises(PricePayloadError, match=message):
+        _provider(transport).probe_corporate_actions(
+            symbols=("AAPL",),
+            start=date(2020, 8, 1),
+            end=date(2020, 9, 30),
+        )
 
 
 def test_corporate_actions_forbidden_is_an_empirical_outcome_not_schema_guess() -> None:

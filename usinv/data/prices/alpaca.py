@@ -499,12 +499,14 @@ class AlpacaPriceProvider(PriceProvider):
                 return CorporateActionsProbe(outcome, response.status, counts, (page,))
             pages.append(page)
             payload = self._json(response.body, context="corporate-actions")
-            allowed_keys = {*_ACTION_CATEGORIES, "next_page_token"}
-            if not set(payload).issubset(allowed_keys):
+            if not set(payload).issubset({"corporate_actions", "next_page_token"}):
                 raise PricePayloadError("Alpaca corporate-actions top-level schema drifted")
-            for category, value in payload.items():
-                if category == "next_page_token":
-                    continue
+            actions = payload.get("corporate_actions")
+            if not isinstance(actions, dict):
+                raise PricePayloadError("Alpaca corporate_actions envelope must be an object")
+            if not set(actions).issubset(_ACTION_CATEGORIES):
+                raise PricePayloadError("Alpaca corporate-action categories drifted")
+            for category, value in actions.items():
                 if not isinstance(value, list):
                     raise PricePayloadError("Alpaca corporate-action category must be an array")
                 counts[category] += len(value)
