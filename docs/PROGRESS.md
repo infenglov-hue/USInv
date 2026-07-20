@@ -72,10 +72,10 @@
   from 1,929 to 849. The approved-exchange active-stock replay changes 1,023
   rows from quarantined to mapped while leaving 256 quarantined, 2,309 unmapped
   and two invalid rather than guessing them.
-- Added a merge-only GitHub workflow that derives the reconciled immutable
-  evidence package from the exact retained shard IDs. It avoids repeating the
-  90-minute SEC acquisition and does not alter the D032 thresholds or evidence
-  rules.
+- Added a merge-only mode to the existing GitHub security workflow that
+  derives the immutable evidence package from the exact retained shard IDs. It
+  avoids repeating the 90-minute SEC acquisition and does not alter the D032
+  thresholds or evidence rules.
 
 ### Acceptance gate remains closed
 
