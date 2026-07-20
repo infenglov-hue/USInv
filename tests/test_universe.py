@@ -404,6 +404,60 @@ def test_phase_gate_blocks_any_approved_exchange_identity_gap() -> None:
     assert "identity_unmapped" in missing.exclusion_reasons
 
 
+@pytest.mark.parametrize(
+    ("ticker", "name"),
+    [
+        ("ONEW", "One Corp Warrants"),
+        ("ONE-U", "One Acquisition Corp - Units (1 Ord Share & 1/2 War)"),
+        ("ONER", "One Acquisition Corp Rights"),
+        ("ONE-P-A", "One Corp Depositary Shares Series A"),
+        ("ONEN", "One Corp 6.5% Senior Notes Due 2030"),
+    ],
+)
+def test_explicit_non_common_provider_stock_is_not_an_identity_gap(
+    ticker: str,
+    name: str,
+) -> None:
+    _master, snapshot = _build(
+        _listing_snapshot([(ticker, name, "NASDAQ", "Stock")]),
+        [],
+        [],
+        [],
+    )
+
+    row = snapshot.rows[0]
+    assert row.asset_type_pass and not row.mapping_pass
+    assert row.mapping_status == "non_common_listing"
+    assert "identity_non_common_listing" in row.exclusion_reasons
+    assert not snapshot.identity_mapping_gaps
+
+
+def test_common_unit_provider_stock_remains_an_identity_candidate() -> None:
+    _master, snapshot = _build(
+        _listing_snapshot([("ONE", "One Partners LP Common Units", "NASDAQ", "Stock")]),
+        [],
+        [],
+        [],
+    )
+
+    row = snapshot.rows[0]
+    assert row.asset_type_pass and not row.mapping_pass
+    assert snapshot.identity_mapping_gaps == (row,)
+
+
+def test_company_name_containing_preferred_remains_an_identity_candidate() -> None:
+    _master, snapshot = _build(
+        _listing_snapshot([("PFBC", "Preferred Bank", "NASDAQ", "Stock")]),
+        [],
+        [],
+        [],
+    )
+
+    row = snapshot.rows[0]
+    assert row.mapping_status == "unmapped"
+    assert snapshot.identity_mapping_gaps == (row,)
+
+
 def test_non_common_cover_mapping_is_an_exclusion_not_an_identity_gap() -> None:
     warrant = _security(
         1,
@@ -459,6 +513,33 @@ def test_missing_form_history_and_sic_are_quarantined_not_assumed_safe() -> None
     row = snapshot.rows[0]
     assert not row.fpi_pass and not row.sector_pass and not row.included
     assert snapshot.sector_mapping_gaps == (row,)
+
+
+@pytest.mark.parametrize(
+    ("domestic", "security_type"),
+    [(False, "common_stock"), (True, "other")],
+)
+def test_sector_gate_ignores_mapped_instruments_outside_domestic_common_scope(
+    domestic: bool,
+    security_type: str,
+) -> None:
+    security = _security(
+        1,
+        "sec-cover:excluded",
+        domestic=domestic,
+        security_type=security_type,
+        title="Excluded Instrument",
+    )
+    _master, snapshot = _build(
+        _listing_snapshot([("ONE", "One Corp", "NASDAQ", "Stock")]),
+        [security],
+        [_symbol(security, "ONE")],
+        [],
+    )
+
+    row = snapshot.rows[0]
+    assert row.mapping_pass and not row.included
+    assert not snapshot.sector_mapping_gaps
 
 
 def test_signal_timestamp_must_be_the_official_session_close() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import uuid
 from collections import Counter, defaultdict
@@ -25,10 +26,18 @@ from usinv.data.edgar.securities import Security, SecurityMaster, SecurityMaster
 from usinv.data.listings import AlphaListingRow, AlphaListingSnapshot
 from usinv.scoring.sectors import SectorClassification, SectorMappingError, classify_sic
 
-UNIVERSE_VERSION: Final = "usinv-universe-v1"
+UNIVERSE_VERSION: Final = "usinv-universe-v2"
 HYGIENE_STUB_VERSION: Final = "phase-2.3-pass-through-v1"
 FPI_FORMS: Final = frozenset({"20-F", "6-K", "F-1"})
 PRE_REVENUE_BIOTECH_SICS: Final = frozenset({2834, 2836, 8731})
+NON_COMMON_LISTING_NAME_PATTERN: Final = re.compile(
+    r"\b(?:warrants?|rights?|depositary shares?|"
+    r"preferred(?:\s+\w+){0,3}\s+(?:stock|shares?|securities|units?|lp)|"
+    r"(?:senior|subordinated|convertible) notes?|bonds?)\b",
+    re.IGNORECASE,
+)
+NON_COMMON_LISTING_UNIT_PATTERN: Final = re.compile(r"\bunits?\b", re.IGNORECASE)
+COMMON_UNIT_PATTERN: Final = re.compile(r"\bcommon units?\b", re.IGNORECASE)
 SizeBucket = Literal["core", "large_cap"]
 
 
@@ -219,6 +228,7 @@ class UniverseSnapshot:
             and row.exchange_pass
             and row.asset_type_pass
             and not row.mapping_pass
+            and row.mapping_status != "non_common_listing"
         )
 
     @property
@@ -226,7 +236,10 @@ class UniverseSnapshot:
         candidates = [
             row
             for row in self.rows
-            if row.membership_pass and row.exchange_pass and row.asset_type_pass
+            if row.membership_pass
+            and row.exchange_pass
+            and row.asset_type_pass
+            and row.mapping_status != "non_common_listing"
         ]
         if not candidates:
             return 0.0
@@ -237,7 +250,10 @@ class UniverseSnapshot:
         return tuple(
             row
             for row in self.rows
-            if row.mapping_pass and (row.sic is None or row.ff49_code is None)
+            if row.mapping_pass
+            and row.domestic_pass
+            and row.common_stock_pass
+            and (row.sic is None or row.ff49_code is None)
         )
 
     @property
@@ -391,6 +407,7 @@ def build_universe_snapshot(
             exchange = None
         exchange_pass = exchange in approved_exchanges
         asset_type_pass = listing.asset_type.casefold() == "stock"
+        explicit_non_common_listing = _is_explicit_non_common_listing(listing)
         mapping_status = "not_attempted"
         security: Security | None = None
         mapping_pass = False
@@ -421,6 +438,8 @@ def build_universe_snapshot(
                 if mapping.status == "mapped" and mapping.security_id is not None:
                     security = securities[mapping.security_id]
                     mapping_pass = True
+            if explicit_non_common_listing and not mapping_pass:
+                mapping_status = "non_common_listing"
         item = evidence_by_security.get(security.security_id) if security else None
         if item is not None:
             raw_close, median_dollar_volume, price_pointers = _market_metrics(
@@ -433,7 +452,11 @@ def build_universe_snapshot(
             raw_close = None
             median_dollar_volume = None
         domestic_pass = bool(security and security.domestic_flag)
-        common_stock_pass = bool(security and security.security_type == "common_stock")
+        common_stock_pass = bool(
+            security
+            and security.security_type == "common_stock"
+            and not explicit_non_common_listing
+        )
         fpi_pass = bool(
             item is not None
             and item.form_history_complete
@@ -637,6 +660,15 @@ def _normalize_exchange(value: str) -> str:
     from usinv.data.edgar.securities import normalize_exchange
 
     return normalize_exchange(value)
+
+
+def _is_explicit_non_common_listing(listing: AlphaListingRow) -> bool:
+    """Recognize provider rows that explicitly describe a non-common instrument."""
+    if NON_COMMON_LISTING_NAME_PATTERN.search(listing.name):
+        return True
+    return bool(NON_COMMON_LISTING_UNIT_PATTERN.search(listing.name)) and not (
+        COMMON_UNIT_PATTERN.search(listing.name)
+    )
 
 
 def enforce_phase_2_3_gate(
