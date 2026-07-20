@@ -5,7 +5,7 @@ import json
 from datetime import UTC, date, datetime
 from pathlib import Path
 
-from usinv.data.edgar.client import EdgarDocument, EdgarResource
+from usinv.data.edgar.client import EdgarDocument, EdgarHttpError, EdgarResource
 from usinv.data.edgar.cover_acquisition import acquire_cover_evidence, infer_domestic_flag
 from usinv.data.edgar.security_bootstrap import (
     FilingDiscoveryPlan,
@@ -166,6 +166,32 @@ def test_cover_acquisition_rejects_a_cover_pair_that_does_not_match_discovery(
 
     assert not result.evidence
     assert result.gaps[0].kind == "cover_not_in_discovery_plan"
+
+
+def test_cover_acquisition_quarantines_a_missing_historical_filing_resource(
+    tmp_path: Path,
+) -> None:
+    class MissingArchiveClient(FakeClient):
+        def filing_resource(
+            self,
+            cik: int,
+            accession: str,
+            filename: str,
+            *,
+            refresh: bool = False,
+        ) -> EdgarResource:
+            raise EdgarHttpError(404, "https://www.sec.gov/Archives/missing", "missing")
+
+    result = acquire_cover_evidence(
+        MissingArchiveClient(),
+        _plan(),
+        tmp_path,
+        as_of=CUTOFF,
+        maximum_ciks=1,
+    )
+
+    assert not result.evidence and result.archived_filings == 0
+    assert result.gaps[0].kind == "filing_resource_missing"
 
 
 def test_filer_regime_uses_only_forms_accepted_by_the_cutoff() -> None:

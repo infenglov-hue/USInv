@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
-from usinv.data.edgar.client import EdgarClient, EdgarPayloadError
+from usinv.data.edgar.client import EdgarClient, EdgarHttpError, EdgarPayloadError
 from usinv.data.edgar.filing_xbrl import (
     FilingParseResult,
     archive_filing,
@@ -180,7 +180,20 @@ def acquire_cover_evidence(
 
         allowed_pairs = pairs_by_cik[cik]
         for filing in selected:
-            archived = archive_filing(client, filing, archive_root, refresh=refresh)
+            try:
+                archived = archive_filing(client, filing, archive_root, refresh=refresh)
+            except EdgarHttpError as exc:
+                if exc.status != 404:
+                    raise
+                gaps.append(
+                    CoverAcquisitionGap(
+                        cik,
+                        filing.accession,
+                        "filing_resource_missing",
+                        "SEC returned HTTP 404 for a required filing archive resource",
+                    )
+                )
+                continue
             archived_count += 1
             primary_name = PurePosixPath(filing.primary_document).name
             primary_resource = next(

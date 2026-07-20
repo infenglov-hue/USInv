@@ -139,7 +139,8 @@ def _filing_rows_with_gaps(
             continue
         primary_document = primary_raw.strip()
         if ".." in primary_document or primary_document.startswith(("/", "\\")):
-            raise EdgarPayloadError("unsafe SEC primaryDocument path")
+            unusable_filings += 1
+            continue
         filing = SubmissionFiling(
             cik=cik,
             accession=accession,

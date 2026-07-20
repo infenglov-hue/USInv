@@ -99,6 +99,11 @@ def test_submission_arrays_and_history_filenames_fail_closed() -> None:
     with pytest.raises(EdgarPayloadError, match="unsafe"):
         parse_submissions_document(_document(payload))
 
+    payload = _submissions_payload()
+    payload["filings"]["recent"]["primaryDocument"][0] = "../escape.htm"  # type: ignore[index]
+    feed = parse_submissions_document(_document(payload))
+    assert feed.unusable_filings == 1 and len(feed.filings) == 1
+
 
 def test_periodic_detection_cannot_see_a_future_acceptance() -> None:
     feed = parse_submissions_document(_document(_submissions_payload()))
