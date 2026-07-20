@@ -32,6 +32,7 @@ from usinv.data.edgar import (
     merge_cover_evidence_shards,
     parse_sec_ticker_associations,
     read_cover_evidence_shard,
+    read_cover_evidence_snapshot,
     read_filing_discovery_plan,
     standardize_pit_snapshot,
 )
@@ -48,7 +49,13 @@ from usinv.data.listings import (
     materialize_alpha_listing_snapshot,
     read_alpha_listing_snapshot,
 )
-from usinv.data.prices import AlpacaPriceProvider, PriceDataError, TiingoSpotCheckClient
+from usinv.data.prices import (
+    AlpacaPriceProvider,
+    PriceDataError,
+    TiingoSpotCheckClient,
+    acquire_price_universe,
+    build_price_universe_plan,
+)
 
 
 def _fsds_quarter(value: str) -> FsdsQuarter:
@@ -153,6 +160,16 @@ def _parser() -> argparse.ArgumentParser:
     cover_merge.add_argument("--discovery-plan", type=Path, required=True)
     cover_merge.add_argument("--evidence-root", type=Path, required=True)
     cover_merge.add_argument("--output-dir", type=Path, help="override the private data root")
+    universe_prices = subcommands.add_parser(
+        "universe-price-sync",
+        help="fetch exact raw/all Alpaca batches for a complete filing-backed security master",
+    )
+    universe_prices.add_argument("--discovery-plan", type=Path, required=True)
+    universe_prices.add_argument("--cover-evidence", type=Path, required=True)
+    universe_prices.add_argument("--signal-at", type=_aware_datetime, required=True)
+    universe_prices.add_argument("--window-sessions", type=int, default=21)
+    universe_prices.add_argument("--batch-size", type=int, default=100)
+    universe_prices.add_argument("--output-dir", type=Path, help="override price evidence root")
     live = subcommands.add_parser(
         "edgar-live-sync",
         help="archive and normalize newly accepted 10-K/10-Q filings for one CIK",
@@ -399,6 +416,42 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"complete_form_histories={len(merged.form_history_proofs)}",
                     f"evidence_snapshot={snapshot.snapshot_id}",
                     f"master_snapshot={snapshot.master_snapshot_id}",
+                )
+            )
+        )
+        return 0
+    if args.command == "universe-price-sync":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir) / "prices"
+        try:
+            discovery = read_filing_discovery_plan(args.discovery_plan)
+            cover_snapshot = read_cover_evidence_snapshot(args.cover_evidence)
+            plan = build_price_universe_plan(
+                discovery,
+                cover_snapshot,
+                signal_at=args.signal_at,
+                window_sessions=args.window_sessions,
+                batch_size=args.batch_size,
+            )
+            snapshot = acquire_price_universe(
+                AlpacaPriceProvider.from_config(config),
+                plan,
+                cover_snapshot,
+                output_root,
+            )
+        except (EdgarError, PriceDataError) as exc:
+            print(f"universe_price_sync_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "universe_price_sync_ok",
+                    f"plan={plan.snapshot_id}",
+                    f"targets={len(plan.targets)}",
+                    f"batches={len(plan.batches)}",
+                    f"raw_rows={sum(row.raw_rows for row in snapshot.price_snapshots)}",
+                    f"mapping_issues={sum(len(row.issues) for row in snapshot.price_snapshots)}",
+                    f"snapshot={snapshot.snapshot_id}",
                 )
             )
         )

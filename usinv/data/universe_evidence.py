@@ -70,7 +70,7 @@ class UniverseEvidenceGap:
 @dataclass(frozen=True, slots=True)
 class UniverseEvidenceBuild:
     cover_snapshot_id: str
-    price_snapshot_id: str
+    price_snapshot_ids: tuple[str, ...]
     signal_at: datetime
     evidence: tuple[SecurityUniverseEvidence, ...]
     gaps: tuple[UniverseEvidenceGap, ...]
@@ -179,7 +179,7 @@ def _latest_revenue(rows: list[TtmFact], cutoff: datetime):
 
 def build_security_universe_evidence(
     cover_snapshot: CoverEvidenceSnapshot,
-    price_snapshot: PriceSnapshot,
+    price_snapshots: PriceSnapshot | Iterable[PriceSnapshot],
     sic_observations: Iterable[FilingSicObservation],
     ttm_facts: Iterable[TtmFact],
     *,
@@ -190,32 +190,39 @@ def build_security_universe_evidence(
         raise UniverseEvidenceError("universe evidence cutoff must be timezone-aware")
     cutoff = signal_at.astimezone(UTC)
     verified_cover = read_cover_evidence_snapshot(cover_snapshot.output_dir)
-    verified_prices = read_price_snapshot(price_snapshot.output_dir)
+    supplied_prices = (
+        (price_snapshots,) if isinstance(price_snapshots, PriceSnapshot) else tuple(price_snapshots)
+    )
+    verified_prices = tuple(read_price_snapshot(row.output_dir) for row in supplied_prices)
     if (
         verified_cover.snapshot_id != cover_snapshot.snapshot_id
-        or verified_prices.snapshot_id != price_snapshot.snapshot_id
+        or not verified_prices
+        or tuple(row.snapshot_id for row in verified_prices)
+        != tuple(row.snapshot_id for row in supplied_prices)
+        or len({row.snapshot_id for row in verified_prices}) != len(verified_prices)
         or verified_cover.merge.as_of.astimezone(UTC) != cutoff
     ):
         raise UniverseEvidenceError("universe evidence artifact identities or cutoff differ")
     master = verified_cover.merge.master
     securities = {row.security_id: row for row in master.securities}
 
-    price_table = pq.read_table(verified_prices.output_dir / "prices_raw.parquet")
-    if not price_table.schema.equals(PRICES_RAW_SCHEMA, check_metadata=True):
-        raise UniverseEvidenceError("raw price evidence schema is invalid")
     prices_by_security: dict[str, dict[object, UniversePriceBar]] = defaultdict(dict)
-    for row in price_table.to_pylist():
-        if row["security_id"] not in securities or row["session"] > signal_at.date():
-            continue
-        pointer = (
-            f"{row['source_url']}#{row['source_page_sha256']}"
-            f":{row['batch_id']}:{row['security_id']}:{row['session'].isoformat()}"
-        )
-        bar = UniversePriceBar(row["session"], row["close"], row["volume"], pointer)
-        prior = prices_by_security[row["security_id"]].get(row["session"])
-        if prior is not None and prior != bar:
-            raise UniverseEvidenceError("conflicting raw prices share a security/session key")
-        prices_by_security[row["security_id"]][row["session"]] = bar
+    for price_snapshot in verified_prices:
+        price_table = pq.read_table(price_snapshot.output_dir / "prices_raw.parquet")
+        if not price_table.schema.equals(PRICES_RAW_SCHEMA, check_metadata=True):
+            raise UniverseEvidenceError("raw price evidence schema is invalid")
+        for row in price_table.to_pylist():
+            if row["security_id"] not in securities or row["session"] > signal_at.date():
+                continue
+            pointer = (
+                f"{row['source_url']}#{row['source_page_sha256']}"
+                f":{row['batch_id']}:{row['security_id']}:{row['session'].isoformat()}"
+            )
+            bar = UniversePriceBar(row["session"], row["close"], row["volume"], pointer)
+            prior = prices_by_security[row["security_id"]].get(row["session"])
+            if prior is not None and prior != bar:
+                raise UniverseEvidenceError("conflicting raw prices share a security/session key")
+            prices_by_security[row["security_id"]][row["session"]] = bar
 
     shares_by_security: dict[str, list[object]] = defaultdict(list)
     for row in verified_cover.merge.share_observations:
@@ -319,7 +326,7 @@ def build_security_universe_evidence(
         )
     return UniverseEvidenceBuild(
         verified_cover.snapshot_id,
-        verified_prices.snapshot_id,
+        tuple(row.snapshot_id for row in verified_prices),
         cutoff,
         tuple(evidence),
         tuple(sorted(gaps, key=lambda row: (row.security_id, row.kind))),

@@ -428,6 +428,65 @@ def test_sec_cover_merge_requires_exact_shards_before_publishing(
     assert f"master_snapshot={'f' * 64}" in output
 
 
+def test_universe_price_sync_reports_exact_batch_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    discovery = object()
+    cover = object()
+    provider = object()
+    plan = SimpleNamespace(
+        snapshot_id="a" * 64,
+        targets=(object(), object()),
+        batches=((object(),), (object(),)),
+    )
+    snapshot = SimpleNamespace(
+        snapshot_id="b" * 64,
+        price_snapshots=(
+            SimpleNamespace(raw_rows=21, issues=()),
+            SimpleNamespace(raw_rows=20, issues=(object(),)),
+        ),
+    )
+    monkeypatch.setattr(cli_module, "read_filing_discovery_plan", lambda path: discovery)
+    monkeypatch.setattr(cli_module, "read_cover_evidence_snapshot", lambda path: cover)
+    monkeypatch.setattr(
+        cli_module,
+        "build_price_universe_plan",
+        lambda *args, **kwargs: plan,
+    )
+    monkeypatch.setattr(
+        AlpacaPriceProvider,
+        "from_config",
+        staticmethod(lambda config: provider),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "acquire_price_universe",
+        lambda provider_value, plan_value, cover_value, output: snapshot,
+    )
+
+    assert (
+        main(
+            [
+                "universe-price-sync",
+                "--discovery-plan",
+                str(tmp_path / "plan"),
+                "--cover-evidence",
+                str(tmp_path / "cover"),
+                "--signal-at",
+                "2026-07-17T16:00:00-04:00",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "targets=2 batches=2 raw_rows=41 mapping_issues=1" in output
+    assert f"snapshot={'b' * 64}" in output
+
+
 def test_sec_cover_bootstrap_can_require_a_matched_filing(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],

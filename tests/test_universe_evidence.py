@@ -26,14 +26,21 @@ from usinv.data.edgar.securities import (
     build_security_master,
     mint_security_id,
 )
+from usinv.data.edgar.security_bootstrap import FilingDiscoveryPlan, FilingDiscoveryRow
 from usinv.data.edgar.ttm import TtmFact
 from usinv.data.prices.base import (
     PriceFetchResult,
+    PriceProvider,
     PriceQuery,
     PriceSecurityBinding,
     PriceSourcePage,
     VendorDailyBar,
     materialize_price_snapshot,
+)
+from usinv.data.prices.universe import (
+    acquire_price_universe,
+    build_price_universe_plan,
+    read_price_universe_snapshot,
 )
 from usinv.data.universe_evidence import (
     FilingSicObservation,
@@ -322,3 +329,66 @@ def test_filing_sic_reader_requires_hash_verified_fsds_artifact(tmp_path: Path) 
     observations = filing_sic_observations((result,), as_of=SIGNAL)
 
     assert len(observations) == 1 and observations[0].sic == 3571
+
+
+def test_price_universe_batches_are_exact_and_reopenable(tmp_path: Path) -> None:
+    security_id, cover = _cover_snapshot(tmp_path)
+    discovery = FilingDiscoveryPlan(
+        SIGNAL.date(),
+        "1" * 64,
+        "2" * 64,
+        datetime(2026, 7, 20, 12, tzinfo=UTC),
+        (
+            FilingDiscoveryRow(
+                "ONE",
+                "NASDAQ",
+                "NASDAQ",
+                "Stock",
+                "alpha-vantage://" + "3" * 64 + "/2",
+                "discovered",
+                (CIK,),
+            ),
+        ),
+    )
+
+    class FakeProvider(PriceProvider):
+        def fetch_daily_bars(self, query: PriceQuery) -> PriceFetchResult:
+            page = _page(query.adjustment)
+            bars = tuple(
+                VendorDailyBar(
+                    "ONE",
+                    datetime(session.year, session.month, session.day, 4, tzinfo=UTC),
+                    session,
+                    Decimal("9"),
+                    Decimal("11"),
+                    Decimal("8"),
+                    Decimal("10"),
+                    1_000_000,
+                    100,
+                    Decimal("10"),
+                    0,
+                )
+                for session in _sessions()
+            )
+            return PriceFetchResult(
+                "alpaca",
+                "alpaca-v2-stocks-bars-1day-sip-trade-aggregate",
+                query,
+                (page,),
+                bars,
+            )
+
+    plan = build_price_universe_plan(
+        discovery,
+        cover,
+        signal_at=SIGNAL,
+        batch_size=1,
+    )
+    created = acquire_price_universe(FakeProvider(), plan, cover, tmp_path / "universe-prices")
+    cached = acquire_price_universe(FakeProvider(), plan, cover, tmp_path / "universe-prices")
+
+    assert [row.security_id for row in plan.targets] == [security_id]
+    assert created.snapshot_id == cached.snapshot_id
+    assert not created.from_cache and cached.from_cache
+    assert len(created.price_snapshots) == 1
+    assert read_price_universe_snapshot(created.output_dir).plan == plan
