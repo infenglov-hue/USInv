@@ -156,6 +156,31 @@ class VendorDailyBar:
 
 
 @dataclass(frozen=True, slots=True)
+class VendorBarIssue:
+    """One symbol-local provider row that is archived but forbidden from prices."""
+
+    vendor_symbol: str
+    session: date
+    kind: str
+    detail: str
+    page_index: int
+
+    def __post_init__(self) -> None:
+        try:
+            normalized = normalize_ticker(self.vendor_symbol)
+        except SecurityMasterError as exc:
+            raise PricePayloadError("vendor bar issue symbol is invalid") from exc
+        if (
+            normalized != self.vendor_symbol
+            or not self.kind
+            or not self.detail
+            or isinstance(self.page_index, bool)
+            or not isinstance(self.page_index, int)
+        ):
+            raise PricePayloadError("vendor bar issue provenance is invalid")
+
+
+@dataclass(frozen=True, slots=True)
 class PriceFetchResult:
     """All pages and parsed bars returned for one provider query."""
 
@@ -164,6 +189,7 @@ class PriceFetchResult:
     query: PriceQuery
     pages: tuple[PriceSourcePage, ...]
     bars: tuple[VendorDailyBar, ...]
+    provider_issues: tuple[VendorBarIssue, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.provider or not self.bar_definition or not self.pages:
@@ -173,13 +199,28 @@ class PriceFetchResult:
         if any(bar.vendor_symbol not in self.query.symbols for bar in self.bars):
             raise PricePayloadError("price result contains an unrequested symbol")
         if any(
+            issue.page_index < 0
+            or issue.page_index >= len(self.pages)
+            or issue.vendor_symbol not in self.query.symbols
+            or issue.session < self.query.start.astimezone(EXCHANGE_TIMEZONE).date()
+            or issue.session > self.query.end.astimezone(EXCHANGE_TIMEZONE).date()
+            for issue in self.provider_issues
+        ):
+            raise PricePayloadError("price provider issue provenance is invalid")
+        quarantined_symbols = {issue.vendor_symbol for issue in self.provider_issues}
+        if any(bar.vendor_symbol in quarantined_symbols for bar in self.bars):
+            raise PricePayloadError("quarantined provider symbol leaked into parsed bars")
+        if any(
             bar.timestamp.astimezone(UTC) < self.query.start.astimezone(UTC)
             or bar.timestamp.astimezone(UTC) > self.query.end.astimezone(UTC)
             for bar in self.bars
         ):
             raise PricePayloadError("price result contains a bar outside its request bounds")
         try:
-            for session in {bar.session for bar in self.bars}:
+            for session in {
+                *(bar.session for bar in self.bars),
+                *(issue.session for issue in self.provider_issues),
+            }:
                 default_calendar().session(session)
         except CalendarError as exc:
             raise PricePayloadError("price result contains a non-XNYS session") from exc
@@ -210,6 +251,16 @@ class PriceFetchResult:
                     "request_id": page.request_id,
                 }
                 for page in self.pages
+            ],
+            "provider_issues": [
+                {
+                    "vendor_symbol": issue.vendor_symbol,
+                    "session": issue.session.isoformat(),
+                    "kind": issue.kind,
+                    "detail": issue.detail,
+                    "page_index": issue.page_index,
+                }
+                for issue in self.provider_issues
             ],
         }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -398,10 +449,18 @@ def _resolve_binding(
     bar: VendorDailyBar,
     bindings: tuple[PriceSecurityBinding, ...],
 ) -> tuple[PriceSecurityBinding | None, tuple[str, ...], tuple[str, ...], str | None]:
+    return _resolve_symbol_session(bar.vendor_symbol, bar.session, bindings)
+
+
+def _resolve_symbol_session(
+    vendor_symbol: str,
+    session: date,
+    bindings: tuple[PriceSecurityBinding, ...],
+) -> tuple[PriceSecurityBinding | None, tuple[str, ...], tuple[str, ...], str | None]:
     matches = {
         (binding.security_id, binding.exchange, binding.evidence_pointer): binding
         for binding in bindings
-        if binding.ticker == bar.vendor_symbol and binding.contains(bar.session)
+        if binding.ticker == vendor_symbol and binding.contains(session)
     }
     security_ids = tuple(sorted({key[0] for key in matches}))
     exchanges = tuple(sorted({key[1] for key in matches}))
@@ -421,6 +480,24 @@ def _mapped_rows(
 ) -> tuple[list[dict[str, object]], list[PriceMappingIssue]]:
     rows: dict[tuple[str, date, str, str], dict[str, object]] = {}
     issues: list[PriceMappingIssue] = []
+    for issue in result.provider_issues:
+        _, security_ids, exchanges, _ = _resolve_symbol_session(
+            issue.vendor_symbol,
+            issue.session,
+            bindings,
+        )
+        issues.append(
+            PriceMappingIssue(
+                result.batch_id,
+                result.query.adjustment,
+                issue.vendor_symbol,
+                issue.session,
+                issue.kind,
+                security_ids,
+                exchanges,
+                issue.detail,
+            )
+        )
     for bar in result.bars:
         binding, security_ids, exchanges, mapping_evidence = _resolve_binding(bar, bindings)
         if binding is None:

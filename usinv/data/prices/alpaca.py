@@ -30,6 +30,7 @@ from usinv.data.prices.base import (
     PriceQuery,
     PriceSecurityBinding,
     PriceSourcePage,
+    VendorBarIssue,
     VendorDailyBar,
 )
 
@@ -62,6 +63,12 @@ _ACTION_CATEGORIES: Final = frozenset(
         "reorganizations",
     }
 )
+
+
+class _QuarantinableBarError(PricePayloadError):
+    def __init__(self, session: date, detail: str) -> None:
+        super().__init__(detail)
+        self.session = session
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:
@@ -367,7 +374,10 @@ class AlpacaPriceProvider(PriceProvider):
         volume = self._integer(value["v"], "volume")
         trade_count = self._integer(value["n"], "trade_count")
         if min(open_value, high, low, close, vwap) <= 0 or volume <= 0 or trade_count < 0:
-            raise PricePayloadError("Alpaca daily bar contains non-positive price/volume")
+            raise _QuarantinableBarError(
+                session,
+                "Alpaca daily bar contains non-positive price/volume",
+            )
         if low > high or not low <= open_value <= high or not low <= close <= high:
             raise PricePayloadError("Alpaca daily bar violates OHLC bounds")
         return VendorDailyBar(
@@ -396,6 +406,8 @@ class AlpacaPriceProvider(PriceProvider):
         self._validate_query(query)
         pages: list[PriceSourcePage] = []
         bars: list[VendorDailyBar] = []
+        provider_issues: list[VendorBarIssue] = []
+        quarantined_symbols: set[str] = set()
         page_token: str | None = None
         seen_tokens: set[str] = set()
         while True:
@@ -441,9 +453,21 @@ class AlpacaPriceProvider(PriceProvider):
                     raise PricePayloadError("Alpaca returned an unrequested symbol")
                 if not isinstance(values, list):
                     raise PricePayloadError("Alpaca symbol bars must be an array")
-                parsed_bars = [
-                    self._parse_bar(symbol, item, page_index=page_index) for item in values
-                ]
+                parsed_bars: list[VendorDailyBar] = []
+                for item in values:
+                    try:
+                        parsed_bars.append(self._parse_bar(symbol, item, page_index=page_index))
+                    except _QuarantinableBarError as exc:
+                        quarantined_symbols.add(normalized_symbol)
+                        provider_issues.append(
+                            VendorBarIssue(
+                                normalized_symbol,
+                                exc.session,
+                                "invalid_provider_bar",
+                                str(exc),
+                                page_index,
+                            )
+                        )
                 if any(
                     bar.timestamp < query.start.astimezone(UTC)
                     or bar.timestamp > query.end.astimezone(UTC)
@@ -458,6 +482,7 @@ class AlpacaPriceProvider(PriceProvider):
                 raise PricePayloadError("Alpaca pagination token is invalid or cyclic")
             seen_tokens.add(next_token)
             page_token = next_token
+        bars = [bar for bar in bars if bar.vendor_symbol not in quarantined_symbols]
         bars.sort(key=lambda item: (item.vendor_symbol, item.session, item.timestamp))
         return PriceFetchResult(
             ALPACA_PROVIDER,
@@ -465,6 +490,7 @@ class AlpacaPriceProvider(PriceProvider):
             query,
             tuple(pages),
             tuple(bars),
+            tuple(provider_issues),
         )
 
     def fetch_raw_and_all(

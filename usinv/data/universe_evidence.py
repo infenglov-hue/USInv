@@ -205,13 +205,28 @@ def build_security_universe_evidence(
     master = verified_cover.merge.master
     securities = {row.security_id: row for row in master.securities}
 
+    invalid_price_details: dict[str, set[str]] = defaultdict(set)
+    for price_snapshot in verified_prices:
+        for issue in price_snapshot.issues:
+            if issue.kind != "invalid_provider_bar":
+                continue
+            for security_id in issue.candidate_security_ids:
+                if security_id in securities:
+                    invalid_price_details[security_id].add(
+                        f"{issue.adjustment}:{issue.vendor_symbol}:{issue.session}:{issue.detail}"
+                    )
+
     prices_by_security: dict[str, dict[object, UniversePriceBar]] = defaultdict(dict)
     for price_snapshot in verified_prices:
         price_table = pq.read_table(price_snapshot.output_dir / "prices_raw.parquet")
         if not price_table.schema.equals(PRICES_RAW_SCHEMA, check_metadata=True):
             raise UniverseEvidenceError("raw price evidence schema is invalid")
         for row in price_table.to_pylist():
-            if row["security_id"] not in securities or row["session"] > signal_at.date():
+            if (
+                row["security_id"] not in securities
+                or row["security_id"] in invalid_price_details
+                or row["session"] > signal_at.date()
+            ):
                 continue
             pointer = (
                 f"{row['source_url']}#{row['source_page_sha256']}"
@@ -269,6 +284,15 @@ def build_security_universe_evidence(
                     security.cik,
                     "incomplete_form_history",
                     "SEC-declared submissions history is not completely archived",
+                )
+            )
+        if security.security_id in invalid_price_details:
+            gaps.append(
+                UniverseEvidenceGap(
+                    security.security_id,
+                    security.cik,
+                    "invalid_provider_price",
+                    " | ".join(sorted(invalid_price_details[security.security_id])),
                 )
             )
 

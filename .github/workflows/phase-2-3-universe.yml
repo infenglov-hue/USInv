@@ -136,7 +136,7 @@ jobs:
           path: |
             ${{ runner.temp }}/phase-2-3
             ${{ runner.temp }}/universe-prices
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
       - name: Require the real gate to pass
         if: steps.gate.outcome != 'success'

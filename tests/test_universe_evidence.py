@@ -36,6 +36,7 @@ from usinv.data.prices.base import (
     PriceQuery,
     PriceSecurityBinding,
     PriceSourcePage,
+    VendorBarIssue,
     VendorDailyBar,
     materialize_price_snapshot,
 )
@@ -146,7 +147,7 @@ def _page(adjustment: str) -> PriceSourcePage:
     )
 
 
-def _price_snapshot(tmp_path: Path, security_id: str):
+def _price_snapshot(tmp_path: Path, security_id: str, *, invalid_adjusted: bool = False):
     bars = tuple(
         VendorDailyBar(
             "ONE",
@@ -169,12 +170,24 @@ def _price_snapshot(tmp_path: Path, security_id: str):
     )
 
     def result(adjustment: str) -> PriceFetchResult:
+        invalid = invalid_adjusted and adjustment == "all"
         return PriceFetchResult(
             "alpaca",
             "alpaca-v2-stocks-bars-1day-sip-trade-aggregate",
             PriceQuery(("ONE",), *query_bounds, adjustment),  # type: ignore[arg-type]
             (_page(adjustment),),
-            bars,
+            () if invalid else bars,
+            (
+                VendorBarIssue(
+                    "ONE",
+                    _sessions()[0],
+                    "invalid_provider_bar",
+                    "zero volume",
+                    0,
+                ),
+            )
+            if invalid
+            else (),
         )
 
     binding = PriceSecurityBinding(
@@ -254,6 +267,23 @@ def test_verified_sources_compose_security_keyed_universe_evidence(tmp_path: Pat
         signal_at=SIGNAL,
     )
     assert biotech_result.evidence[0].pre_revenue_biotech is True
+
+
+def test_invalid_adjusted_provider_bar_quarantines_all_price_evidence(tmp_path: Path) -> None:
+    security_id, cover = _cover_snapshot(tmp_path)
+    prices = _price_snapshot(tmp_path, security_id, invalid_adjusted=True)
+    sic = FilingSicObservation(
+        CIK,
+        "0000000001-26-000001",
+        3571,
+        datetime(2026, 5, 1, 20, tzinfo=UTC),
+        "sec-fsds://2026q2/hash/filing#sic",
+    )
+
+    result = build_security_universe_evidence(cover, prices, (sic,), (), signal_at=SIGNAL)
+
+    assert result.evidence[0].price_bars == ()
+    assert any(gap.kind == "invalid_provider_price" for gap in result.gaps)
 
 
 def test_missing_class_shares_fail_closed_while_fpi_evidence_is_retained(tmp_path: Path) -> None:

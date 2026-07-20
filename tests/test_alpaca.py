@@ -175,7 +175,6 @@ def test_raw_and_all_are_fetched_as_physically_separate_requests() -> None:
     [
         (lambda bar: bar.pop("vw"), "schema drifted"),
         (lambda bar: bar.update({"l": 103}), "OHLC bounds"),
-        (lambda bar: bar.update({"v": 0}), "non-positive"),
     ],
 )
 def test_bar_schema_and_market_invariants_fail_closed(mutator: object, message: str) -> None:
@@ -185,6 +184,19 @@ def test_bar_schema_and_market_invariants_fail_closed(mutator: object, message: 
 
     with pytest.raises(PricePayloadError, match=message):
         _provider(transport).fetch_daily_bars(_query())
+
+
+def test_non_positive_bar_quarantines_only_its_symbol_and_archives_page() -> None:
+    payload = json.loads(_body())
+    payload["bars"]["AAPL"][0]["v"] = 0
+    transport = FakeTransport([_response(json.dumps(payload).encode())])
+
+    result = _provider(transport).fetch_daily_bars(_query())
+
+    assert result.bars == ()
+    assert len(result.pages) == 1
+    assert len(result.provider_issues) == 1
+    assert result.provider_issues[0].kind == "invalid_provider_bar"
 
 
 def test_non_session_daily_bar_is_rejected() -> None:
