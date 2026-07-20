@@ -11,7 +11,8 @@ permissions:
 jobs:
   listing-smoke:
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' &&
+       !startsWith(github.ref, 'refs/heads/agent/phase-2-3')) ||
       github.event.label.name == 'alpha-listing-live-smoke'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -47,3 +48,10 @@ jobs:
             --output-dir "${{ runner.temp }}/usinv-security-smoke" \
             --max-ciks 5 \
             --require-evidence
+
+  full-security-bootstrap:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      startsWith(github.ref, 'refs/heads/agent/phase-2-3')
+    uses: ./.github/workflows/security-master-bootstrap.yml
+    secrets: inherit
