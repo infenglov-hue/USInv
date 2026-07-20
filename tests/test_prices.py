@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -122,6 +123,24 @@ def test_ticker_reuse_maps_each_session_to_immutable_security_id(tmp_path: Path)
     assert raw.schema.equals(PRICES_RAW_SCHEMA, check_metadata=True)
     assert set(raw.column("security_id").to_pylist()) == {"old-security", "new-security"}
     assert snapshot.issues == ()
+
+
+def test_zero_trade_bar_persists_as_zero_liquidity_not_missing_data(tmp_path: Path) -> None:
+    bar = replace(
+        _bar(date(2023, 6, 1)),
+        volume=0,
+        trade_count=0,
+        vwap=None,
+    )
+    snapshot = materialize_price_snapshot(
+        _result("raw", (bar,)),
+        _result("all", (bar,)),
+        (_binding("security", date(2022, 1, 1)),),
+        tmp_path,
+    )
+
+    row = pq.read_table(snapshot.output_dir / "prices_raw.parquet").to_pylist()[0]
+    assert row["volume"] == 0 and row["vwap"] is None
 
 
 def test_bindings_are_selected_from_security_master_evidence_not_ticker_guess() -> None:

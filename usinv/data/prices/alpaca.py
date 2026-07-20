@@ -373,10 +373,17 @@ class AlpacaPriceProvider(PriceProvider):
         vwap = self._decimal(value["vw"], "vwap")
         volume = self._integer(value["v"], "volume")
         trade_count = self._integer(value["n"], "trade_count")
-        if min(open_value, high, low, close, vwap) <= 0 or volume <= 0 or trade_count < 0:
+        no_trade_bar = volume == 0 and trade_count == 0 and vwap == 0
+        if (
+            min(open_value, high, low, close) <= 0
+            or volume < 0
+            or trade_count < 0
+            or (volume == 0 and not no_trade_bar)
+            or (volume > 0 and vwap <= 0)
+        ):
             raise _QuarantinableBarError(
                 session,
-                "Alpaca daily bar contains non-positive price/volume",
+                "Alpaca daily bar contains invalid price, volume, or no-trade fields",
             )
         if low > high or not low <= open_value <= high or not low <= close <= high:
             raise PricePayloadError("Alpaca daily bar violates OHLC bounds")
@@ -390,7 +397,7 @@ class AlpacaPriceProvider(PriceProvider):
             close,
             volume,
             trade_count,
-            vwap,
+            None if no_trade_bar else vwap,
             page_index,
         )
 

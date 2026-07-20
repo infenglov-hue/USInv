@@ -48,6 +48,11 @@ EVIDENCE_AT = datetime(2026, 6, 1, 10, tzinfo=UTC)
 CONFIG = load_config().universe
 
 
+def test_zero_volume_session_is_valid_zero_dollar_liquidity() -> None:
+    bar = UniversePriceBar(SESSION, Decimal("10"), 0, "fixture://no-trade")
+    assert bar.dollar_volume == 0
+
+
 def _security(
     cik: int,
     anchor: str,

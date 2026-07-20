@@ -58,8 +58,8 @@ class UniversePriceBar:
             or self.raw_close <= 0
         ):
             raise UniverseError("universe raw close must be a positive exact decimal")
-        if isinstance(self.volume, bool) or not isinstance(self.volume, int) or self.volume <= 0:
-            raise UniverseError("universe volume must be a positive integer")
+        if isinstance(self.volume, bool) or not isinstance(self.volume, int) or self.volume < 0:
+            raise UniverseError("universe volume must be a non-negative integer")
         if not self.evidence_pointer:
             raise UniverseError("universe price bar requires an evidence pointer")
 

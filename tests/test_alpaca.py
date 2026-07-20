@@ -186,15 +186,29 @@ def test_bar_schema_and_market_invariants_fail_closed(mutator: object, message: 
         _provider(transport).fetch_daily_bars(_query())
 
 
-def test_non_positive_bar_quarantines_only_its_symbol_and_archives_page() -> None:
+def test_coherent_zero_trade_bar_is_retained_as_zero_liquidity() -> None:
     payload = json.loads(_body())
     payload["bars"]["AAPL"][0]["v"] = 0
+    payload["bars"]["AAPL"][0]["n"] = 0
+    payload["bars"]["AAPL"][0]["vw"] = 0
+    transport = FakeTransport([_response(json.dumps(payload).encode())])
+
+    result = _provider(transport).fetch_daily_bars(_query())
+
+    assert len(result.bars) == 1
+    assert result.bars[0].volume == 0 and result.bars[0].vwap is None
+    assert not result.provider_issues
+    assert len(result.pages) == 1
+
+
+def test_invalid_bar_quarantines_only_its_symbol_and_archives_page() -> None:
+    payload = json.loads(_body())
+    payload["bars"]["AAPL"][0]["v"] = -1
     transport = FakeTransport([_response(json.dumps(payload).encode())])
 
     result = _provider(transport).fetch_daily_bars(_query())
 
     assert result.bars == ()
-    assert len(result.pages) == 1
     assert len(result.provider_issues) == 1
     assert result.provider_issues[0].kind == "invalid_provider_bar"
 

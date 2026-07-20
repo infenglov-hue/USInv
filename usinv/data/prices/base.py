@@ -145,10 +145,11 @@ class VendorDailyBar:
         if (
             min(values) <= 0
             or (self.vwap is not None and self.vwap <= 0)
-            or self.volume <= 0
+            or self.volume < 0
             or (self.trade_count or 0) < 0
+            or (self.volume == 0 and ((self.trade_count or 0) != 0 or self.vwap is not None))
         ):
-            raise PricePayloadError("vendor bar contains non-positive price/volume")
+            raise PricePayloadError("vendor bar contains invalid price, volume, or trade fields")
         if self.low > self.high or not self.low <= self.open <= self.high:
             raise PricePayloadError("vendor bar violates OHLC bounds")
         if not self.low <= self.close <= self.high:
