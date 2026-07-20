@@ -34,6 +34,14 @@ class CoverAcquisitionGap:
 
 
 @dataclass(frozen=True, slots=True)
+class CoverArchiveRecord:
+    cik: int
+    accession: str
+    archive_snapshot_id: str
+    primary_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class CoverAcquisitionResult:
     plan_snapshot_id: str
     as_of: datetime
@@ -42,6 +50,7 @@ class CoverAcquisitionResult:
     start_after_cik: int | None
     selected_filings: int
     archived_filings: int
+    archives: tuple[CoverArchiveRecord, ...]
     evidence: tuple[CoverFilingEvidence, ...]
     gaps: tuple[CoverAcquisitionGap, ...]
 
@@ -123,6 +132,7 @@ def acquire_cover_evidence(
     requested = eligible[:maximum_ciks] if maximum_ciks is not None else eligible
     deferred = eligible[len(requested) :]
     evidence: list[CoverFilingEvidence] = []
+    archives: list[CoverArchiveRecord] = []
     gaps: list[CoverAcquisitionGap] = []
     selected_count = 0
     archived_count = 0
@@ -173,6 +183,20 @@ def acquire_cover_evidence(
             archived = archive_filing(client, filing, archive_root, refresh=refresh)
             archived_count += 1
             primary_name = PurePosixPath(filing.primary_document).name
+            primary_resource = next(
+                (resource for resource in archived.resources if resource.name == primary_name),
+                None,
+            )
+            if primary_resource is None:
+                raise EdgarPayloadError("archived filing primary resource is missing")
+            archives.append(
+                CoverArchiveRecord(
+                    cik,
+                    filing.accession,
+                    archived.snapshot_id,
+                    primary_resource.content_sha256,
+                )
+            )
             primary_path = archived.output_dir / primary_name
             if not primary_path.is_file():
                 raise EdgarPayloadError("archived filing primary document is missing")
@@ -219,6 +243,7 @@ def acquire_cover_evidence(
         start_after_cik,
         selected_count,
         archived_count,
+        tuple(archives),
         tuple(evidence),
         tuple(gaps),
     )

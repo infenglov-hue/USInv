@@ -25,9 +25,12 @@ from usinv.data.edgar import (
     coverage_input,
     eligible_ciks_from_filings,
     fsds_quarter_range,
+    materialize_cover_evidence_shard,
     materialize_filing_discovery_plan,
     materialize_security_master,
+    merge_cover_evidence_shards,
     parse_sec_ticker_associations,
+    read_cover_evidence_shard,
     read_filing_discovery_plan,
     standardize_pit_snapshot,
 )
@@ -142,6 +145,13 @@ def _parser() -> argparse.ArgumentParser:
         help="fail unless this shard yields at least one matched cover filing",
     )
     cover.add_argument("--refresh", action="store_true")
+    cover_merge = subcommands.add_parser(
+        "sec-cover-merge",
+        help="merge an exact non-overlapping cover-evidence shard partition",
+    )
+    cover_merge.add_argument("--discovery-plan", type=Path, required=True)
+    cover_merge.add_argument("--evidence-root", type=Path, required=True)
+    cover_merge.add_argument("--output-dir", type=Path, help="override the private data root")
     live = subcommands.add_parser(
         "edgar-live-sync",
         help="archive and normalize newly accepted 10-K/10-Q filings for one CIK",
@@ -316,6 +326,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.require_evidence and not acquisition.evidence:
                 raise EdgarError("cover acquisition produced no matched filing evidence")
             bootstrap = build_cover_security_master(acquisition.evidence, as_of=args.as_of)
+            evidence_shard = materialize_cover_evidence_shard(
+                acquisition,
+                bootstrap,
+                output_root,
+            )
             snapshot = (
                 materialize_security_master(
                     bootstrap.master,
@@ -334,12 +349,51 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"plan={plan.snapshot_id}",
                     f"state={'complete' if acquisition.complete else 'partial'}",
                     f"requested_ciks={len(acquisition.requested_ciks)}",
+                    f"last_requested_cik={acquisition.requested_ciks[-1]}",
                     f"deferred_ciks={len(acquisition.deferred_ciks)}",
                     f"archived_filings={acquisition.archived_filings}",
                     f"evidence_filings={len(acquisition.evidence)}",
+                    f"evidence_ciks={len({row.cik for row in bootstrap.master.securities})}",
                     f"acquisition_gaps={len(acquisition.gaps)}",
                     f"security_master_gaps={len(bootstrap.gaps)}",
+                    f"evidence_shard={evidence_shard.snapshot_id}",
                     f"master_snapshot={snapshot.snapshot_id if snapshot else 'deferred'}",
+                )
+            )
+        )
+        return 0
+    if args.command == "sec-cover-merge":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir)
+        try:
+            plan = read_filing_discovery_plan(args.discovery_plan)
+            shard_paths = tuple(
+                sorted(path.parent for path in args.evidence_root.rglob("shard.json"))
+            )
+            shards = tuple(read_cover_evidence_shard(path) for path in shard_paths)
+            merged = merge_cover_evidence_shards(shards, expected_ciks=plan.ciks)
+            if merged.plan_snapshot_id != plan.snapshot_id:
+                raise EdgarError("cover evidence shards do not belong to the discovery plan")
+            snapshot = materialize_security_master(
+                merged.master,
+                output_root / "security-bootstrap" / "master" / plan.snapshot_id,
+            )
+        except EdgarError as exc:
+            print(f"sec_cover_merge_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "sec_cover_merge_ok",
+                    f"plan={plan.snapshot_id}",
+                    f"shards={len(shards)}",
+                    f"covered_ciks={len(merged.requested_ciks)}",
+                    f"securities={len(merged.master.securities)}",
+                    f"symbols={len(merged.master.symbols)}",
+                    f"mapping_issues={len(merged.master.issues)}",
+                    f"acquisition_gaps={len(merged.acquisition_gaps)}",
+                    f"bootstrap_gaps={len(merged.bootstrap_gaps)}",
+                    f"master_snapshot={snapshot.snapshot_id}",
                 )
             )
         )

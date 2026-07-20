@@ -310,7 +310,8 @@ def test_sec_cover_bootstrap_reports_partial_progress_without_publishing_a_parti
         evidence=(object(),),
         gaps=(object(),),
     )
-    bootstrap = SimpleNamespace(master=object(), gaps=())
+    bootstrap = SimpleNamespace(master=SimpleNamespace(securities=()), gaps=())
+    evidence_shard = SimpleNamespace(snapshot_id="f" * 64)
 
     class FakeClient:
         pass
@@ -330,6 +331,11 @@ def test_sec_cover_bootstrap_reports_partial_progress_without_publishing_a_parti
         cli_module,
         "build_cover_security_master",
         lambda evidence, *, as_of: bootstrap,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "materialize_cover_evidence_shard",
+        lambda acquisition_value, bootstrap_value, output: evidence_shard,
     )
     monkeypatch.setattr(
         cli_module,
@@ -353,8 +359,66 @@ def test_sec_cover_bootstrap_reports_partial_progress_without_publishing_a_parti
     )
     output = capsys.readouterr().out
     assert "sec_cover_bootstrap_ok" in output and "state=partial" in output
-    assert "requested_ciks=1 deferred_ciks=2 archived_filings=2" in output
+    assert "requested_ciks=1 last_requested_cik=1 deferred_ciks=2" in output
+    assert "archived_filings=2" in output
+    assert "evidence_ciks=0" in output
     assert "master_snapshot=deferred" in output
+    assert f"evidence_shard={'f' * 64}" in output
+
+
+def test_sec_cover_merge_requires_exact_shards_before_publishing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    plan = SimpleNamespace(snapshot_id="a" * 64, ciks=(1, 2))
+    shard_dir = tmp_path / "download" / "shard-one"
+    shard_dir.mkdir(parents=True)
+    shard_dir.joinpath("shard.json").write_text("{}", encoding="utf-8")
+    shard = object()
+    master = SimpleNamespace(securities=(object(),), symbols=(object(),), issues=())
+    merged = SimpleNamespace(
+        plan_snapshot_id=plan.snapshot_id,
+        requested_ciks=(1, 2),
+        master=master,
+        acquisition_gaps=(),
+        bootstrap_gaps=(),
+    )
+    snapshot = SimpleNamespace(snapshot_id="f" * 64)
+
+    monkeypatch.setattr(cli_module, "read_filing_discovery_plan", lambda path: plan)
+    monkeypatch.setattr(cli_module, "read_cover_evidence_shard", lambda path: shard)
+    monkeypatch.setattr(
+        cli_module,
+        "merge_cover_evidence_shards",
+        lambda shards, *, expected_ciks: merged,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "materialize_security_master",
+        lambda master_value, output: snapshot,
+    )
+
+    assert (
+        main(
+            [
+                "sec-cover-merge",
+                "--discovery-plan",
+                str(tmp_path / "plan"),
+                "--evidence-root",
+                str(tmp_path / "download"),
+                "--output-dir",
+                str(tmp_path / "output"),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "sec_cover_merge_ok" in output
+    assert "shards=1 covered_ciks=2 securities=1 symbols=1" in output
+    assert f"master_snapshot={'f' * 64}" in output
 
 
 def test_sec_cover_bootstrap_can_require_a_matched_filing(
