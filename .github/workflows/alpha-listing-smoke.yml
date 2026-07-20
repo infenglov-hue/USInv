@@ -57,5 +57,5 @@ jobs:
     uses: ./.github/workflows/security-master-bootstrap.yml
     with:
       plan_run_id: "29743405140"
-      max_filings_per_cik: "1"
+      max_filings_per_cik: "2"
     secrets: inherit
