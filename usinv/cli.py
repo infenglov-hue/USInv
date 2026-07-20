@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
@@ -10,6 +11,7 @@ from pathlib import Path
 
 from usinv.config import load_config
 from usinv.data.edgar import (
+    ApplicabilityError,
     EdgarClient,
     EdgarConfigurationError,
     EdgarError,
@@ -55,6 +57,14 @@ from usinv.data.prices import (
     TiingoSpotCheckClient,
     acquire_price_universe,
     build_price_universe_plan,
+    read_price_universe_snapshot,
+)
+from usinv.phase_2_3 import Phase23BuildError, build_phase_2_3
+from usinv.universe import (
+    UniverseError,
+    UniverseGateError,
+    enforce_phase_2_3_gate,
+    materialize_universe_snapshot,
 )
 
 
@@ -170,6 +180,22 @@ def _parser() -> argparse.ArgumentParser:
     universe_prices.add_argument("--window-sessions", type=int, default=21)
     universe_prices.add_argument("--batch-size", type=int, default=100)
     universe_prices.add_argument("--output-dir", type=Path, help="override price evidence root")
+    phase_2_3 = subcommands.add_parser(
+        "phase-2-3-build",
+        help="build and enforce the real D032 universe from exact immutable inputs",
+    )
+    phase_2_3.add_argument("--listing-snapshot", type=Path, required=True)
+    phase_2_3.add_argument("--discovery-plan", type=Path, required=True)
+    phase_2_3.add_argument("--cover-evidence", type=Path, required=True)
+    phase_2_3.add_argument("--price-universe", type=Path, required=True)
+    phase_2_3.add_argument("--signal-at", type=_aware_datetime, required=True)
+    phase_2_3.add_argument("--fsds-start", type=_fsds_quarter, required=True)
+    phase_2_3.add_argument("--fsds-end", type=_fsds_quarter, required=True)
+    phase_2_3.add_argument("--archive-dir", type=Path, help="override FSDS archive root")
+    phase_2_3.add_argument("--parquet-dir", type=Path, help="override FSDS Parquet root")
+    phase_2_3.add_argument("--store-dir", type=Path, help="override PIT snapshot root")
+    phase_2_3.add_argument("--output-dir", type=Path, help="override final universe root")
+    phase_2_3.add_argument("--archive-as-of", type=_aware_datetime)
     live = subcommands.add_parser(
         "edgar-live-sync",
         help="archive and normalize newly accepted 10-K/10-Q filings for one CIK",
@@ -455,6 +481,96 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             )
         )
+        return 0
+    if args.command == "phase-2-3-build":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir) / "phase-2-3"
+        try:
+            listing = read_alpha_listing_snapshot(args.listing_snapshot)
+            discovery = read_filing_discovery_plan(args.discovery_plan)
+            cover_snapshot = read_cover_evidence_snapshot(args.cover_evidence)
+            price_snapshot = read_price_universe_snapshot(args.price_universe)
+            ingestor = FsdsIngestor.from_config(
+                config,
+                archive_dir=args.archive_dir,
+                output_dir=args.parquet_dir,
+            )
+            ingested = ingestor.ingest_range(
+                args.fsds_start,
+                args.fsds_end,
+                archive_as_of=args.archive_as_of,
+            )
+            pit = PitStoreBuilder.from_config(config, output_dir=args.store_dir).build(
+                [PitInputBatch.from_fsds_result(row) for row in ingested]
+            )
+            result = build_phase_2_3(
+                listing,
+                discovery,
+                cover_snapshot,
+                price_snapshot,
+                ingested,
+                pit,
+                signal_at=args.signal_at,
+                config=config,
+            )
+            universe_artifact = materialize_universe_snapshot(result.universe, output_root)
+            gate_dir = output_root / "gate-evidence" / universe_artifact.snapshot_id
+            gate_dir.mkdir(parents=True, exist_ok=True)
+            (gate_dir / "coverage.json").write_text(
+                result.coverage.to_json(),
+                encoding="utf-8",
+            )
+            (gate_dir / "evidence-gaps.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "security_id": row.security_id,
+                            "cik": row.cik,
+                            "kind": row.kind,
+                            "detail": row.detail,
+                        }
+                        for row in result.evidence.gaps
+                    ],
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except (
+            ApplicabilityError,
+            EdgarError,
+            ListingDataError,
+            Phase23BuildError,
+            PriceDataError,
+            UniverseError,
+        ) as exc:
+            print(f"phase_2_3_build_failed: {exc}", file=sys.stderr)
+            return 2
+        gate_error: UniverseGateError | None = None
+        try:
+            enforce_phase_2_3_gate(result.universe, result.coverage)
+        except UniverseGateError as exc:
+            gate_error = exc
+        print(
+            " ".join(
+                (
+                    "phase_2_3_build_ok" if gate_error is None else "phase_2_3_gate_blocked",
+                    f"universe_snapshot={universe_artifact.snapshot_id}",
+                    f"candidates={len(result.universe.rows)}",
+                    f"included={len(result.universe.included)}",
+                    f"identity_gaps={len(result.universe.identity_mapping_gaps)}",
+                    f"sector_gaps={len(result.universe.sector_mapping_gaps)}",
+                    f"evidence_gaps={len(result.evidence.gaps)}",
+                    f"core_coverage={result.coverage.core_rate:.6f}",
+                    f"secondary_coverage={result.coverage.secondary_rate:.6f}",
+                    f"gate={'passed' if gate_error is None else 'blocked'}",
+                )
+            )
+        )
+        if gate_error is not None:
+            print(f"phase_2_3_gate_reason: {gate_error}", file=sys.stderr)
+            return 2
         return 0
     if args.command == "tiingo-smoke":
         config = load_config()

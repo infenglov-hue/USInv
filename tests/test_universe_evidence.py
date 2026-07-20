@@ -4,9 +4,11 @@ import hashlib
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pytest
 
 from usinv.calendar import default_calendar
 from usinv.data.edgar.bulk import FsdsQuarter
@@ -47,6 +49,7 @@ from usinv.data.universe_evidence import (
     build_security_universe_evidence,
     filing_sic_observations,
 )
+from usinv.phase_2_3 import Phase23BuildError, build_phase_2_3
 
 SIGNAL = datetime(2026, 7, 17, 20, tzinfo=UTC)
 CIK = 1
@@ -392,3 +395,37 @@ def test_price_universe_batches_are_exact_and_reopenable(tmp_path: Path) -> None
     assert not created.from_cache and cached.from_cache
     assert len(created.price_snapshots) == 1
     assert read_price_universe_snapshot(created.output_dir).plan == plan
+
+
+def test_phase_2_3_composer_rejects_mixed_input_lineage_before_building() -> None:
+    listing = SimpleNamespace(snapshot_id="a" * 64, as_of=SIGNAL.date())
+    discovery = SimpleNamespace(
+        listing_snapshot_id="b" * 64,
+        listing_as_of=SIGNAL.date(),
+        snapshot_id="c" * 64,
+    )
+    cover = SimpleNamespace(
+        snapshot_id="d" * 64,
+        merge=SimpleNamespace(as_of=SIGNAL),
+    )
+    prices = SimpleNamespace(
+        plan=SimpleNamespace(
+            signal_at=SIGNAL,
+            discovery_snapshot_id="c" * 64,
+            cover_snapshot_id="d" * 64,
+        )
+    )
+    ingested = (SimpleNamespace(batch_id="batch"),)
+    pit = SimpleNamespace(inputs=(SimpleNamespace(batch_id="batch"),))
+
+    with pytest.raises(Phase23BuildError, match="lineage"):
+        build_phase_2_3(
+            listing,
+            discovery,
+            cover,
+            prices,
+            ingested,
+            pit,
+            signal_at=SIGNAL,
+            config=object(),
+        )

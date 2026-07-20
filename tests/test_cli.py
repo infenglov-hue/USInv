@@ -487,6 +487,90 @@ def test_universe_price_sync_reports_exact_batch_evidence(
     assert f"snapshot={'b' * 64}" in output
 
 
+def test_phase_2_3_build_materializes_and_enforces_real_gate_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    inputs = [object() for _ in range(4)]
+    ingested = (SimpleNamespace(),)
+    pit = object()
+    universe = SimpleNamespace(
+        rows=(object(), object()),
+        included=(object(),),
+        identity_mapping_gaps=(),
+        sector_mapping_gaps=(),
+    )
+    coverage = SimpleNamespace(core_rate=0.95, secondary_rate=0.80, to_json=lambda: "{}\n")
+    result = SimpleNamespace(
+        universe=universe,
+        coverage=coverage,
+        evidence=SimpleNamespace(gaps=()),
+    )
+    artifact = SimpleNamespace(snapshot_id="f" * 64)
+    monkeypatch.setattr(cli_module, "read_alpha_listing_snapshot", lambda path: inputs[0])
+    monkeypatch.setattr(cli_module, "read_filing_discovery_plan", lambda path: inputs[1])
+    monkeypatch.setattr(cli_module, "read_cover_evidence_snapshot", lambda path: inputs[2])
+    monkeypatch.setattr(cli_module, "read_price_universe_snapshot", lambda path: inputs[3])
+
+    fake_ingestor = SimpleNamespace(ingest_range=lambda *args, **kwargs: ingested)
+    monkeypatch.setattr(
+        FsdsIngestor,
+        "from_config",
+        staticmethod(lambda *args, **kwargs: fake_ingestor),
+    )
+    fake_builder = SimpleNamespace(build=lambda batches: pit)
+    monkeypatch.setattr(
+        PitStoreBuilder,
+        "from_config",
+        staticmethod(lambda *args, **kwargs: fake_builder),
+    )
+    monkeypatch.setattr(
+        PitInputBatch,
+        "from_fsds_result",
+        staticmethod(lambda row: object()),
+    )
+    monkeypatch.setattr(cli_module, "build_phase_2_3", lambda *args, **kwargs: result)
+    monkeypatch.setattr(
+        cli_module,
+        "materialize_universe_snapshot",
+        lambda snapshot, output: artifact,
+    )
+    monkeypatch.setattr(cli_module, "enforce_phase_2_3_gate", lambda *args: None)
+
+    assert (
+        main(
+            [
+                "phase-2-3-build",
+                "--listing-snapshot",
+                str(tmp_path / "listing"),
+                "--discovery-plan",
+                str(tmp_path / "discovery"),
+                "--cover-evidence",
+                str(tmp_path / "cover"),
+                "--price-universe",
+                str(tmp_path / "prices"),
+                "--signal-at",
+                "2026-07-17T16:00:00-04:00",
+                "--fsds-start",
+                "2025q1",
+                "--fsds-end",
+                "2026q2",
+                "--output-dir",
+                str(tmp_path / "output"),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "phase_2_3_build_ok" in output and "gate=passed" in output
+    gate = tmp_path / "output" / "gate-evidence" / ("f" * 64)
+    assert gate.joinpath("coverage.json").is_file()
+    assert gate.joinpath("evidence-gaps.json").is_file()
+
+
 def test_sec_cover_bootstrap_can_require_a_matched_filing(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
