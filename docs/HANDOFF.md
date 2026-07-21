@@ -67,9 +67,27 @@ causes (verified against SEC companyfacts and raw FSDS 2026q1):
   pre-revenue non-biotech issuers (e.g. exploration miners, Oklo) need an
   explicit structural-zero-revenue identity
   (`OperatingIncomeLoss == -OperatingExpenses` style) or stay blocking.
-- The 978 unmapped identities remain the evidence-by-category tail (ETFs,
-  stale Alpha rows, foreign issuers, new IPOs, test symbols, issuers without
-  a matching cover fact). Tiingo series end dates stay diagnostic only.
+- The 978 unmapped rows were classified on 2026-07-21 with SEC form-history
+  evidence at the cutoff (current ticker file used for discovery only):
+  117 foreign-only filers (20-F/40-F/6-K), 97 registered with no periodic
+  filing yet (IPO rule keeps them out), 96 domestic 10-K/10-Q filers whose
+  cover extraction failed (real pipeline gap), 46 blank names, 21 test
+  symbols, 19 fund-named rows, 11 fetch errors, and 571 with no current SEC
+  ticker match (mostly stale/delisted Alpha rows needing name-based EDGAR
+  resolution). Diagnostic detail:
+  `scratchpad unmapped_classification.json` (regenerate via the SEC APIs).
+- Wiring plan for the classification (needs one refresh run): nearly all
+  classified CIKs are already in discovery plan `29772784252` with archived
+  hash-addressed submissions. Extend cover acquisition to record a filer-
+  regime observation for every classification form including `40-F` (the
+  current `CoverFpiFormObservation` contract only accepts 20-F/6-K/F-1, so
+  40-F-only Canadian filers are invisible) and add the form to
+  `CoverArchiveRecord`; bump the merge version; then classify unmapped rows
+  in `build_universe_snapshot` via discovery `candidate_ciks`:
+  foreign-regime evidence -> `non_domestic_listing`; complete form-history
+  proof plus zero cover-capable filings -> new excluded status
+  `no_periodic_filing_at_cutoff`. Domestic 10-x filers stay real gaps.
+- Tiingo series end dates stay diagnostic only.
 
 ## What `f08232a` changes
 
