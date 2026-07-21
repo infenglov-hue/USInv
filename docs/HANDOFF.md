@@ -19,7 +19,7 @@ open `PROGRESS.md` only for history.
 | Reused discovery plan | run `29772784252` |
 | Reused immutable Alpha listing | run `29769888331`, date `2026-07-17` |
 | Four-filing SEC evidence to reuse | run `29822730998`, artifact `filing-backed-security-evidence` (8493991255) |
-| Last real D032 run | `29828041512`, artifact `phase-2-3-universe-evidence` (8494461411), failed closed |
+| Last real D032 run | `29830795288` (post-`4fca7a5` structural absence), failed closed |
 | Immutable Tiingo lifecycle for reruns | pass `lifecycle_run_id=29828041512` |
 | Local verification | Ruff green; full suite `321 passed` |
 
@@ -29,31 +29,44 @@ built yet. Phase 2.3 must pass before Phase 2.4/3 under `AGENTS.md` and
 
 ## Last measured gate
 
-`29828041512` (2026-07-21, using four-filing evidence `29822730998`) produced
-14,207 listing candidates, 1,625 included securities, 1,004 identity gaps
-(978 unmapped + 24 quarantined + 2 invalid symbols), 107 sector/FF49 gaps,
-25 mandatory-missing cells (24 `revenue`, 1 `net_income`), 4,807 evidence
-gaps, 89.8989% core coverage (23 cells short of 90%) and 67.1138% secondary
-coverage (~641 cells short of 75%). Required: zero identity/FF49/mandatory
-gaps, core >=90%, secondary >=75%. Never relabel this run as passing.
+`29830795288` (2026-07-21, four-filing evidence `29822730998`, lifecycle
+`29828041512`, code `4fca7a5`) produced 1,625 included securities,
+1,004 identity gaps (978 unmapped + 24 quarantined + 2 invalid), 107
+sector/FF49 gaps, 25 mandatory-missing cells (24 `revenue`, 1 `net_income`),
+89.8989% core coverage (23 cells short of 90%) and **78.72% secondary
+coverage — the 75% secondary threshold now passes** via `4fca7a5`
+structural-absence proofs (932 accounting-identity zeros + 11 derived
+minority-interest values). Required: zero identity/FF49/mandatory gaps,
+core >=90%, secondary >=75%. Never relabel this run as passing.
 
 Comparison with the previous real gate `29810991030` (two-filing evidence):
 included 1,461 -> 1,625; identity gaps 1,658 -> 1,004; quarantined 279 -> 24;
 core/secondary rates roughly flat because newly included securities bring
 their own uncovered cells.
 
-Gap diagnosis on the retained `29828041512` artifact:
+Gap diagnosis on the retained `29830795288` artifact and 2026-07-21 root
+causes (verified against SEC companyfacts and raw FSDS 2026q1):
 
-- Secondary shortfall is dominated by `minority_interest` (1,064 uncovered),
-  `preferred_equity` (847) and `interest_expense` (551) — concepts that are
-  typically absent because they are genuinely zero. Under
-  `missing_is_uncovered_not_zero` they only become covered through
-  evidence-based `derived_identity` structural-absence proofs (1,201 cells
-  already use that proof kind). Extending those proofs is the main lever.
 - Largest uncovered core concepts: `current_debt_and_borrowings` (577),
   `gross_profit` (479), `long_term_debt` (432), `shares_outstanding` (344).
-- Evidence-gap kinds: 3,933 `missing_class_shares`, 447 `missing_filing_sic`,
-  427 `missing_ttm_revenue`.
+  Only 23 covered core cells are needed; cover-page share observations
+  (9,826 already in the security evidence) can cover `shares_outstanding`,
+  and `Liabilities == LiabilitiesCurrent` proves zero long-term debt.
+- Mandatory-missing root causes: (a) several issuers' newest facts sit in
+  filings accepted April-July 2026, but FSDS `2026q2` is not yet published
+  (404 as of 2026-07-21) — CODEX_TASKS 1.5 already mandates the API/live
+  path for the current quarter instead of waiting for the drop; (b) FSDS
+  omits some face-statement facts that companyfacts has (e.g. FreightCar
+  `1320854` FY2025 10-K has zero NetIncome/ProfitLoss rows in num.txt);
+  (c) Universal `102037` tops its income statement with
+  `RevenuesExcludingInterestAndDividends` and ONE Gas with
+  `RegulatedOperatingRevenue` — legitimate chain-fallback extensions per
+  MODEL_SPEC; (d) SIC 6141 lenders and 6500 REIT-like issuers are in-scope
+  per MODEL_SPEC's exact exclusion lists (6020-6036/6199/6211/6311-6399,
+  REIT=6798 only) — do not widen exclusions to dodge gaps; (e) genuinely
+  pre-revenue non-biotech issuers (e.g. exploration miners, Oklo) need an
+  explicit structural-zero-revenue identity
+  (`OperatingIncomeLoss == -OperatingExpenses` style) or stay blocking.
 - The 978 unmapped identities remain the evidence-by-category tail (ETFs,
   stale Alpha rows, foreign issuers, new IPOs, test symbols, issuers without
   a matching cover fact). Tiingo series end dates stay diagnostic only.
@@ -73,20 +86,25 @@ Gap diagnosis on the retained `29828041512` artifact:
 
 ## Next action — do not start duplicate runs
 
-The handoff continuation steps 1-7 of `docs/CLAUDE_HANDOFF.md` §8 were
-executed on 2026-07-21: refresh `29822730998` succeeded and D032
-`29828041512` failed closed with the metrics above. Do not rerun either
-workflow without a changed code/data symptom. Remediation order:
+Executed on 2026-07-21: refresh `29822730998` (success), D032 `29828041512`
+(fail-closed baseline), structural-absence commit `4fca7a5`, and measurement
+D032 `29830795288` (secondary now passes at 78.72%). Do not rerun without a
+changed code/data symptom. Remaining remediation order:
 
-1. Extend `derived_identity` structural-absence proofs for
-   `minority_interest`, `preferred_equity` and `interest_expense`
-   (largest lever; the 23-cell core shortfall likely closes with it).
-2. Resolve the 25 mandatory-missing cells per CIK with filing evidence.
+1. Core +23 cells: wire cover-page share observations into
+   `shares_outstanding` applicability evidence; add the
+   `Liabilities == LiabilitiesCurrent` zero-long-term-debt identity.
+2. Mandatory 25: current-quarter API/live-edge fact supplement (CODEX_TASKS
+   1.5 sanctions it), chain-fallback extensions
+   (`RevenuesExcludingInterestAndDividends`, `RegulatedOperatingRevenue`,
+   versioned chain bump), structural zero-revenue identity for pre-revenue
+   issuers.
 3. Classify the 978 unmapped identities per category with explicit evidence
    (as `f08232a` did for the 261 quarantined rows); no suffix guessing.
+   Resolve the 107 FF49/sector gaps (`missing_filing_sic`).
 4. After remediation lands (Ruff + full suite + push), dispatch one D032 run
-   with `cover_run_id=<latest valid evidence run>`,
-   `listing_run_id=29769888331`, `lifecycle_run_id=29828041512`.
+   with `cover_run_id=29822730998`, `listing_run_id=29769888331`,
+   `lifecycle_run_id=29828041512`.
 5. Never infer missing values as zero, use current SEC ticker arrays as
    historical identity, or remove a row solely because Tiingo's series ended.
 
