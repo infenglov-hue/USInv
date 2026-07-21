@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
@@ -11,9 +12,16 @@ from decimal import Decimal
 from typing import Final, Literal
 
 from usinv.data.edgar.securities import MappingResult, SecurityMaster
-from usinv.data.edgar.tag_chains import CONCEPT_CHAINS, StandardizedFact, Tier
+from usinv.data.edgar.tag_chains import (
+    CONCEPT_CHAINS,
+    EXCLUDED_FORMS,
+    RawFact,
+    StandardizedFact,
+    Tier,
+)
 
 APPLICABILITY_VERSION: Final = "usinv-applicability-v1"
+STRUCTURAL_ABSENCE_VERSION: Final = "usinv-structural-absence-v1"
 Classification = Literal["observed", "structural_zero", "not_applicable"]
 ProofKind = Literal[
     "direct_fact",
@@ -176,6 +184,151 @@ def observed_standardized_evidence(
             ),
         )
         for fact in facts
+    )
+
+
+_EQUITY_PARENT_TAG: Final = "StockholdersEquity"
+_EQUITY_TOTAL_TAG: Final = "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"
+_LIABILITIES_TAG: Final = "Liabilities"
+_BALANCE_TOTAL_TAG: Final = "LiabilitiesAndStockholdersEquity"
+_PREFERRED_SHARE_TAGS: Final = frozenset(
+    {"PreferredStockSharesIssued", "PreferredStockSharesOutstanding"}
+)
+_MONETARY_UOM: Final = re.compile(r"[A-Z]{3}")
+
+
+def _identity_evidence(
+    cik: int,
+    concept: str,
+    classification: Classification,
+    proof_kind: ProofKind,
+    value: Decimal | None,
+    sources: Sequence[RawFact],
+) -> ApplicabilityEvidence:
+    ordered = tuple(sorted(sources, key=lambda item: (item.accepted, item.adsh, item.tag)))
+    return ApplicabilityEvidence(
+        cik=cik,
+        concept=concept,
+        classification=classification,
+        proof_kind=proof_kind,
+        value=value,
+        available_from=max(item.accepted for item in ordered),
+        rule_version=STRUCTURAL_ABSENCE_VERSION,
+        evidence_pointer=(
+            f"sec://{cik}/{','.join(item.adsh for item in ordered)}"
+            f"/{','.join(item.tag for item in ordered)}"
+        ),
+    )
+
+
+def derive_structural_absence_evidence(
+    identity_facts: Iterable[RawFact],
+    observed: Iterable[StandardizedFact],
+    *,
+    as_of: datetime,
+) -> tuple[ApplicabilityEvidence, ...]:
+    """Derive coverage evidence only from explicit filed accounting identities.
+
+    Emits at most one classification per (cik, concept) using facts accepted at
+    or before ``as_of``, so a later filing can never rewrite the evidence a
+    signal already used. Missing facts alone never produce evidence.
+    """
+    if as_of.tzinfo is None:
+        raise ApplicabilityError("structural absence cutoff must be timezone-aware")
+    cutoff = as_of.astimezone(UTC)
+
+    balance: dict[tuple[int, date, str], dict[str, RawFact]] = defaultdict(dict)
+    preferred_shares: dict[int, list[RawFact]] = defaultdict(list)
+    for fact in identity_facts:
+        if fact.accepted.tzinfo is None:
+            raise ApplicabilityError("structural evidence requires timezone-aware acceptance")
+        if fact.qtrs != 0 or fact.form in EXCLUDED_FORMS:
+            continue
+        if fact.accepted.astimezone(UTC) > cutoff:
+            continue
+        if fact.tag in _PREFERRED_SHARE_TAGS:
+            if fact.uom.lower() in {"shares", "share"}:
+                preferred_shares[fact.cik].append(fact)
+            continue
+        if _MONETARY_UOM.fullmatch(fact.uom):
+            key = (fact.cik, fact.ddate, fact.uom)
+            current = balance[key].get(fact.tag)
+            if current is None or (fact.accepted, fact.adsh) < (current.accepted, current.adsh):
+                balance[key][fact.tag] = fact
+
+    observed_cells = {
+        (fact.cik, fact.concept)
+        for fact in observed
+        if fact.available_from.astimezone(UTC) <= cutoff
+    }
+
+    minority_observed: dict[int, list[ApplicabilityEvidence]] = defaultdict(list)
+    minority_zero: dict[int, list[ApplicabilityEvidence]] = defaultdict(list)
+    for (cik, _, _), by_tag in sorted(balance.items()):
+        parent = by_tag.get(_EQUITY_PARENT_TAG)
+        total = by_tag.get(_EQUITY_TOTAL_TAG)
+        liabilities = by_tag.get(_LIABILITIES_TAG)
+        balance_total = by_tag.get(_BALANCE_TOTAL_TAG)
+        if parent is not None and total is not None and total.value > parent.value:
+            minority_observed[cik].append(
+                _identity_evidence(
+                    cik,
+                    "minority_interest",
+                    "observed",
+                    "derived_identity",
+                    total.value - parent.value,
+                    (total, parent),
+                )
+            )
+        # Only the full reported reconciliation proves zero: it excludes both
+        # noncontrolling interest and mezzanine items. Equal parent/total
+        # equity tags alone cannot rule out redeemable noncontrolling interest.
+        if (
+            parent is not None
+            and liabilities is not None
+            and balance_total is not None
+            and liabilities.value + parent.value == balance_total.value
+        ):
+            minority_zero[cik].append(
+                _identity_evidence(
+                    cik,
+                    "minority_interest",
+                    "structural_zero",
+                    "accounting_identity",
+                    Decimal(0),
+                    (liabilities, parent, balance_total),
+                )
+            )
+
+    output: list[ApplicabilityEvidence] = []
+    for cik in sorted(set(minority_observed) | set(minority_zero)):
+        if (cik, "minority_interest") in observed_cells:
+            continue
+        output.extend(minority_observed.get(cik) or minority_zero.get(cik) or ())
+
+    for cik in sorted(preferred_shares):
+        if (cik, "preferred_equity") in observed_cells:
+            continue
+        rows = preferred_shares[cik]
+        if any(fact.value != 0 for fact in rows):
+            continue
+        output.extend(
+            _identity_evidence(
+                cik,
+                "preferred_equity",
+                "structural_zero",
+                "accounting_identity",
+                Decimal(0),
+                (fact,),
+            )
+            for fact in sorted(rows, key=lambda item: (item.accepted, item.adsh, item.tag))
+        )
+
+    return tuple(
+        sorted(
+            output,
+            key=lambda item: (item.cik, item.concept, item.available_from, item.evidence_pointer),
+        )
     )
 
 

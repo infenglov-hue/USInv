@@ -2,11 +2,13 @@
 
 from usinv.data.edgar.applicability import (
     APPLICABILITY_VERSION,
+    STRUCTURAL_ABSENCE_VERSION,
     ApplicabilityCoverageReport,
     ApplicabilityError,
     ApplicabilityEvidence,
     UniverseCandidate,
     build_applicability_coverage,
+    derive_structural_absence_evidence,
     observed_standardized_evidence,
 )
 from usinv.data.edgar.bulk import (
@@ -142,6 +144,7 @@ from usinv.data.edgar.submissions import (
 from usinv.data.edgar.tag_chains import (
     CHAIN_VERSION,
     CONCEPT_CHAINS,
+    STRUCTURAL_IDENTITY_TAGS,
     CoverageInput,
     CoverageReport,
     PresentationRow,
@@ -151,6 +154,7 @@ from usinv.data.edgar.tag_chains import (
     build_coverage_report,
     coverage_input,
     eligible_ciks_from_filings,
+    load_structural_identity_facts,
     standardize_facts,
     standardize_pit_snapshot,
 )
@@ -167,6 +171,8 @@ __all__ = [
     "LIVE_EDGE_VERSION",
     "PERIODIC_FORMS",
     "SECURITY_MASTER_VERSION",
+    "STRUCTURAL_ABSENCE_VERSION",
+    "STRUCTURAL_IDENTITY_TAGS",
     "ApplicabilityCoverageReport",
     "ApplicabilityError",
     "ApplicabilityEvidence",
@@ -248,6 +254,7 @@ __all__ = [
     "consolidated_filing_facts",
     "coverage_input",
     "current_sec_symbol",
+    "derive_structural_absence_evidence",
     "detect_new_periodic_filings",
     "eligible_ciks_from_filings",
     "extract_cover_security_classes",
@@ -255,6 +262,7 @@ __all__ = [
     "fsds_quarter_range",
     "infer_domestic_flag",
     "ingest_periodic_filing",
+    "load_structural_identity_facts",
     "materialize_cover_evidence_merge",
     "materialize_cover_evidence_shard",
     "materialize_filing_discovery_plan",

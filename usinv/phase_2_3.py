@@ -9,6 +9,7 @@ from usinv.config import AppConfig
 from usinv.data.edgar.applicability import (
     ApplicabilityCoverageReport,
     build_applicability_coverage,
+    derive_structural_absence_evidence,
     observed_standardized_evidence,
 )
 from usinv.data.edgar.cover_shards import CoverEvidenceSnapshot
@@ -16,7 +17,7 @@ from usinv.data.edgar.fsds import FsdsIngestResult
 from usinv.data.edgar.pit_store import PitStoreResult
 from usinv.data.edgar.quarterly import derive_quarterly_facts
 from usinv.data.edgar.security_bootstrap import FilingDiscoveryPlan
-from usinv.data.edgar.tag_chains import standardize_pit_snapshot
+from usinv.data.edgar.tag_chains import load_structural_identity_facts, standardize_pit_snapshot
 from usinv.data.edgar.ttm import build_ttm_facts
 from usinv.data.listings import AlphaListingSnapshot
 from usinv.data.prices.universe import PriceUniverseSnapshot
@@ -121,10 +122,14 @@ def build_phase_2_3(
         security_master_snapshot_id=cover.master_snapshot_id,
         lifecycle=lifecycle,
     )
+    identity_facts = load_structural_identity_facts(pit.table_path("facts_pit"))
     coverage = build_applicability_coverage(
         cover.merge.master,
         universe.applicability_candidates(),
-        observed_standardized_evidence(standardized),
+        (
+            *observed_standardized_evidence(standardized),
+            *derive_structural_absence_evidence(identity_facts, standardized, as_of=cutoff),
+        ),
         as_of=cutoff,
         mandatory_concepts=("revenue", "net_income"),
     )
