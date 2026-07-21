@@ -118,13 +118,17 @@ causes (verified against SEC companyfacts and raw FSDS 2026q1):
 Executed on 2026-07-21: refresh `29822730998`, baseline D032 `29828041512`,
 structural-absence `4fca7a5` (secondary passes), core/mandatory remediation
 `d0348be` (core passes, mandatory 25 -> 18), measured by D032 `29834169463`.
-Commit `6d8089b` (filer-regime classification of unmapped listings) is
-pushed but UNMEASURED: run `29851624033` failed in 3 seconds because
-GitHub Actions billing blocked the job ("recent account payments have
-failed or your spending limit needs to be increased") — it is not a code
-failure. After the user fixes billing, rerun exactly one D032 with
-`cover_run_id=29822730998`, `listing_run_id=29769888331`,
-`lifecycle_run_id=29828041512` to measure `6d8089b`.
+GitHub Actions billing is exhausted (run `29851624033` was refused by
+billing, not code). The gate now runs LOCALLY from the immutable
+artifacts: inputs staged under `data/local-gate/` (listing from
+`29769888331`, discovery+cover from `29822730998`, prices+lifecycle from
+`29834169463`, FSDS 2025q1-2026q1 hash-archived from SEC) via
+`python -m usinv fsds-sync` + `python -m usinv phase-2-3-build`.
+Local measurement of `6d8089b` on 2026-07-21: candidates 14,207,
+included 1,625, **identity gaps 1,004 -> 830** (filer-regime evidence
+classified 174 rows), sector gaps 107, core 91.4857% and secondary
+78.72% byte-identical to CI run `29834169463`. Iterate locally; spend
+Actions only on the final acceptance run once billing is restored.
 Do not rerun without a changed code/data symptom. Remaining work, in order:
 
 1. Identity (the only large blocker): extend cover acquisition with the
