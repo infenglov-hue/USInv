@@ -2,12 +2,14 @@
 
 from usinv.data.edgar.applicability import (
     APPLICABILITY_VERSION,
+    COVER_SHARE_EVIDENCE_VERSION,
     STRUCTURAL_ABSENCE_VERSION,
     ApplicabilityCoverageReport,
     ApplicabilityError,
     ApplicabilityEvidence,
     UniverseCandidate,
     build_applicability_coverage,
+    cover_share_evidence,
     derive_structural_absence_evidence,
     observed_standardized_evidence,
 )
@@ -166,6 +168,7 @@ __all__ = [
     "COVER_FORMS",
     "COVER_MERGE_VERSION",
     "COVER_SHARD_VERSION",
+    "COVER_SHARE_EVIDENCE_VERSION",
     "DISCOVERY_VERSION",
     "FILING_XBRL_VERSION",
     "LIVE_EDGE_VERSION",
@@ -252,6 +255,7 @@ __all__ = [
     "build_security_master",
     "compare_edge_to_fsds",
     "consolidated_filing_facts",
+    "cover_share_evidence",
     "coverage_input",
     "current_sec_symbol",
     "derive_structural_absence_evidence",

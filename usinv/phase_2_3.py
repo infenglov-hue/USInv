@@ -9,6 +9,7 @@ from usinv.config import AppConfig
 from usinv.data.edgar.applicability import (
     ApplicabilityCoverageReport,
     build_applicability_coverage,
+    cover_share_evidence,
     derive_structural_absence_evidence,
     observed_standardized_evidence,
 )
@@ -129,6 +130,7 @@ def build_phase_2_3(
         (
             *observed_standardized_evidence(standardized),
             *derive_structural_absence_evidence(identity_facts, standardized, as_of=cutoff),
+            *cover_share_evidence(cover.merge.share_observations, as_of=cutoff),
         ),
         as_of=cutoff,
         mandatory_concepts=("revenue", "net_income"),

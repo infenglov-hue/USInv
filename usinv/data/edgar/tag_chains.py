@@ -18,7 +18,7 @@ import pyarrow.parquet as pq
 
 from usinv.data.edgar.client import EdgarError
 
-CHAIN_VERSION: Final = "usinv-sec-concepts-v1"
+CHAIN_VERSION: Final = "usinv-sec-concepts-v2"
 STRICT_COVERAGE_MEASUREMENT: Final = "strict_observed_presence"
 COVERAGE_ENFORCEMENT: Final = "phase_2_3_final_universe_applicability"
 MISSING_VALUE_POLICY: Final = "missing_is_not_zero"
@@ -72,6 +72,9 @@ CONCEPT_CHAINS: Final = (
             "SubscriptionRevenue",
             "AdvertisingRevenue",
             "PassengerRevenue",
+            "RevenuesExcludingInterestAndDividends",
+            "RevenuesNetOfInterestExpense",
+            "RegulatedOperatingRevenue",
         ),
         nonnegative=True,
     ),
@@ -717,8 +720,12 @@ def standardize_pit_snapshot(
 
 
 STRUCTURAL_IDENTITY_TAGS: Final = (
+    "CostsAndExpenses",
     "Liabilities",
     "LiabilitiesAndStockholdersEquity",
+    "LiabilitiesCurrent",
+    "OperatingExpenses",
+    "OperatingIncomeLoss",
     "PreferredStockSharesIssued",
     "PreferredStockSharesOutstanding",
     "StockholdersEquity",
@@ -750,7 +757,7 @@ def load_structural_identity_facts(facts_path: str | Path) -> tuple[RawFact, ...
             SELECT cik, tag, ddate, qtrs, uom, value, accepted, adsh, version,
                    form, filed, filing_period
             FROM pit_facts
-            WHERE value IS NOT NULL AND qtrs = 0
+            WHERE value IS NOT NULL AND qtrs BETWEEN 0 AND 4
               AND tag IN (SELECT UNNEST(?))
               AND form NOT IN (SELECT UNNEST(?))
             """,

@@ -9,7 +9,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Final, Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from usinv.data.edgar.securities import MappingResult, SecurityMaster
 from usinv.data.edgar.tag_chains import (
@@ -20,8 +20,12 @@ from usinv.data.edgar.tag_chains import (
     Tier,
 )
 
+if TYPE_CHECKING:
+    from usinv.data.edgar.cover_acquisition import CoverShareObservation
+
 APPLICABILITY_VERSION: Final = "usinv-applicability-v1"
-STRUCTURAL_ABSENCE_VERSION: Final = "usinv-structural-absence-v1"
+STRUCTURAL_ABSENCE_VERSION: Final = "usinv-structural-absence-v2"
+COVER_SHARE_EVIDENCE_VERSION: Final = "usinv-cover-share-evidence-v1"
 Classification = Literal["observed", "structural_zero", "not_applicable"]
 ProofKind = Literal[
     "direct_fact",
@@ -190,7 +194,10 @@ def observed_standardized_evidence(
 _EQUITY_PARENT_TAG: Final = "StockholdersEquity"
 _EQUITY_TOTAL_TAG: Final = "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"
 _LIABILITIES_TAG: Final = "Liabilities"
+_LIABILITIES_CURRENT_TAG: Final = "LiabilitiesCurrent"
 _BALANCE_TOTAL_TAG: Final = "LiabilitiesAndStockholdersEquity"
+_OPERATING_INCOME_TAG: Final = "OperatingIncomeLoss"
+_OPERATING_EXPENSE_TAGS: Final = ("OperatingExpenses", "CostsAndExpenses")
 _PREFERRED_SHARE_TAGS: Final = frozenset(
     {"PreferredStockSharesIssued", "PreferredStockSharesOutstanding"}
 )
@@ -238,23 +245,28 @@ def derive_structural_absence_evidence(
     cutoff = as_of.astimezone(UTC)
 
     balance: dict[tuple[int, date, str], dict[str, RawFact]] = defaultdict(dict)
+    duration: dict[tuple[int, date, int, str], dict[str, RawFact]] = defaultdict(dict)
     preferred_shares: dict[int, list[RawFact]] = defaultdict(list)
     for fact in identity_facts:
         if fact.accepted.tzinfo is None:
             raise ApplicabilityError("structural evidence requires timezone-aware acceptance")
-        if fact.qtrs != 0 or fact.form in EXCLUDED_FORMS:
-            continue
-        if fact.accepted.astimezone(UTC) > cutoff:
+        if fact.form in EXCLUDED_FORMS or fact.accepted.astimezone(UTC) > cutoff:
             continue
         if fact.tag in _PREFERRED_SHARE_TAGS:
-            if fact.uom.lower() in {"shares", "share"}:
+            if fact.qtrs == 0 and fact.uom.lower() in {"shares", "share"}:
                 preferred_shares[fact.cik].append(fact)
             continue
-        if _MONETARY_UOM.fullmatch(fact.uom):
-            key = (fact.cik, fact.ddate, fact.uom)
-            current = balance[key].get(fact.tag)
-            if current is None or (fact.accepted, fact.adsh) < (current.accepted, current.adsh):
-                balance[key][fact.tag] = fact
+        if not _MONETARY_UOM.fullmatch(fact.uom):
+            continue
+        if fact.qtrs == 0:
+            group: dict[str, RawFact] = balance[(fact.cik, fact.ddate, fact.uom)]
+        elif 1 <= fact.qtrs <= 4:
+            group = duration[(fact.cik, fact.ddate, fact.qtrs, fact.uom)]
+        else:
+            continue
+        current = group.get(fact.tag)
+        if current is None or (fact.accepted, fact.adsh) < (current.accepted, current.adsh):
+            group[fact.tag] = fact
 
     observed_cells = {
         (fact.cik, fact.concept)
@@ -264,10 +276,12 @@ def derive_structural_absence_evidence(
 
     minority_observed: dict[int, list[ApplicabilityEvidence]] = defaultdict(list)
     minority_zero: dict[int, list[ApplicabilityEvidence]] = defaultdict(list)
+    long_term_debt_zero: dict[int, list[ApplicabilityEvidence]] = defaultdict(list)
     for (cik, _, _), by_tag in sorted(balance.items()):
         parent = by_tag.get(_EQUITY_PARENT_TAG)
         total = by_tag.get(_EQUITY_TOTAL_TAG)
         liabilities = by_tag.get(_LIABILITIES_TAG)
+        liabilities_current = by_tag.get(_LIABILITIES_CURRENT_TAG)
         balance_total = by_tag.get(_BALANCE_TOTAL_TAG)
         if parent is not None and total is not None and total.value > parent.value:
             minority_observed[cik].append(
@@ -299,12 +313,65 @@ def derive_structural_absence_evidence(
                     (liabilities, parent, balance_total),
                 )
             )
+        # Equal total and current liabilities leave zero room for any
+        # noncurrent obligation, so every long-term debt component is zero.
+        if (
+            liabilities is not None
+            and liabilities_current is not None
+            and liabilities.value == liabilities_current.value
+        ):
+            long_term_debt_zero[cik].append(
+                _identity_evidence(
+                    cik,
+                    "long_term_debt",
+                    "structural_zero",
+                    "accounting_identity",
+                    Decimal(0),
+                    (liabilities, liabilities_current),
+                )
+            )
+
+    revenue_zero: dict[int, list[ApplicabilityEvidence]] = defaultdict(list)
+    for (cik, _, _, _), by_tag in sorted(duration.items()):
+        operating_income = by_tag.get(_OPERATING_INCOME_TAG)
+        if operating_income is None:
+            continue
+        expenses = next(
+            (by_tag[tag] for tag in _OPERATING_EXPENSE_TAGS if tag in by_tag),
+            None,
+        )
+        # A filed operating loss exactly equal to filed total operating
+        # expenses leaves zero room for any revenue in the same period.
+        if (
+            expenses is not None
+            and expenses.value > 0
+            and operating_income.value + expenses.value == 0
+        ):
+            revenue_zero[cik].append(
+                _identity_evidence(
+                    cik,
+                    "revenue",
+                    "structural_zero",
+                    "accounting_identity",
+                    Decimal(0),
+                    (operating_income, expenses),
+                )
+            )
 
     output: list[ApplicabilityEvidence] = []
     for cik in sorted(set(minority_observed) | set(minority_zero)):
         if (cik, "minority_interest") in observed_cells:
             continue
         output.extend(minority_observed.get(cik) or minority_zero.get(cik) or ())
+
+    for concept, zero_rows in (
+        ("long_term_debt", long_term_debt_zero),
+        ("revenue", revenue_zero),
+    ):
+        for cik in sorted(zero_rows):
+            if (cik, concept) in observed_cells:
+                continue
+            output.extend(zero_rows[cik])
 
     for cik in sorted(preferred_shares):
         if (cik, "preferred_equity") in observed_cells:
@@ -328,6 +395,36 @@ def derive_structural_absence_evidence(
         sorted(
             output,
             key=lambda item: (item.cik, item.concept, item.available_from, item.evidence_pointer),
+        )
+    )
+
+
+def cover_share_evidence(
+    observations: Iterable[CoverShareObservation],
+    *,
+    as_of: datetime,
+) -> tuple[ApplicabilityEvidence, ...]:
+    """Use filing cover-page share counts as direct shares_outstanding facts."""
+    if as_of.tzinfo is None:
+        raise ApplicabilityError("cover share evidence cutoff must be timezone-aware")
+    cutoff = as_of.astimezone(UTC)
+    return tuple(
+        sorted(
+            (
+                ApplicabilityEvidence(
+                    cik=row.cik,
+                    concept="shares_outstanding",
+                    classification="observed",
+                    proof_kind="direct_fact",
+                    value=row.shares_outstanding,
+                    available_from=row.accepted,
+                    rule_version=COVER_SHARE_EVIDENCE_VERSION,
+                    evidence_pointer=row.evidence_pointer,
+                )
+                for row in observations
+                if row.accepted.astimezone(UTC) <= cutoff
+            ),
+            key=lambda item: (item.cik, item.available_from, item.evidence_pointer),
         )
     )
 

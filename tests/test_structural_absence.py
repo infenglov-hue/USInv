@@ -12,8 +12,10 @@ from usinv.data.edgar.applicability import (
     ApplicabilityError,
     UniverseCandidate,
     build_applicability_coverage,
+    cover_share_evidence,
     derive_structural_absence_evidence,
 )
+from usinv.data.edgar.cover_acquisition import CoverShareObservation
 from usinv.data.edgar.pit_store import LATEST_FACT_SCHEMA, PIT_FACT_SCHEMA
 from usinv.data.edgar.securities import (
     Security,
@@ -288,6 +290,117 @@ def test_naive_timestamps_are_rejected() -> None:
         derive_structural_absence_evidence(naive, (), as_of=AS_OF)
 
 
+def test_equal_total_and_current_liabilities_prove_zero_long_term_debt() -> None:
+    facts = [
+        _raw(1, "Liabilities", "80"),
+        _raw(1, "LiabilitiesCurrent", "80"),
+        _raw(2, "Liabilities", "90"),
+        _raw(2, "LiabilitiesCurrent", "80"),
+    ]
+
+    evidence = derive_structural_absence_evidence(facts, (), as_of=AS_OF)
+
+    assert len(evidence) == 1
+    item = evidence[0]
+    assert item.cik == 1
+    assert item.concept == "long_term_debt"
+    assert item.classification == "structural_zero"
+    assert item.proof_kind == "accounting_identity"
+    assert item.value == 0
+
+
+def test_operating_loss_equal_to_expenses_proves_zero_revenue() -> None:
+    facts = [
+        _raw(1, "OperatingIncomeLoss", "-250", qtrs=1),
+        _raw(1, "OperatingExpenses", "250", qtrs=1),
+        _raw(2, "OperatingIncomeLoss", "-200", qtrs=1),
+        _raw(2, "CostsAndExpenses", "250", qtrs=1),
+        _raw(3, "OperatingIncomeLoss", "0", qtrs=1),
+        _raw(3, "OperatingExpenses", "0", qtrs=1),
+    ]
+
+    evidence = derive_structural_absence_evidence(facts, (), as_of=AS_OF)
+
+    assert len(evidence) == 1
+    item = evidence[0]
+    assert item.cik == 1
+    assert item.concept == "revenue"
+    assert item.classification == "structural_zero"
+    assert item.proof_kind == "accounting_identity"
+    assert item.value == 0
+
+    observed = standardize_facts([_raw(1, "Revenues", "10", qtrs=1)])
+    assert (
+        derive_structural_absence_evidence(
+            [
+                _raw(1, "OperatingIncomeLoss", "-250", qtrs=1),
+                _raw(1, "OperatingExpenses", "250", qtrs=1),
+            ],
+            observed,
+            as_of=AS_OF,
+        )
+        == ()
+    )
+
+
+def test_cover_share_observations_become_direct_share_facts() -> None:
+    on_time = CoverShareObservation(
+        security_id="sec-1",
+        cik=1,
+        accepted=ACCEPTED,
+        shares_outstanding=Decimal("1000"),
+        evidence_pointer="sec://1/0000000001-25-000001/cover",
+    )
+    late = CoverShareObservation(
+        security_id="sec-2",
+        cik=2,
+        accepted=AFTER_CUTOFF,
+        shares_outstanding=Decimal("500"),
+        evidence_pointer="sec://2/0000000002-26-000001/cover",
+    )
+
+    evidence = cover_share_evidence([late, on_time], as_of=AS_OF)
+
+    assert len(evidence) == 1
+    item = evidence[0]
+    assert item.cik == 1
+    assert item.concept == "shares_outstanding"
+    assert item.classification == "observed"
+    assert item.proof_kind == "direct_fact"
+    assert item.value == Decimal("1000")
+    assert item.available_from == ACCEPTED
+
+    security, symbol = _security(1, "ONE")
+    report = build_applicability_coverage(
+        build_security_master([security], [symbol]),
+        [UniverseCandidate("ONE", "NASDAQ", AS_OF.date())],
+        evidence,
+        as_of=AS_OF,
+        mandatory_concepts=(),
+    )
+    cell = next(cell for cell in report.cells if cell.concept == "shares_outstanding")
+    assert cell.outcome == "covered" and cell.classification == "observed"
+
+    with pytest.raises(ApplicabilityError, match="timezone-aware"):
+        cover_share_evidence([on_time], as_of=AS_OF.replace(tzinfo=None))
+
+
+def test_revenue_chain_v2_covers_lender_and_utility_top_lines() -> None:
+    observed = standardize_facts(
+        [
+            _raw(1, "RevenuesExcludingInterestAndDividends", "900", qtrs=1),
+            _raw(2, "RevenuesNetOfInterestExpense", "800", qtrs=1),
+            _raw(3, "RegulatedOperatingRevenue", "700", qtrs=1),
+        ]
+    )
+
+    assert {(fact.cik, fact.concept) for fact in observed} == {
+        (1, "revenue"),
+        (2, "revenue"),
+        (3, "revenue"),
+    }
+
+
 def _pit_row(fact: RawFact) -> dict[str, object]:
     return {
         "cik": fact.cik,
@@ -326,6 +439,7 @@ def test_loader_reads_only_identity_tags_from_verified_pit(tmp_path: Path) -> No
 
     assert tuple((fact.cik, fact.tag) for fact in facts) == (
         (1, "Liabilities"),
+        (1, "LiabilitiesAndStockholdersEquity"),
         (1, "StockholdersEquity"),
     )
     assert all(fact.accepted.tzinfo is not None for fact in facts)
