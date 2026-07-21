@@ -31,6 +31,7 @@ from usinv.data.listings import (
 from usinv.data.tiingo_lifecycle import TiingoLifecycleRow, TiingoLifecycleSnapshot
 from usinv.universe import (
     FilingFormObservation,
+    IdentityRegimeEvidence,
     SecurityUniverseEvidence,
     UniverseError,
     UniverseGateError,
@@ -671,3 +672,78 @@ def test_signal_timestamp_must_be_the_official_session_close() -> None:
             config_hash="a" * 64,
             security_master_snapshot_id="b" * 64,
         )
+
+
+def test_filer_regime_evidence_classifies_unmapped_rows() -> None:
+    listings = _listing_snapshot(
+        [
+            ("FRGN", "Foreign Miner Ltd", "NYSE", "Stock"),
+            ("FIPO", "Fresh Ipo Inc", "NASDAQ", "Stock"),
+            ("RGAP", "Real Gap Inc", "NASDAQ", "Stock"),
+        ]
+    )
+    active = {row.symbol: row for row in listings.rows if row.state == "active"}
+
+    def pointer(symbol: str) -> str:
+        row = active[symbol]
+        return f"alpha-vantage://{row.source_sha256}/{row.row_number}"
+
+    regime = IdentityRegimeEvidence(
+        candidate_ciks_by_pointer={
+            pointer("FRGN"): (700,),
+            pointer("FIPO"): (800,),
+            pointer("RGAP"): (900,),
+        },
+        foreign_regime_pointers={700: ("sec://700/0000000700-25-000001/20-F",)},
+        no_periodic_pointers={800: ("sec-submissions-complete://800/feed",)},
+    )
+    snapshot = build_universe_snapshot(
+        listings,
+        build_security_master([], []),
+        [],
+        signal_at=SIGNAL_AT,
+        config=CONFIG,
+        config_hash="a" * 64,
+        security_master_snapshot_id="b" * 64,
+        regime=regime,
+    )
+
+    rows = {row.ticker: row for row in snapshot.rows}
+    foreign = rows["FRGN"]
+    assert foreign.mapping_status == "non_domestic_listing"
+    assert "sec://700/0000000700-25-000001/20-F" in foreign.evidence_pointers
+    assert "identity_non_domestic_listing" in foreign.exclusion_reasons
+    ipo = rows["FIPO"]
+    assert ipo.mapping_status == "no_periodic_filing_at_cutoff"
+    assert "sec-submissions-complete://800/feed" in ipo.evidence_pointers
+    gap = rows["RGAP"]
+    assert gap.mapping_status == "unmapped"
+
+    gap_tickers = {row.ticker for row in snapshot.identity_mapping_gaps}
+    assert gap_tickers == {"RGAP"}
+
+
+def test_regime_evidence_never_reclassifies_mixed_or_unlisted_candidates() -> None:
+    listings = _listing_snapshot([("MIXD", "Mixed Evidence Corp", "NYSE", "Stock")])
+    row = next(item for item in listings.rows if item.state == "active")
+    regime = IdentityRegimeEvidence(
+        candidate_ciks_by_pointer={
+            f"alpha-vantage://{row.source_sha256}/{row.row_number}": (700, 701),
+        },
+        foreign_regime_pointers={700: ("sec://700/20-F",)},
+        no_periodic_pointers={701: ("sec-submissions-complete://701/feed",)},
+    )
+
+    snapshot = build_universe_snapshot(
+        listings,
+        build_security_master([], []),
+        [],
+        signal_at=SIGNAL_AT,
+        config=CONFIG,
+        config_hash="a" * 64,
+        security_master_snapshot_id="b" * 64,
+        regime=regime,
+    )
+
+    assert snapshot.rows[0].mapping_status == "unmapped"
+    assert len(snapshot.identity_mapping_gaps) == 1

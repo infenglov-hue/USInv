@@ -28,11 +28,65 @@ from usinv.data.universe_evidence import (
     build_security_universe_evidence,
     filing_sic_observations,
 )
-from usinv.universe import UniverseSnapshot, build_universe_snapshot
+from usinv.universe import (
+    IdentityRegimeEvidence,
+    UniverseSnapshot,
+    build_universe_snapshot,
+)
 
 
 class Phase23BuildError(ValueError):
     """Raised when the final gate inputs do not belong to one exact evidence lineage."""
+
+
+def _identity_regime_evidence(
+    discovery: FilingDiscoveryPlan,
+    cover: CoverEvidenceSnapshot,
+    cutoff: datetime,
+) -> IdentityRegimeEvidence:
+    """Distill archived filer-regime evidence for otherwise-unmapped listings.
+
+    Foreign classification requires that every archived cover filing for the
+    CIK is a known foreign-form accession, so an old foreign registration can
+    never reclassify a domestic 10-K/10-Q filer. 40-F-only filers produce no
+    foreign-form observations under the current acquisition contract and
+    therefore stay unmapped until the acquisition layer records them.
+    """
+    merge = cover.merge
+    security_ciks = {security.cik for security in merge.master.securities}
+    archives_by_cik: dict[int, set[str]] = {}
+    for archive in merge.archives:
+        archives_by_cik.setdefault(archive.cik, set()).add(archive.accession)
+    foreign_accessions: dict[int, set[str]] = {}
+    foreign_pointers: dict[int, set[str]] = {}
+    for observation in merge.fpi_form_observations:
+        foreign_accessions.setdefault(observation.cik, set()).add(observation.accession)
+        if observation.accepted.astimezone(UTC) <= cutoff:
+            foreign_pointers.setdefault(observation.cik, set()).add(
+                observation.evidence_pointer
+            )
+    foreign_regime = {
+        cik: tuple(sorted(pointers))
+        for cik, pointers in foreign_pointers.items()
+        if cik not in security_ciks
+        and archives_by_cik.get(cik, set()) <= foreign_accessions.get(cik, set())
+    }
+    no_periodic = {
+        proof.cik: (proof.evidence_pointer,)
+        for proof in merge.form_history_proofs
+        if proof.cik not in security_ciks
+        and proof.cik not in archives_by_cik
+        and proof.cik not in foreign_accessions
+    }
+    return IdentityRegimeEvidence(
+        candidate_ciks_by_pointer={
+            row.listing_evidence_pointer: row.candidate_ciks
+            for row in discovery.rows
+            if row.candidate_ciks
+        },
+        foreign_regime_pointers=foreign_regime,
+        no_periodic_pointers=no_periodic,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +176,7 @@ def build_phase_2_3(
         config_hash=config.config_hash,
         security_master_snapshot_id=cover.master_snapshot_id,
         lifecycle=lifecycle,
+        regime=_identity_regime_evidence(discovery, cover, cutoff),
     )
     identity_facts = load_structural_identity_facts(pit.table_path("facts_pit"))
     coverage = build_applicability_coverage(

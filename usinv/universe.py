@@ -8,7 +8,7 @@ import re
 import shutil
 import uuid
 from collections import Counter, defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -34,6 +34,9 @@ from usinv.scoring.sectors import SectorClassification, SectorMappingError, clas
 
 UNIVERSE_VERSION: Final = "usinv-universe-v2"
 HYGIENE_STUB_VERSION: Final = "phase-2.3-pass-through-v1"
+_EVIDENCED_NON_MEMBER_STATUSES: Final = frozenset(
+    {"non_common_listing", "non_domestic_listing", "no_periodic_filing_at_cutoff"}
+)
 FPI_FORMS: Final = frozenset({"20-F", "6-K", "F-1"})
 PRE_REVENUE_BIOTECH_SICS: Final = frozenset({2834, 2836, 8731})
 NON_COMMON_LISTING_NAME_PATTERN: Final = re.compile(
@@ -238,7 +241,7 @@ class UniverseSnapshot:
             and row.exchange_pass
             and row.asset_type_pass
             and not row.mapping_pass
-            and row.mapping_status not in {"non_common_listing", "non_domestic_listing"}
+            and row.mapping_status not in _EVIDENCED_NON_MEMBER_STATUSES
         )
 
     @property
@@ -249,7 +252,7 @@ class UniverseSnapshot:
             if row.membership_pass
             and row.exchange_pass
             and row.asset_type_pass
-            and row.mapping_status not in {"non_common_listing", "non_domestic_listing"}
+            and row.mapping_status not in _EVIDENCED_NON_MEMBER_STATUSES
         ]
         if not candidates:
             return 0.0
@@ -365,6 +368,20 @@ class _WorkRow:
     evidence_pointers: set[str]
 
 
+@dataclass(frozen=True, slots=True)
+class IdentityRegimeEvidence:
+    """Filing-history evidence for listing rows the security master cannot map.
+
+    All three mappings are derived from immutable archived SEC submissions, so
+    an unmapped listing row can only leave the common-stock identity
+    denominator with explicit filer-regime proof, never by name or suffix.
+    """
+
+    candidate_ciks_by_pointer: Mapping[str, tuple[int, ...]]
+    foreign_regime_pointers: Mapping[int, tuple[str, ...]]
+    no_periodic_pointers: Mapping[int, tuple[str, ...]]
+
+
 def build_universe_snapshot(
     listing_snapshot: AlphaListingSnapshot,
     master: SecurityMaster,
@@ -376,6 +393,7 @@ def build_universe_snapshot(
     security_master_snapshot_id: str,
     lifecycle: TiingoLifecycleSnapshot | None = None,
     calendar: XNYSCalendar | None = None,
+    regime: IdentityRegimeEvidence | None = None,
 ) -> UniverseSnapshot:
     """Apply the v1 filters while preserving every candidate and failure reason."""
     if signal_at.tzinfo is None:
@@ -476,6 +494,23 @@ def build_universe_snapshot(
                         mapping_status = "non_common_listing"
             if explicit_non_common_listing and not mapping_pass:
                 mapping_status = "non_common_listing"
+            if mapping_status == "unmapped" and regime is not None:
+                listing_pointer = (
+                    f"alpha-vantage://{listing.source_sha256}/{listing.row_number}"
+                )
+                candidate_ciks = regime.candidate_ciks_by_pointer.get(listing_pointer, ())
+                if candidate_ciks and all(
+                    cik in regime.foreign_regime_pointers for cik in candidate_ciks
+                ):
+                    mapping_status = "non_domestic_listing"
+                    for cik in candidate_ciks:
+                        pointers.update(regime.foreign_regime_pointers[cik])
+                elif candidate_ciks and all(
+                    cik in regime.no_periodic_pointers for cik in candidate_ciks
+                ):
+                    mapping_status = "no_periodic_filing_at_cutoff"
+                    for cik in candidate_ciks:
+                        pointers.update(regime.no_periodic_pointers[cik])
         item = evidence_by_security.get(security.security_id) if security else None
         if item is not None:
             raw_close, median_dollar_volume, price_pointers = _market_metrics(
