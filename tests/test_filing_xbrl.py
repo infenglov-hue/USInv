@@ -251,6 +251,14 @@ def test_malformed_or_external_entity_xbrl_does_not_resolve_data() -> None:
         parse_filing_xbrl(body, filing=_filing(), source_document="unsafe.xml")
 
 
+def test_inline_xbrl_accepts_fixed_html_named_entities_without_a_dtd() -> None:
+    body = INLINE_XBRL.replace(b"Common Stock", b"Common&nbsp;Stock", 1)
+
+    parsed = parse_filing_xbrl(body, filing=_filing(), source_document="named-entity.htm")
+
+    assert extract_cover_security_classes(parsed)[0].class_title == "Common Stock"
+
+
 def test_context_entity_and_duplicate_identity_fail_closed() -> None:
     wrong_entity = parse_filing_xbrl(
         INLINE_XBRL.replace(b"0000320193", b"external-id"),

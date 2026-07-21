@@ -15,6 +15,10 @@ on:
         description: Prior immutable Phase 2.3 listing artifact run ID
         required: false
         default: ""
+      lifecycle_run_id:
+        description: Prior immutable Phase 2.3 Tiingo lifecycle artifact run ID
+        required: false
+        default: ""
       reconcile_run_id:
         description: Existing complete-evidence run to reconcile (Phase 2.3 branch only)
         required: false
@@ -70,6 +74,7 @@ jobs:
     with:
       cover_run_id: ${{ inputs.cover_run_id }}
       listing_run_id: ${{ inputs.listing_run_id }}
+      lifecycle_run_id: ${{ inputs.lifecycle_run_id }}
     secrets: inherit
 
   reconcile-security-identities:

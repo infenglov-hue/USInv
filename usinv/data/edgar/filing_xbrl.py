@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html.entities
 import json
 import re
 import shutil
@@ -164,6 +165,19 @@ def _local(element_or_tag: etree._Element | str) -> str:
 def _safe_xml(body: bytes) -> etree._Element:
     if b"<!DOCTYPE" in body.upper() or b"<!ENTITY" in body.upper():
         raise EdgarPayloadError("filing XBRL is not safe, well-formed XML/XHTML")
+    xml_entities = {b"amp", b"apos", b"gt", b"lt", b"quot"}
+
+    def replace_html_entity(match: re.Match[bytes]) -> bytes:
+        name = match.group(1)
+        if name in xml_entities:
+            return match.group(0)
+        codepoint = html.entities.name2codepoint.get(name.decode("ascii"))
+        return f"&#{codepoint};".encode() if codepoint is not None else match.group(0)
+
+    # SEC inline filings are XHTML in practice, but some use named HTML
+    # entities such as &nbsp; without a DTD.  Convert only Python's fixed,
+    # local entity table to numeric references; external entities stay banned.
+    body = re.sub(rb"&([A-Za-z][A-Za-z0-9]+);", replace_html_entity, body)
     parser = etree.XMLParser(
         resolve_entities=False,
         no_network=True,

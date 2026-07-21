@@ -56,5 +56,5 @@ jobs:
       startsWith(github.ref, 'refs/heads/agent/phase-2-3')
     uses: ./.github/workflows/security-master-bootstrap.yml
     with:
-      max_filings_per_cik: "2"
+      max_filings_per_cik: "4"
     secrets: inherit

@@ -11,6 +11,7 @@ from pathlib import Path, PurePosixPath
 
 from usinv.data.edgar.client import EdgarClient, EdgarHttpError, EdgarPayloadError
 from usinv.data.edgar.filing_xbrl import (
+    CoverSecurityClass,
     FilingParseResult,
     archive_filing,
     extract_cover_security_classes,
@@ -412,29 +413,48 @@ def acquire_cover_evidence(
             primary_path = archived.output_dir / primary_name
             if not primary_path.is_file():
                 raise EdgarPayloadError("archived filing primary document is missing")
-            try:
-                parsed = parse_filing_xbrl(
-                    primary_path.read_bytes(),
-                    filing=filing,
-                    source_document=primary_name,
+            candidate_names = (
+                primary_name,
+                *(
+                    resource.name
+                    for resource in archived.resources
+                    if resource.name != primary_name and resource.name.casefold().endswith(".xml")
+                ),
+            )
+            admitted: tuple[tuple[CoverSecurityClass, tuple[str, str]], ...] = ()
+            observed_pairs: set[tuple[str, str]] = set()
+            parse_failures: list[str] = []
+            for candidate_name in candidate_names:
+                try:
+                    parsed = parse_filing_xbrl(
+                        (archived.output_dir / candidate_name).read_bytes(),
+                        filing=filing,
+                        source_document=candidate_name,
+                    )
+                except EdgarPayloadError as exc:
+                    parse_failures.append(f"{candidate_name}: {exc}")
+                    continue
+                observed_pairs.update(_parsed_pairs(parsed))
+                candidate_admitted = tuple(
+                    (cover, canonical_cover_pair(cover, allowed_pairs))
+                    for cover in extract_cover_security_classes(parsed)
                 )
-            except EdgarPayloadError as exc:
+                admitted = tuple(
+                    (cover, pair) for cover, pair in candidate_admitted if pair is not None
+                )
+                if admitted:
+                    break
+            if not admitted and len(parse_failures) == len(candidate_names):
                 gaps.append(
                     CoverAcquisitionGap(
                         cik,
                         filing.accession,
                         "primary_parse_failure",
-                        str(exc),
+                        "no archived filing document parsed: " + "; ".join(parse_failures),
                     )
                 )
                 continue
-            admitted = tuple(
-                (cover, canonical_cover_pair(cover, allowed_pairs))
-                for cover in extract_cover_security_classes(parsed)
-            )
-            admitted = tuple((cover, pair) for cover, pair in admitted if pair is not None)
             if not admitted:
-                observed = sorted(_parsed_pairs(parsed))
                 gaps.append(
                     CoverAcquisitionGap(
                         cik,
@@ -442,7 +462,8 @@ def acquire_cover_evidence(
                         "cover_not_in_discovery_plan",
                         (
                             "filing cover classes do not match a discovered ticker/exchange pair; "
-                            f"observed={observed!r} allowed={sorted(allowed_pairs)!r}"
+                            f"observed={sorted(observed_pairs)!r} "
+                            f"allowed={sorted(allowed_pairs)!r}"
                         ),
                     )
                 )

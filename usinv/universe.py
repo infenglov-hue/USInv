@@ -29,6 +29,7 @@ from usinv.data.edgar.securities import (
     is_explicit_non_common_security_title,
 )
 from usinv.data.listings import AlphaListingRow, AlphaListingSnapshot
+from usinv.data.tiingo_lifecycle import TiingoLifecycleSnapshot
 from usinv.scoring.sectors import SectorClassification, SectorMappingError, classify_sic
 
 UNIVERSE_VERSION: Final = "usinv-universe-v2"
@@ -36,7 +37,7 @@ HYGIENE_STUB_VERSION: Final = "phase-2.3-pass-through-v1"
 FPI_FORMS: Final = frozenset({"20-F", "6-K", "F-1"})
 PRE_REVENUE_BIOTECH_SICS: Final = frozenset({2834, 2836, 8731})
 NON_COMMON_LISTING_NAME_PATTERN: Final = re.compile(
-    r"\b(?:warrants?|rights?|depositary shares?|"
+    r"\b(?:ETF|exchange[- ]traded funds?|warrants?|rights?|depositary shares?|"
     r"preferred(?:\s+\w+){0,3}\s+(?:stock|shares?|securities|units?|lp)|"
     r"(?:senior|subordinated|convertible) notes?|bonds?)\b",
     re.IGNORECASE,
@@ -237,7 +238,7 @@ class UniverseSnapshot:
             and row.exchange_pass
             and row.asset_type_pass
             and not row.mapping_pass
-            and row.mapping_status != "non_common_listing"
+            and row.mapping_status not in {"non_common_listing", "non_domestic_listing"}
         )
 
     @property
@@ -248,7 +249,7 @@ class UniverseSnapshot:
             if row.membership_pass
             and row.exchange_pass
             and row.asset_type_pass
-            and row.mapping_status != "non_common_listing"
+            and row.mapping_status not in {"non_common_listing", "non_domestic_listing"}
         ]
         if not candidates:
             return 0.0
@@ -373,6 +374,7 @@ def build_universe_snapshot(
     config: UniverseConfig,
     config_hash: str,
     security_master_snapshot_id: str,
+    lifecycle: TiingoLifecycleSnapshot | None = None,
     calendar: XNYSCalendar | None = None,
 ) -> UniverseSnapshot:
     """Apply the v1 filters while preserving every candidate and failure reason."""
@@ -421,6 +423,18 @@ def build_universe_snapshot(
         security: Security | None = None
         mapping_pass = False
         pointers = {f"alpha-vantage://{listing.source_sha256}/{listing.row_number}"}
+        inactive_evidence = (
+            lifecycle.inactive_evidence(listing.symbol, listing.exchange, session)
+            if lifecycle is not None
+            else ()
+        )
+        non_stock_evidence = (
+            lifecycle.non_stock_evidence(listing.symbol, listing.exchange)
+            if lifecycle is not None
+            else ()
+        )
+        pointers.update(inactive_evidence)
+        pointers.update(non_stock_evidence)
         if membership_pass and exchange_pass and asset_type_pass and exchange is not None:
             try:
                 mapping = master.resolve(
@@ -447,6 +461,19 @@ def build_universe_snapshot(
                 if mapping.status == "mapped" and mapping.security_id is not None:
                     security = securities[mapping.security_id]
                     mapping_pass = True
+                elif mapping.candidate_security_ids:
+                    candidates = tuple(
+                        securities[security_id] for security_id in mapping.candidate_security_ids
+                    )
+                    pointers.update(item.evidence_pointer for item in candidates)
+                    if all(not item.domestic_flag for item in candidates):
+                        mapping_status = "non_domestic_listing"
+                    elif all(
+                        item.security_type != "common_stock"
+                        or is_explicit_non_common_security_title(item.class_title)
+                        for item in candidates
+                    ):
+                        mapping_status = "non_common_listing"
             if explicit_non_common_listing and not mapping_pass:
                 mapping_status = "non_common_listing"
         item = evidence_by_security.get(security.security_id) if security else None

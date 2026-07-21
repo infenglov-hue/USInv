@@ -60,6 +60,7 @@ from usinv.data.prices import (
     build_price_universe_plan,
     read_price_universe_snapshot,
 )
+from usinv.data.tiingo_lifecycle import read_tiingo_lifecycle_zip
 from usinv.phase_2_3 import Phase23BuildError, build_phase_2_3
 from usinv.universe import (
     UniverseError,
@@ -195,6 +196,7 @@ def _parser() -> argparse.ArgumentParser:
     phase_2_3.add_argument("--discovery-plan", type=Path, required=True)
     phase_2_3.add_argument("--cover-evidence", type=Path, required=True)
     phase_2_3.add_argument("--price-universe", type=Path, required=True)
+    phase_2_3.add_argument("--tiingo-lifecycle-zip", type=Path, required=True)
     phase_2_3.add_argument("--signal-at", type=_aware_datetime, required=True)
     phase_2_3.add_argument("--fsds-start", type=_fsds_quarter, required=True)
     phase_2_3.add_argument("--fsds-end", type=_fsds_quarter, required=True)
@@ -524,6 +526,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             discovery = read_filing_discovery_plan(args.discovery_plan)
             cover_snapshot = read_cover_evidence_snapshot(args.cover_evidence)
             price_snapshot = read_price_universe_snapshot(args.price_universe)
+            lifecycle = read_tiingo_lifecycle_zip(args.tiingo_lifecycle_zip)
             ingestor = FsdsIngestor.from_config(
                 config,
                 archive_dir=args.archive_dir,
@@ -546,6 +549,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 pit,
                 signal_at=args.signal_at,
                 config=config,
+                lifecycle=lifecycle,
             )
             universe_artifact = materialize_universe_snapshot(result.universe, output_root)
             gate_dir = output_root / "gate-evidence" / universe_artifact.snapshot_id

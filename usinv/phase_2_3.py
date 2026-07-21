@@ -20,6 +20,7 @@ from usinv.data.edgar.tag_chains import standardize_pit_snapshot
 from usinv.data.edgar.ttm import build_ttm_facts
 from usinv.data.listings import AlphaListingSnapshot
 from usinv.data.prices.universe import PriceUniverseSnapshot
+from usinv.data.tiingo_lifecycle import TiingoLifecycleSnapshot
 from usinv.data.universe_evidence import (
     UniverseEvidenceBuild,
     build_security_universe_evidence,
@@ -75,6 +76,7 @@ def build_phase_2_3(
     *,
     signal_at: datetime,
     config: AppConfig,
+    lifecycle: TiingoLifecycleSnapshot | None = None,
 ) -> Phase23Build:
     """Build, but do not weaken or auto-pass, the real D032 acceptance denominator."""
     if signal_at.tzinfo is None:
@@ -117,6 +119,7 @@ def build_phase_2_3(
         config=config.universe,
         config_hash=config.config_hash,
         security_master_snapshot_id=cover.master_snapshot_id,
+        lifecycle=lifecycle,
     )
     coverage = build_applicability_coverage(
         cover.merge.master,

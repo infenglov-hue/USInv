@@ -557,6 +557,7 @@ def test_phase_2_3_build_materializes_and_enforces_real_gate_inputs(
     monkeypatch.setattr(cli_module, "read_filing_discovery_plan", lambda path: inputs[1])
     monkeypatch.setattr(cli_module, "read_cover_evidence_snapshot", lambda path: inputs[2])
     monkeypatch.setattr(cli_module, "read_price_universe_snapshot", lambda path: inputs[3])
+    monkeypatch.setattr(cli_module, "read_tiingo_lifecycle_zip", lambda path: object())
 
     fake_ingestor = SimpleNamespace(ingest_range=lambda *args, **kwargs: ingested)
     monkeypatch.setattr(
@@ -595,6 +596,8 @@ def test_phase_2_3_build_materializes_and_enforces_real_gate_inputs(
                 str(tmp_path / "cover"),
                 "--price-universe",
                 str(tmp_path / "prices"),
+                "--tiingo-lifecycle-zip",
+                str(tmp_path / "supported_tickers.zip"),
                 "--signal-at",
                 "2026-07-17T16:00:00-04:00",
                 "--fsds-start",

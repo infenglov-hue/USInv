@@ -18,7 +18,7 @@ on:
       max_filings_per_cik:
         required: false
         type: string
-        default: "2"
+        default: "4"
       plan_run_id:
         required: false
         type: string
@@ -44,7 +44,7 @@ on:
       max_filings_per_cik:
         description: Recent cover-capable filings archived per CIK
         required: true
-        default: "2"
+        default: "4"
       reconcile_run_id:
         description: Existing complete-evidence run to reconcile without SEC refetch
         required: false

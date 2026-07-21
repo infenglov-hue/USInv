@@ -177,6 +177,49 @@ def test_cover_acquisition_rejects_a_cover_pair_that_does_not_match_discovery(
     assert result.gaps[0].kind == "cover_not_in_discovery_plan"
 
 
+def test_cover_acquisition_falls_back_to_an_archived_instance_document(tmp_path: Path) -> None:
+    class InstanceFallbackClient(FakeClient):
+        def filing_resource(
+            self,
+            cik: int,
+            accession: str,
+            filename: str,
+            *,
+            refresh: bool = False,
+        ) -> EdgarResource:
+            assert cik == 1 and accession == ACCESSION and not refresh
+            if filename == "index.json":
+                body = json.dumps(
+                    {"directory": {"item": [{"name": PRIMARY}, {"name": "issuer-20260331.xml"}]}}
+                ).encode()
+            elif filename == PRIMARY:
+                body = b"<html><body>ordinary filing document</body></html>"
+            else:
+                assert filename == "issuer-20260331.xml"
+                body = self.primary
+            return EdgarResource(
+                f"https://www.sec.gov/Archives/edgar/data/1/{accession}/{filename}",
+                OBSERVED,
+                OBSERVED,
+                hashlib.sha256(body).hexdigest(),
+                body,
+                False,
+                False,
+            )
+
+    result = acquire_cover_evidence(
+        InstanceFallbackClient(),
+        _plan(),
+        tmp_path,
+        as_of=CUTOFF,
+        maximum_ciks=1,
+    )
+
+    assert len(result.evidence) == 1
+    assert not result.gaps
+    assert result.evidence[0].parsed.facts[0].source_document == "issuer-20260331.xml"
+
+
 def test_cover_acquisition_normalizes_official_nasdaq_cover_label(tmp_path: Path) -> None:
     result = acquire_cover_evidence(
         FakeClient(exchange="The Nasdaq Global Select Market"),

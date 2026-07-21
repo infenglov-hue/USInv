@@ -113,6 +113,30 @@
   when-issued common shares.
 - Ruff lint/format, workflow YAML parsing and the complete offline suite pass
   after this remediation: 309 tests.
+- D032 artifact `8487682614` was replayed locally against the exact retained
+  universe rows. Of the 1,658 reported identity gaps, 346 are exact
+  exchange-qualified Tiingo stock series whose published end date precedes the
+  2026-07-17 cutoff; 169 collision groups contain only explicit non-common
+  SEC classes and 92 contain only SEC-classified foreign issuers. The 261
+  SEC-proven out-of-scope collisions can be removed from the common-stock
+  identity denominator with source pointers rather than ticker guesses; 18
+  genuinely mixed collisions remain quarantined. Tiingo end dates are retained
+  only as diagnostics and do not remove a row or satisfy the identity gate.
+- Added a strict, hash-addressed Tiingo supported-ticker lifecycle adapter and
+  immutable workflow artifact reuse. Missing exchanges in the provider's real
+  bulk schema are preserved but can never corroborate an exchange-qualified
+  observation. ETF names explicitly supplied by Alpha Vantage are now treated as
+  out-of-scope instruments under the existing common-stock contract.
+- Corrected two SEC acquisition defects exposed by the retained gaps. Safe
+  inline-XBRL parsing now converts only Python's fixed named-HTML-entity table
+  (for example `&nbsp;`) to numeric references while continuing to reject DTDs
+  and external entities. When a primary filing document has no usable XBRL,
+  the acquisition checks its archived XML instance documents before recording
+  a parse/cover gap. Fresh acquisition now considers four PIT-bounded filings
+  per CIK instead of two.
+- Ruff, workflow YAML parsing and the complete offline suite pass after these
+  changes: 320 tests. The next SEC refresh must measure the parser/selection
+  gain before a new D032 run; no acceptance threshold or PIT rule was changed.
 
 ### Acceptance gate remains closed
 

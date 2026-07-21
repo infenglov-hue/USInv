@@ -28,6 +28,7 @@ from usinv.data.listings import (
     AlphaListingSnapshot,
     parse_alpha_listing_page,
 )
+from usinv.data.tiingo_lifecycle import TiingoLifecycleRow, TiingoLifecycleSnapshot
 from usinv.universe import (
     FilingFormObservation,
     SecurityUniverseEvidence,
@@ -429,6 +430,21 @@ def test_explicit_non_common_provider_stock_is_not_an_identity_gap(
     assert row.asset_type_pass and not row.mapping_pass
     assert row.mapping_status == "non_common_listing"
     assert "identity_non_common_listing" in row.exclusion_reasons
+
+
+def test_explicit_etf_is_not_in_the_common_stock_identity_denominator() -> None:
+    snapshot = build_universe_snapshot(
+        _listing_snapshot([("FUND", "Example Active ETF", "NASDAQ", "Stock")]),
+        build_security_master([], []),
+        (),
+        signal_at=SIGNAL_AT,
+        config=CONFIG,
+        config_hash="a" * 64,
+        security_master_snapshot_id="b" * 64,
+    )
+
+    assert snapshot.rows[0].mapping_status == "non_common_listing"
+    assert not snapshot.identity_mapping_gaps
     assert not snapshot.identity_mapping_gaps
 
 
@@ -470,6 +486,40 @@ def test_nyse_when_issued_suffix_remains_an_identity_candidate() -> None:
     row = snapshot.rows[0]
     assert row.mapping_status == "unmapped"
     assert snapshot.identity_mapping_gaps == (row,)
+
+
+def test_independent_lifecycle_end_is_diagnostic_and_does_not_weaken_identity_gate() -> None:
+    listing = _listing_snapshot([("OLD", "Old Corp", "NASDAQ", "Stock")])
+    lifecycle = TiingoLifecycleSnapshot(
+        "a" * 64,
+        (
+            TiingoLifecycleRow(
+                "OLD",
+                "NASDAQ",
+                "Stock",
+                "USD",
+                date(2020, 1, 1),
+                date(2025, 1, 2),
+                2,
+            ),
+        ),
+    )
+    master = build_security_master([], [])
+    snapshot = build_universe_snapshot(
+        listing,
+        master,
+        [],
+        signal_at=SIGNAL_AT,
+        config=CONFIG,
+        config_hash="c" * 64,
+        security_master_snapshot_id="m" * 64,
+        lifecycle=lifecycle,
+    )
+
+    row = snapshot.rows[0]
+    assert row.mapping_status == "unmapped"
+    assert snapshot.identity_mapping_gaps == (row,)
+    assert any(pointer.startswith("tiingo-supported://") for pointer in row.evidence_pointers)
 
 
 def test_company_name_containing_preferred_remains_an_identity_candidate() -> None:
@@ -518,6 +568,44 @@ def test_common_cover_wins_only_when_same_symbol_non_equity_causes_collision() -
     row = snapshot.rows[0]
     assert row.mapping_pass and row.security_id == common.security_id
     assert row.included and not snapshot.identity_mapping_gaps
+
+
+@pytest.mark.parametrize(
+    ("domestic", "security_type", "expected_status"),
+    [
+        (True, "other", "non_common_listing"),
+        (False, "common_stock", "non_domestic_listing"),
+    ],
+)
+def test_collision_entirely_outside_scope_is_not_an_identity_gap(
+    domestic: bool,
+    security_type: str,
+    expected_status: str,
+) -> None:
+    first = _security(
+        1,
+        "sec-cover:first",
+        domestic=domestic,
+        security_type=security_type,
+        title="First Instrument" if security_type != "common_stock" else "Class A Common Stock",
+    )
+    second = _security(
+        1,
+        "sec-cover:second",
+        domestic=domestic,
+        security_type=security_type,
+        title="Second Instrument" if security_type != "common_stock" else "Common Stock",
+    )
+    _master, snapshot = _build(
+        _listing_snapshot([("ONE", "One Corp", "NASDAQ", "Stock")]),
+        [first, second],
+        [_symbol(first, "ONE"), _symbol(second, "ONE")],
+        [],
+    )
+
+    row = snapshot.rows[0]
+    assert not row.mapping_pass and row.mapping_status == expected_status
+    assert not snapshot.identity_mapping_gaps
 
 
 def test_missing_form_history_and_sic_are_quarantined_not_assumed_safe() -> None:
