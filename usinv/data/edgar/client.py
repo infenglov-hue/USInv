@@ -308,6 +308,7 @@ class EdgarClient:
         cache_dir: str | Path,
         max_requests_per_second: float = 8,
         cache_ttl_seconds: float = 900,
+        cache_binary_resources: bool = True,
         timeout_seconds: float = 30,
         max_attempts: int = 4,
         backoff_base_seconds: float = 60,
@@ -326,6 +327,7 @@ class EdgarClient:
 
         self.user_agent = f"USInv/{__version__} {self.contact_email}"
         self.cache_ttl = timedelta(seconds=cache_ttl_seconds)
+        self.cache_binary_resources = cache_binary_resources
         self.timeout_seconds = timeout_seconds
         self.max_attempts = max_attempts
         self.backoff_base_seconds = backoff_base_seconds
@@ -453,7 +455,8 @@ class EdgarClient:
         accept: str,
     ) -> EdgarResource:
         url = self._validate_sec_url(url)
-        cached = self._cache.load(url)
+        persistent_cache = accept != "*/*" or self.cache_binary_resources
+        cached = self._cache.load(url) if persistent_cache else None
         if cached is not None and not refresh and self._is_fresh(cached):
             return EdgarResource(
                 url=url,
@@ -493,6 +496,19 @@ class EdgarClient:
                     revalidated=True,
                 )
             if response.status == 200:
+                if not persistent_cache:
+                    retrieved_at = self._now()
+                    if retrieved_at.tzinfo is None:
+                        raise EdgarCacheError("EDGAR cache clock must be timezone-aware")
+                    return EdgarResource(
+                        url=url,
+                        retrieved_at=retrieved_at.astimezone(UTC),
+                        validated_at=retrieved_at.astimezone(UTC),
+                        content_sha256=hashlib.sha256(response.body).hexdigest(),
+                        body=response.body,
+                        from_cache=False,
+                        revalidated=False,
+                    )
                 stored = self._cache.store(
                     url,
                     response.body,

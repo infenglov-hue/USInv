@@ -8,9 +8,9 @@ Updated: 2026-07-21. Read this file first; open `PROGRESS.md` only for history.
 |---|---|
 | Repository | `infenglov-hue/USInv` (private) |
 | Branch | `agent/phase-2-3-universe-builder` |
-| Current commit | `f08232a` |
+| Current commit | Pending disk-remediation commit after `1f1ecc5` |
 | Current phase | Phase 2.3 identity/universe acceptance remediation |
-| Active Actions run | `29815646806` — fresh filing-backed SEC evidence |
+| Last SEC refresh | `29815646806` — cancelled after four shards hit runner disk exhaustion |
 | Reused discovery plan | run `29772784252` |
 | Reused immutable Alpha listing | run `29769888331`, date `2026-07-17` |
 | Last real D032 run | `29810991030`, artifact `8487682614`, failed closed |
@@ -52,13 +52,14 @@ Gap diagnosis on the retained artifact:
 
 ## Next action — do not start duplicate runs
 
-1. Inspect run `29815646806`. While it is running, do nothing except monitor.
+1. Dispatch exactly one fresh SEC refresh from the disk-remediation commit,
+   reusing discovery-plan run `29772784252`; do not resume `29815646806`.
 2. On success, verify `security-discovery-plan` and
    `filing-backed-security-evidence` artifacts and compare acquisition/gap
    metrics with `29772784252`.
 3. Only if the symptom improved, dispatch one D032 run through
    `alpaca-smoke.yml` on the same branch with:
-   `cover_run_id=29815646806`, `listing_run_id=29769888331`.
+   `cover_run_id=<new successful refresh>`, `listing_run_id=29769888331`.
    Leave `lifecycle_run_id` empty on the first run; reuse that D032 run ID on
    later reruns so the lifecycle ZIP is immutable.
 4. If the refresh fails, fix the first concrete code/data error, run Ruff plus
@@ -69,8 +70,8 @@ Gap diagnosis on the retained artifact:
 Useful commands:
 
 ```powershell
-gh run view 29815646806 --repo infenglov-hue/USInv
-gh run view 29815646806 --repo infenglov-hue/USInv --log-failed
+gh run view <new-refresh-run-id> --repo infenglov-hue/USInv
+gh run view <new-refresh-run-id> --repo infenglov-hue/USInv --log-failed
 .\.venv\Scripts\python.exe -m ruff check .
 .\.venv\Scripts\python.exe -m pytest -q
 ```

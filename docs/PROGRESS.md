@@ -137,6 +137,17 @@
 - Ruff, workflow YAML parsing and the complete offline suite pass after these
   changes: 320 tests. The next SEC refresh must measure the parser/selection
   gain before a new D032 run; no acceptance threshold or PIT rule was changed.
+- Four shards in SEC refresh run `29815646806` exhausted the GitHub-hosted
+  runner disk after binary filing responses were retained both in the EDGAR
+  response cache and the immutable accession archive. The run was cancelled
+  because its exact-partition merge could no longer succeed. This was an
+  infrastructure-storage failure, not a D032/PIT result.
+- The filing archive now fetches only the primary document and possible XBRL
+  instance XML, excluding presentation/calculation/definition/label linkbases
+  and schemas that the cover parser never consumes. The shard workflow also
+  disables only the duplicate binary response-cache copy; JSON submissions
+  remain cached and every consumed filing resource is still archived and
+  hash-addressed. Ruff and the complete suite pass: 321 tests.
 
 ### Acceptance gate remains closed
 

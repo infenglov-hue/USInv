@@ -847,6 +847,11 @@ def _index_names(resource: EdgarResource) -> tuple[str, ...]:
     return tuple(sorted(set(names)))
 
 
+def _is_instance_candidate(name: str) -> bool:
+    lowered = name.casefold()
+    return lowered.endswith(".xml") and not re.search(r"_(?:cal|def|lab|pre)\.xml$", lowered)
+
+
 def _verify_archive(path: Path, snapshot_id: str) -> tuple[FilingArchiveResource, ...]:
     try:
         manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
@@ -874,9 +879,7 @@ def archive_filing(
     index = client.filing_resource(filing.cik, filing.accession, "index.json", refresh=refresh)
     names = _index_names(index)
     primary = PurePosixPath(filing.primary_document).name
-    selected = {
-        name for name in names if name == primary or name.casefold().endswith((".xml", ".xsd"))
-    }
+    selected = {name for name in names if name == primary or _is_instance_candidate(name)}
     if primary not in selected:
         raise EdgarPayloadError("filing primary document is absent from its SEC index")
     fetched = [index]

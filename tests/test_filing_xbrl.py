@@ -356,6 +356,9 @@ def test_filing_archive_is_content_addressed_and_hash_verified(tmp_path: Path) -
     assert not created.from_cache and cached.from_cache
     assert created.snapshot_id == cached.snapshot_id
     assert "rendered.jpg" not in client.calls
+    assert "fixture-20250331_pre.xml" not in client.calls
+    assert "fixture-20250331_lab.xml" not in client.calls
+    assert "fixture-20250331.xsd" not in client.calls
     assert created.output_dir.joinpath("fixture-20250331.htm").is_file()
 
     created.output_dir.joinpath("fixture-20250331.htm").write_bytes(b"tampered")

@@ -164,6 +164,7 @@ jobs:
             --max-ciks "${{ inputs.shard_size }}" \
             --start-after-cik "${{ matrix.start_after_cik }}" \
             --max-filings-per-cik "${{ inputs.max_filings_per_cik }}" \
+            --avoid-duplicate-binary-cache \
             --require-evidence
       - name: Upload compact evidence shard
         uses: actions/upload-artifact@v4

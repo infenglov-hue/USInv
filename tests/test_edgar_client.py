@@ -119,6 +119,20 @@ def test_current_ticker_association_endpoint_is_explicitly_supported(tmp_path: P
     assert transport.calls[0][1]["User-Agent"] == "USInv/0.1.0 ops@usinv.dev"
 
 
+def test_binary_resource_cache_can_be_disabled_when_the_archive_is_authoritative(
+    tmp_path: Path,
+) -> None:
+    transport = FakeTransport(_response({"first": 1}), _response({"second": 2}))
+    client = _client(tmp_path, transport, cache_binary_resources=False)
+
+    first = client.filing_resource(320193, "0000320193-25-000001", "instance.xml")
+    second = client.filing_resource(320193, "0000320193-25-000001", "instance.xml")
+
+    assert not first.from_cache and not second.from_cache
+    assert len(transport.calls) == 2
+    assert not tuple(tmp_path.glob("*.body.json"))
+
+
 @pytest.mark.parametrize(
     ("value", "normalized"),
     [(320193, "0000320193"), ("320193", "0000320193"), ("CIK0000320193", "0000320193")],

@@ -154,6 +154,11 @@ def _parser() -> argparse.ArgumentParser:
     cover.add_argument("--discovery-plan", type=Path, required=True)
     cover.add_argument("--as-of", type=_aware_datetime, required=True)
     cover.add_argument("--cache-dir", type=Path, help="override the EDGAR cache directory")
+    cover.add_argument(
+        "--avoid-duplicate-binary-cache",
+        action="store_true",
+        help="archive filing resources once without also retaining response-cache copies",
+    )
     cover.add_argument("--archive-dir", type=Path, help="override the as-filed archive root")
     cover.add_argument("--output-dir", type=Path, help="override the private data root")
     cover.add_argument("--max-ciks", type=int, help="process a bounded resumable CIK shard")
@@ -365,7 +370,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         archive_root = args.archive_dir or output_root / "sec" / "filing-security"
         try:
             plan = read_filing_discovery_plan(args.discovery_plan)
-            client = EdgarClient.from_config(config, cache_dir=args.cache_dir)
+            client_options = (
+                {"cache_binary_resources": False} if args.avoid_duplicate_binary_cache else {}
+            )
+            client = EdgarClient.from_config(
+                config,
+                cache_dir=args.cache_dir,
+                **client_options,
+            )
             acquisition = acquire_cover_evidence(
                 client,
                 plan,
