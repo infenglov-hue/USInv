@@ -19,7 +19,8 @@ open `PROGRESS.md` only for history.
 | Reused discovery plan | run `29772784252` |
 | Reused immutable Alpha listing | run `29769888331`, date `2026-07-17` |
 | Four-filing SEC evidence to reuse | run `29822730998`, artifact `filing-backed-security-evidence` (8493991255) |
-| Last real D032 run | `29830795288` (post-`4fca7a5` structural absence), failed closed |
+| Last real D032 run | `29834169463` (code `d0348be`), failed closed on identity/mandatory only |
+| Coverage thresholds | Core 91.4857% (>=90% PASSES), secondary 78.72% (>=75% PASSES) |
 | Immutable Tiingo lifecycle for reruns | pass `lifecycle_run_id=29828041512` |
 | Local verification | Ruff green; full suite `321 passed` |
 
@@ -29,15 +30,25 @@ built yet. Phase 2.3 must pass before Phase 2.4/3 under `AGENTS.md` and
 
 ## Last measured gate
 
-`29830795288` (2026-07-21, four-filing evidence `29822730998`, lifecycle
-`29828041512`, code `4fca7a5`) produced 1,625 included securities,
+`29834169463` (2026-07-21, four-filing evidence `29822730998`, lifecycle
+`29828041512`, code `d0348be`) produced 1,625 included securities,
 1,004 identity gaps (978 unmapped + 24 quarantined + 2 invalid), 107
-sector/FF49 gaps, 25 mandatory-missing cells (24 `revenue`, 1 `net_income`),
-89.8989% core coverage (23 cells short of 90%) and **78.72% secondary
-coverage — the 75% secondary threshold now passes** via `4fca7a5`
-structural-absence proofs (932 accounting-identity zeros + 11 derived
-minority-interest values). Required: zero identity/FF49/mandatory gaps,
-core >=90%, secondary >=75%. Never relabel this run as passing.
+sector/FF49 gaps, and **both coverage thresholds passing: core 91.4857%
+(shares_outstanding fully covered by cover-page observations, 12 zero
+long-term-debt identities) and secondary 78.72%**. Mandatory-missing fell
+25 -> 18 (17 `revenue` + FreightCar `net_income`): resolved were Universal,
+ONE Gas and Bread via chain v2 and US Gold, SpyGlass, Oklo, Celcuity via
+the zero-revenue identity. Remaining 18: 833079 Meritage (custom
+homebuilder tags), 949858/1502377/1718405/1852353/1923891 pre-revenue
+issuers the exact identity missed, 1032033/1584207/1411342/1766478
+lender/REIT-style top lines (candidate legitimate fallback:
+`InterestAndDividendIncomeOperating`), 1035201 CalWater (FSDS omitted its
+archived-quarter revenue rows), 1171486 NRP and 1841666 APA
+(dimension/custom tagging), and 1937891/1998768/2028707/1947016/1320854
+whose only usable facts are April-July 2026 filings (needs the CODEX 1.5
+current-quarter API path; FSDS `2026q2` is unpublished). Required: zero
+identity/FF49/mandatory gaps, core >=90%, secondary >=75%. Never relabel
+this run as passing.
 
 Comparison with the previous real gate `29810991030` (two-filing evidence):
 included 1,461 -> 1,625; identity gaps 1,658 -> 1,004; quarantined 279 -> 24;
@@ -104,27 +115,32 @@ causes (verified against SEC companyfacts and raw FSDS 2026q1):
 
 ## Next action — do not start duplicate runs
 
-Executed on 2026-07-21: refresh `29822730998` (success), D032 `29828041512`
-(fail-closed baseline), structural-absence commit `4fca7a5`, and measurement
-D032 `29830795288` (secondary now passes at 78.72%). Do not rerun without a
-changed code/data symptom. Remaining remediation order:
+Executed on 2026-07-21: refresh `29822730998`, baseline D032 `29828041512`,
+structural-absence `4fca7a5` (secondary passes), core/mandatory remediation
+`d0348be` (core passes, mandatory 25 -> 18), measured by D032 `29834169463`.
+Do not rerun without a changed code/data symptom. Remaining work, in order:
 
-1. Core +23 cells: wire cover-page share observations into
-   `shares_outstanding` applicability evidence; add the
-   `Liabilities == LiabilitiesCurrent` zero-long-term-debt identity.
-2. Mandatory 25: current-quarter API/live-edge fact supplement (CODEX_TASKS
-   1.5 sanctions it), chain-fallback extensions
-   (`RevenuesExcludingInterestAndDividends`, `RegulatedOperatingRevenue`,
-   versioned chain bump), structural zero-revenue identity for pre-revenue
-   issuers.
-3. Classify the 978 unmapped identities per category with explicit evidence
-   (as `f08232a` did for the 261 quarantined rows); no suffix guessing.
-   Resolve the 107 FF49/sector gaps (`missing_filing_sic`).
-4. After remediation lands (Ruff + full suite + push), dispatch one D032 run
-   with `cover_run_id=29822730998`, `listing_run_id=29769888331`,
+1. Identity (the only large blocker): extend cover acquisition with the
+   complete filer-regime observation (include `40-F`; today's
+   `CoverFpiFormObservation` only accepts 20-F/6-K/F-1) and archive form
+   fields; bump merge version; run ONE refresh with
+   `bootstrap_plan_run_id=29772784252`; classify unmapped rows in
+   `build_universe_snapshot` through discovery `candidate_ciks` into
+   `non_domestic_listing` / new `no_periodic_filing_at_cutoff`; fix the 96
+   failed domestic cover extractions; resolve the 571 stale no-SEC-match
+   rows by name-based EDGAR evidence; test/blank/fund rows need their own
+   evidence rules. Sector gaps (107) ride on the same evidence.
+2. Mandatory 18: implement the CODEX 1.5 current-quarter API supplement
+   (acceptance times from archived submissions, FSDS-diff logged);
+   consider `InterestAndDividendIncomeOperating` as a documented chain
+   fallback for in-scope lenders; investigate Meritage/NRP/APA custom or
+   dimensioned top lines.
+3. After remediation lands (Ruff + full suite + push), dispatch one D032 run
+   with `cover_run_id=<latest refresh>`, `listing_run_id=29769888331`,
    `lifecycle_run_id=29828041512`.
-5. Never infer missing values as zero, use current SEC ticker arrays as
-   historical identity, or remove a row solely because Tiingo's series ended.
+4. Never infer missing values as zero, use current SEC ticker arrays as
+   historical identity, or remove a row solely because Tiingo's series
+   ended.
 
 Useful commands:
 
