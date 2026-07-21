@@ -11,6 +11,10 @@ on:
         description: Successful security-evidence run ID (Phase 2.3 branch only)
         required: false
         default: ""
+      listing_run_id:
+        description: Prior immutable Phase 2.3 listing artifact run ID
+        required: false
+        default: ""
       reconcile_run_id:
         description: Existing complete-evidence run to reconcile (Phase 2.3 branch only)
         required: false
@@ -65,6 +69,7 @@ jobs:
     uses: ./.github/workflows/phase-2-3-universe.yml
     with:
       cover_run_id: ${{ inputs.cover_run_id }}
+      listing_run_id: ${{ inputs.listing_run_id }}
     secrets: inherit
 
   reconcile-security-identities:

@@ -32,7 +32,15 @@
 
 ### Verification/status
 
-- Ruff lint/format and the complete offline suite pass: 297 tests. Tests cover
+- SEC evidence refresh run `29772784252` completed all 23 CIK shards after an
+  isolated retry of one transient SEC 429 and published reconciled discovery
+  and filing-backed evidence artifacts.
+- D032 run `29809262508` stopped before computation because Alpha Vantage
+  changed its historical `2026-07-17` response to include a post-cutoff IPO.
+  D038 now makes reruns consume the prior hash-verified immutable listing
+  snapshot by run ID and prevents its private CSV payloads from being
+  re-uploaded.
+- Ruff lint/format and the complete offline suite pass: 310 tests. Tests cover
   future filing/price rejection, raw-price non-rewriting, exact close timing,
   FPI/financial/biotech exclusions, multi-class aggregation, large-cap
   admission, mapping gaps, D030 denominator equality, immutable reopen and

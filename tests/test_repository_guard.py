@@ -55,3 +55,14 @@ def test_alpha_listing_smoke_is_gated_and_never_publishes_raw_payloads() -> None
     assert "secrets.ALPHA_VANTAGE_API_KEY" in workflow
     assert "Require Alpha Vantage credential" in workflow
     assert "upload-artifact" not in workflow
+
+
+def test_phase_2_3_reuses_immutable_listing_without_reuploading_private_csv() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "phase-2-3-universe.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "listing_run_id" in workflow
+    assert "Download immutable dated listing snapshot" in workflow
+    upload = workflow.split("- name: Upload auditable universe and gate evidence", 1)[1]
+    assert "runner.temp }}/private-listing" not in upload
