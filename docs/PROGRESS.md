@@ -40,6 +40,13 @@
   D038 now makes reruns consume the prior hash-verified immutable listing
   snapshot by run ID and prevents its private CSV payloads from being
   re-uploaded.
+- D038 verification run `29810991030` reused listing artifact run
+  `29769888331`, skipped the Alpha fetch, completed price/FSDS processing and
+  produced auditable artifact `8487682614` without re-uploading the private
+  listing CSVs. The reproducibility failure is closed. The unchanged D032
+  quality gate remains blocked on 1,658 identity gaps, 97 FF49 gaps, 89.9286%
+  core coverage and 67.1732% secondary coverage; rerunning the same evidence
+  cannot change those metrics.
 - Ruff lint/format and the complete offline suite pass: 310 tests. Tests cover
   future filing/price rejection, raw-price non-rewriting, exact close timing,
   FPI/financial/biotech exclusions, multi-class aggregation, large-cap
