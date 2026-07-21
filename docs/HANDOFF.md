@@ -1,5 +1,8 @@
 # USInv compact handoff
 
+> Codex work is stopped. For Claude continuation, use
+> `docs/CLAUDE_HANDOFF.md` as the authoritative detailed handoff.
+
 Updated: 2026-07-21. Read this file first; open `PROGRESS.md` only for history.
 
 ## Exact state
@@ -8,9 +11,9 @@ Updated: 2026-07-21. Read this file first; open `PROGRESS.md` only for history.
 |---|---|
 | Repository | `infenglov-hue/USInv` (private) |
 | Branch | `agent/phase-2-3-universe-builder` |
-| Current commit | `ac10b01` |
+| Latest functional code | `ac10b01`; detailed handoff is committed afterward |
 | Current phase | Phase 2.3 identity/universe acceptance remediation |
-| Active SEC refresh | `29821740675` — disk-bounded retry from `ac10b01` |
+| Active SEC refresh | None; `29821740675` was cancelled for the Claude handoff |
 | Reused discovery plan | run `29772784252` |
 | Reused immutable Alpha listing | run `29769888331`, date `2026-07-17` |
 | Last real D032 run | `29810991030`, artifact `8487682614`, failed closed |
@@ -52,7 +55,7 @@ Gap diagnosis on the retained artifact:
 
 ## Next action — do not start duplicate runs
 
-1. Monitor SEC refresh `29821740675`; do not start another refresh while it runs.
+1. Read `docs/CLAUDE_HANDOFF.md`; no workflow is currently running.
 2. On success, verify `security-discovery-plan` and
    `filing-backed-security-evidence` artifacts and compare acquisition/gap
    metrics with `29772784252`.

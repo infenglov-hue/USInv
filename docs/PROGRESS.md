@@ -148,6 +148,9 @@
   disables only the duplicate binary response-cache copy; JSON submissions
   remain cached and every consumed filing resource is still archived and
   hash-addressed. Ruff and the complete suite pass: 321 tests.
+- Disk-remediation validation run `29821740675` was cancelled before a result
+  when the user requested that all Codex/GitHub work stop for a Claude handoff.
+  No workflow remains active, and the cancelled run is not acceptance evidence.
 
 ### Acceptance gate remains closed
 
