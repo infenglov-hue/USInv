@@ -164,6 +164,22 @@ The `83e9d01` soundness fix (reviewed 2026-07-21): the OperatingExpenses
 zero-revenue proof now requires a single-step statement (no cost-of-
 revenue / gross-profit line), because OperatingExpenses excludes COGS and
 would otherwise falsely prove zero revenue when revenue == COGS.
+
+VERIFY-AT-MEASUREMENT soft spot (reviewed 2026-07-21, NOT changed): the
+`no_periodic_filing_at_cutoff` regime classification in
+`_identity_regime_evidence` infers "no periodic filing" from a CIK being
+absent from `archives_by_cik`. `CoverFormHistoryProof` does not carry the
+form list, so a domestic 10-K/10-Q filer whose cover archiving FAILED
+(not merely parsed empty) could theoretically be swept into no_periodic,
+which would fail-OPEN by shrinking the identity-gap denominator. Evidence
+it is currently safe: the last measured drop was 174, BELOW the diagnostic
+upper bound (117 foreign + 97 no-periodic = 214), i.e. production is more
+conservative than the diagnostic, not over-classifying. At the v4
+measurement, confirm the identity-gap drop stays bounded by the
+foreign + no-periodic diagnostic counts; if it drops MORE than expected,
+some failed-archive domestic filers were wrongly excluded -- then require
+the proof to positively show no cover-capable form rather than inferring
+from archive absence. Do not change this blind before measuring.
 3. After remediation lands (Ruff + full suite + push), dispatch one D032 run
    with `cover_run_id=<latest refresh>`, `listing_run_id=29769888331`,
    `lifecycle_run_id=29828041512`.
