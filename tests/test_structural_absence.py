@@ -343,6 +343,44 @@ def test_operating_loss_equal_to_expenses_proves_zero_revenue() -> None:
     )
 
 
+def test_operating_expenses_zero_revenue_rejected_when_cogs_is_reported() -> None:
+    # Revenue == COGS == 100 (zero gross profit), OperatingExpenses == 250
+    # excludes COGS, so OperatingIncomeLoss == -250 == -OperatingExpenses even
+    # though revenue is 100, not zero. The proof must NOT fire.
+    for cost_tag in ("CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold"):
+        facts = [
+            _raw(1, "OperatingIncomeLoss", "-250", qtrs=1),
+            _raw(1, "OperatingExpenses", "250", qtrs=1),
+            _raw(1, cost_tag, "100", qtrs=1),
+        ]
+        assert derive_structural_absence_evidence(facts, (), as_of=AS_OF) == ()
+
+
+def test_operating_expenses_zero_revenue_rejected_when_gross_profit_is_reported() -> None:
+    facts = [
+        _raw(1, "OperatingIncomeLoss", "-250", qtrs=1),
+        _raw(1, "OperatingExpenses", "250", qtrs=1),
+        _raw(1, "GrossProfit", "0", qtrs=1),
+    ]
+    assert derive_structural_absence_evidence(facts, (), as_of=AS_OF) == ()
+
+
+def test_total_costs_and_expenses_prove_zero_revenue_even_with_cogs() -> None:
+    # CostsAndExpenses is the total operating deduction, so the identity is
+    # sound even when a cost-of-revenue line is also present.
+    facts = [
+        _raw(1, "OperatingIncomeLoss", "-250", qtrs=1),
+        _raw(1, "CostsAndExpenses", "250", qtrs=1),
+        _raw(1, "CostOfRevenue", "100", qtrs=1),
+    ]
+
+    evidence = derive_structural_absence_evidence(facts, (), as_of=AS_OF)
+
+    assert len(evidence) == 1
+    assert evidence[0].concept == "revenue"
+    assert evidence[0].classification == "structural_zero"
+
+
 def test_cover_share_observations_become_direct_share_facts() -> None:
     on_time = CoverShareObservation(
         security_id="sec-1",

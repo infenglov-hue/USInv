@@ -197,7 +197,14 @@ _LIABILITIES_TAG: Final = "Liabilities"
 _LIABILITIES_CURRENT_TAG: Final = "LiabilitiesCurrent"
 _BALANCE_TOTAL_TAG: Final = "LiabilitiesAndStockholdersEquity"
 _OPERATING_INCOME_TAG: Final = "OperatingIncomeLoss"
-_OPERATING_EXPENSE_TAGS: Final = ("OperatingExpenses", "CostsAndExpenses")
+_TOTAL_EXPENSE_TAG: Final = "CostsAndExpenses"
+_OPERATING_EXPENSE_TAG: Final = "OperatingExpenses"
+_COST_OF_REVENUE_TAGS: Final = (
+    "CostOfRevenue",
+    "CostOfGoodsAndServicesSold",
+    "CostOfGoodsSold",
+)
+_GROSS_PROFIT_TAG: Final = "GrossProfit"
 _PREFERRED_SHARE_TAGS: Final = frozenset(
     {"PreferredStockSharesIssued", "PreferredStockSharesOutstanding"}
 )
@@ -336,12 +343,19 @@ def derive_structural_absence_evidence(
         operating_income = by_tag.get(_OPERATING_INCOME_TAG)
         if operating_income is None:
             continue
-        expenses = next(
-            (by_tag[tag] for tag in _OPERATING_EXPENSE_TAGS if tag in by_tag),
-            None,
-        )
-        # A filed operating loss exactly equal to filed total operating
-        # expenses leaves zero room for any revenue in the same period.
+        # CostsAndExpenses is the total operating deduction from revenue, so
+        # OperatingIncomeLoss + CostsAndExpenses == 0 implies zero revenue.
+        # OperatingExpenses excludes cost of revenue, so it only proves zero
+        # revenue on a single-step statement: if any cost-of-revenue or gross-
+        # profit line is present, OperatingIncomeLoss == -OperatingExpenses only
+        # forces gross profit to zero (revenue == COGS), not revenue to zero.
+        expenses = by_tag.get(_TOTAL_EXPENSE_TAG)
+        if expenses is None:
+            single_step = not any(tag in by_tag for tag in _COST_OF_REVENUE_TAGS) and (
+                _GROSS_PROFIT_TAG not in by_tag
+            )
+            if single_step:
+                expenses = by_tag.get(_OPERATING_EXPENSE_TAG)
         if (
             expenses is not None
             and expenses.value > 0

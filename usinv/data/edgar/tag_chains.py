@@ -720,7 +720,11 @@ def standardize_pit_snapshot(
 
 
 STRUCTURAL_IDENTITY_TAGS: Final = (
+    "CostOfGoodsAndServicesSold",
+    "CostOfGoodsSold",
+    "CostOfRevenue",
     "CostsAndExpenses",
+    "GrossProfit",
     "Liabilities",
     "LiabilitiesAndStockholdersEquity",
     "LiabilitiesCurrent",
