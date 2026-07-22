@@ -14,7 +14,8 @@ open `PROGRESS.md` only for history.
 | Branch | `agent/phase-2-3-universe-builder` |
 | Latest functional code | `ac10b01`; handoff/doc commits follow it |
 | Current phase | Phase 2.3 identity/universe acceptance remediation |
-| Active SEC refresh | None; last refresh `29822730998` completed successfully |
+| Active SEC refresh | LOCAL v4 refresh running in background (task `bdfn1hbpf`), output `data/local-gate/cover-v4/` — adds 40-F regime evidence |
+| Latest code | `83e9d01` (zero-revenue identity soundness fix); 40-F regime = `e97139d` |
 | Disk fix `ac10b01` | Validated: all 23 four-filing shards passed, no disk exhaustion |
 | Reused discovery plan | run `29772784252` |
 | Reused immutable Alpha listing | run `29769888331`, date `2026-07-17` |
@@ -146,6 +147,23 @@ Do not rerun without a changed code/data symptom. Remaining work, in order:
    consider `InterestAndDividendIncomeOperating` as a documented chain
    fallback for in-scope lenders; investigate Meritage/NRP/APA custom or
    dimensioned top lines.
+
+MEASUREMENT PENDING: commits `e97139d` (40-F regime) and `83e9d01`
+(zero-revenue soundness) are UNMEASURED against a gate. The old v3 cover
+evidence can no longer be read (COVER_MERGE_VERSION bumped to v4), so the
+local gate now REQUIRES the v4 refresh output. When background task
+`bdfn1hbpf` finishes, run `sec-cover-merge` + `sec-cover-reconcile`
+against `data/local-gate/cover-v4/` if not already chained, then the
+local `phase-2-3-build` (see the fsds-sync + phase-2-3-build invocation
+used on 2026-07-21) pointing `--cover-evidence` at the reconciled v4
+snapshot. Expect identity < 830 (40-F foreign filers now classifiable)
+and mandatory <= 18 (zero-revenue fix keeps the 5 true positives; it only
+removes an unsound path that did not fire on this dataset).
+
+The `83e9d01` soundness fix (reviewed 2026-07-21): the OperatingExpenses
+zero-revenue proof now requires a single-step statement (no cost-of-
+revenue / gross-profit line), because OperatingExpenses excludes COGS and
+would otherwise falsely prove zero revenue when revenue == COGS.
 3. After remediation lands (Ruff + full suite + push), dispatch one D032 run
    with `cover_run_id=<latest refresh>`, `listing_run_id=29769888331`,
    `lifecycle_run_id=29828041512`.
