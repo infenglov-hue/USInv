@@ -41,8 +41,8 @@ from usinv.data.edgar.security_bootstrap import (
 )
 
 COVER_IDENTITY_RECONCILIATION_VERSION: Final = "usinv-cover-semantic-equity-v1"
-COVER_MERGE_VERSION: Final = "usinv-cover-evidence-merge-v3"
-COVER_SHARD_VERSION: Final = "usinv-cover-evidence-shard-v3"
+COVER_MERGE_VERSION: Final = "usinv-cover-evidence-merge-v4"
+COVER_SHARD_VERSION: Final = "usinv-cover-evidence-shard-v4"
 _SUPPORTED_COVER_MERGE_VERSIONS: Final = frozenset(
     {"usinv-cover-evidence-merge-v2", COVER_MERGE_VERSION}
 )

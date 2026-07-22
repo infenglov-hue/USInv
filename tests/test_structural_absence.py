@@ -448,3 +448,16 @@ def test_loader_reads_only_identity_tags_from_verified_pit(tmp_path: Path) -> No
     pq.write_table(pa.Table.from_pylist(rows, schema=LATEST_FACT_SCHEMA), latest_path)
     with pytest.raises(StandardizationError, match="verified facts_pit"):
         load_structural_identity_facts(latest_path)
+
+
+def test_40f_filings_are_valid_filer_regime_observations() -> None:
+    from usinv.data.edgar.cover_acquisition import CoverFpiFormObservation
+
+    observation = CoverFpiFormObservation(
+        cik=700,
+        accession="0000000700-25-000001",
+        form="40-F",
+        accepted=ACCEPTED,
+        evidence_pointer="sec://700/0000000700-25-000001/40-F",
+    )
+    assert observation.form == "40-F"

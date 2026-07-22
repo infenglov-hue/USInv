@@ -37,7 +37,7 @@ HYGIENE_STUB_VERSION: Final = "phase-2.3-pass-through-v1"
 _EVIDENCED_NON_MEMBER_STATUSES: Final = frozenset(
     {"non_common_listing", "non_domestic_listing", "no_periodic_filing_at_cutoff"}
 )
-FPI_FORMS: Final = frozenset({"20-F", "6-K", "F-1"})
+FPI_FORMS: Final = frozenset({"20-F", "40-F", "6-K", "F-1"})
 PRE_REVENUE_BIOTECH_SICS: Final = frozenset({2834, 2836, 8731})
 NON_COMMON_LISTING_NAME_PATTERN: Final = re.compile(
     r"\b(?:ETF|exchange[- ]traded funds?|warrants?|rights?|depositary shares?|"

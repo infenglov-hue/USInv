@@ -34,7 +34,7 @@ from usinv.data.edgar.submissions import (
 
 _DOMESTIC_FORMS = frozenset({"10-K", "10-Q", "S-1"})
 _FOREIGN_FORMS = frozenset({"20-F", "40-F", "F-1"})
-_FPI_CLASSIFICATION_FORMS = frozenset({"20-F", "6-K", "F-1"})
+_FPI_CLASSIFICATION_FORMS = frozenset({"20-F", "40-F", "6-K", "F-1"})
 
 
 @dataclass(frozen=True, slots=True)
