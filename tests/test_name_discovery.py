@@ -9,8 +9,10 @@ import pytest
 
 from usinv.data.edgar.name_discovery import (
     EdgarCompanyName,
+    augment_discovery_plan_with_exact_name_evidence,
     augment_discovery_plan_with_exact_names,
     fsds_company_name_observations,
+    match_discovered_listing_names,
     match_exact_company_name,
     match_unmapped_listing_names,
     match_unmapped_listing_stems,
@@ -130,6 +132,115 @@ def test_only_unmapped_rows_receive_name_discovery_candidates() -> None:
         "sec-fsds://source/accession",
     )
     assert augmented.version == "usinv-sec-filing-discovery-v5"
+
+
+def test_association_only_candidate_receives_exact_pit_name_provenance() -> None:
+    pointer = f"alpha-vantage://{'a' * 64}/2"
+    listing = type(
+        "Listing",
+        (),
+        {
+            "as_of": date(2026, 7, 17),
+            "snapshot_id": "b" * 64,
+            "rows": (
+                type(
+                    "Row",
+                    (),
+                    {
+                        "state": "active",
+                        "source_sha256": "a" * 64,
+                        "row_number": 2,
+                        "name": "Issuer Inc",
+                    },
+                )(),
+            ),
+        },
+    )()
+    discovery = FilingDiscoveryPlan(
+        date(2026, 7, 17),
+        "b" * 64,
+        "c" * 64,
+        datetime(2026, 7, 17, 21, tzinfo=UTC),
+        (
+            FilingDiscoveryRow(
+                "OLD",
+                "NYSE",
+                "NYSE",
+                "Stock",
+                pointer,
+                "discovered",
+                (123,),
+            ),
+        ),
+    )
+
+    matches = match_discovered_listing_names(
+        listing,
+        discovery,
+        (EdgarCompanyName(123, "ISSUER, INC.", "sec-fsds://source/accession"),),
+    )
+    augmented = augment_discovery_plan_with_exact_name_evidence(discovery, matches)
+
+    assert augmented.rows[0].candidate_ciks == (123,)
+    assert augmented.rows[0].candidate_evidence_pointers == (
+        "sec-fsds://source/accession",
+    )
+
+
+def test_name_corroboration_cannot_replace_or_ambiguously_support_candidate() -> None:
+    pointers = tuple(f"alpha-vantage://{'a' * 64}/{row}" for row in (2, 3))
+    listing = type(
+        "Listing",
+        (),
+        {
+            "as_of": date(2026, 7, 17),
+            "snapshot_id": "b" * 64,
+            "rows": tuple(
+                type(
+                    "Row",
+                    (),
+                    {
+                        "state": "active",
+                        "source_sha256": "a" * 64,
+                        "row_number": row_number,
+                        "name": name,
+                    },
+                )()
+                for row_number, name in ((2, "Wrong Inc"), (3, "Shared Inc"))
+            ),
+        },
+    )()
+    discovery = FilingDiscoveryPlan(
+        date(2026, 7, 17),
+        "b" * 64,
+        "c" * 64,
+        datetime(2026, 7, 17, 21, tzinfo=UTC),
+        tuple(
+            FilingDiscoveryRow(
+                ticker,
+                "NYSE",
+                "NYSE",
+                "Stock",
+                pointer,
+                "discovered",
+                (123,),
+            )
+            for ticker, pointer in zip(("OLD1", "OLD2"), pointers, strict=True)
+        ),
+    )
+
+    matches = match_discovered_listing_names(
+        listing,
+        discovery,
+        (
+            EdgarCompanyName(999, "Wrong Inc", "sec-fsds://source/wrong"),
+            EdgarCompanyName(123, "Shared Inc", "sec-fsds://source/shared-1"),
+            EdgarCompanyName(999, "Shared Inc", "sec-fsds://source/shared-2"),
+        ),
+    )
+    augmented = augment_discovery_plan_with_exact_name_evidence(discovery, matches)
+
+    assert all(not row.candidate_evidence_pointers for row in augmented.rows)
 
 
 def test_stem_discovery_adds_candidate_with_fsds_provenance() -> None:

@@ -47,6 +47,7 @@ from usinv.data.prices.universe import (
     acquire_price_universe,
     build_price_universe_plan,
     read_price_universe_snapshot,
+    rebase_price_universe_snapshot,
 )
 from usinv.data.universe_evidence import (
     FilingSicObservation,
@@ -549,6 +550,100 @@ def test_price_universe_batches_are_exact_and_reopenable(tmp_path: Path) -> None
     assert not created.from_cache and cached.from_cache
     assert len(created.price_snapshots) == 1
     assert read_price_universe_snapshot(created.output_dir).plan == plan
+
+
+def test_price_universe_rebase_allows_discovery_provenance_only_change(
+    tmp_path: Path,
+) -> None:
+    _security_id, old_cover = _cover_snapshot(tmp_path / "old-cover")
+    old_discovery = FilingDiscoveryPlan(
+        SIGNAL.date(),
+        "1" * 64,
+        "2" * 64,
+        datetime(2026, 7, 20, 12, tzinfo=UTC),
+        (
+            FilingDiscoveryRow(
+                "ONE",
+                "NASDAQ",
+                "NASDAQ",
+                "Stock",
+                "alpha-vantage://" + "3" * 64 + "/2",
+                "discovered",
+                (CIK,),
+            ),
+        ),
+    )
+
+    class FakeProvider(PriceProvider):
+        def fetch_daily_bars(self, query: PriceQuery) -> PriceFetchResult:
+            return PriceFetchResult(
+                "alpaca",
+                "alpaca-v2-stocks-bars-1day-sip-trade-aggregate",
+                query,
+                (_page(query.adjustment),),
+                tuple(
+                    VendorDailyBar(
+                        "ONE",
+                        datetime(session.year, session.month, session.day, 4, tzinfo=UTC),
+                        session,
+                        Decimal("9"),
+                        Decimal("11"),
+                        Decimal("8"),
+                        Decimal("10"),
+                        1_000_000,
+                        100,
+                        Decimal("10"),
+                        0,
+                    )
+                    for session in _sessions()
+                ),
+            )
+
+    old_plan = build_price_universe_plan(
+        old_discovery,
+        old_cover,
+        signal_at=SIGNAL,
+        batch_size=1,
+    )
+    source = acquire_price_universe(
+        FakeProvider(),
+        old_plan,
+        old_cover,
+        tmp_path / "prices",
+    )
+    new_discovery = replace(
+        old_discovery,
+        rows=(
+            replace(
+                old_discovery.rows[0],
+                candidate_evidence_pointers=("sec-fsds://source/accession",),
+            ),
+        ),
+    )
+    new_cover = materialize_cover_evidence_merge(
+        replace(old_cover.merge, plan_snapshot_id=new_discovery.snapshot_id),
+        tmp_path / "new-cover",
+    )
+    new_plan = build_price_universe_plan(
+        new_discovery,
+        new_cover,
+        signal_at=SIGNAL,
+        batch_size=1,
+    )
+
+    rebased = rebase_price_universe_snapshot(
+        source,
+        old_cover,
+        new_cover,
+        new_plan,
+        tmp_path / "prices",
+    )
+
+    assert rebased.plan.discovery_snapshot_id == new_discovery.snapshot_id
+    assert rebased.plan.targets == source.plan.targets
+    assert tuple(row.snapshot_id for row in rebased.price_snapshots) == tuple(
+        row.snapshot_id for row in source.price_snapshots
+    )
 
 
 def test_price_plan_rejects_legacy_common_type_when_title_is_a_warrant(tmp_path: Path) -> None:

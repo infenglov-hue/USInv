@@ -330,7 +330,7 @@ def rebase_price_universe_snapshot(
     plan: PriceUniversePlan,
     output_root: str | Path,
 ) -> PriceUniverseSnapshot:
-    """Reuse immutable price batches when only cover metadata changed."""
+    """Reuse batches when lineage metadata changes but exact targets do not."""
 
     verified_source = read_price_universe_snapshot(source.output_dir)
     verified_old = read_cover_evidence_snapshot(old_cover.output_dir)
@@ -339,7 +339,6 @@ def rebase_price_universe_snapshot(
         verified_source.plan.cover_snapshot_id != verified_old.snapshot_id
         or plan.cover_snapshot_id != verified_new.snapshot_id
         or verified_old.master_snapshot_id != verified_new.master_snapshot_id
-        or verified_source.plan.discovery_snapshot_id != plan.discovery_snapshot_id
         or verified_source.plan.signal_at != plan.signal_at
         or verified_source.plan.start_at != plan.start_at
         or verified_source.plan.batch_size != plan.batch_size

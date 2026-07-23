@@ -219,6 +219,48 @@ def match_unmapped_listing_names(
     return output
 
 
+def match_discovered_listing_names(
+    listing: AlphaListingSnapshot,
+    discovery: FilingDiscoveryPlan,
+    observations: Iterable[EdgarCompanyName],
+) -> dict[str, ExactNameMatch]:
+    """Corroborate association-only CIK candidates with PIT issuer names.
+
+    The SEC ticker association is useful for discovery but is not historical
+    identity evidence. An exact, unique FSDS issuer-name match to the same CIK
+    adds filing-time provenance without changing the candidate itself.
+    """
+
+    listing_names = {
+        f"alpha-vantage://{row.source_sha256}/{row.row_number}": row.name
+        for row in listing.rows
+        if row.state == "active"
+    }
+    planned_pointers = {row.listing_evidence_pointer for row in discovery.rows}
+    if listing.as_of != discovery.listing_as_of or not planned_pointers <= set(listing_names):
+        raise EdgarPayloadError("name discovery inputs do not share the listing lineage")
+    index: dict[str, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
+    for observation in observations:
+        index[normalize_company_name(observation.name)][observation.cik].add(
+            observation.evidence_pointer
+        )
+    output: dict[str, ExactNameMatch] = {}
+    for row in discovery.rows:
+        if (
+            row.status != "discovered"
+            or len(row.candidate_ciks) != 1
+            or row.candidate_evidence_pointers
+        ):
+            continue
+        name = listing_names.get(row.listing_evidence_pointer)
+        if name is None:
+            raise EdgarPayloadError("discovered row has no active listing evidence")
+        output[row.listing_evidence_pointer] = _match_indexed(
+            normalize_company_name(name), index
+        )
+    return output
+
+
 def match_unmapped_listing_stems(
     listing: AlphaListingSnapshot,
     discovery: FilingDiscoveryPlan,
@@ -250,6 +292,47 @@ def match_unmapped_listing_stems(
             normalize_company_stem(name), index
         )
     return output
+
+
+def augment_discovery_plan_with_exact_name_evidence(
+    discovery: FilingDiscoveryPlan,
+    matches: dict[str, ExactNameMatch],
+) -> FilingDiscoveryPlan:
+    """Attach exact filing-name provenance to an unchanged unique candidate."""
+
+    expected = {
+        row.listing_evidence_pointer
+        for row in discovery.rows
+        if row.status == "discovered"
+        and len(row.candidate_ciks) == 1
+        and not row.candidate_evidence_pointers
+    }
+    if set(matches) != expected:
+        raise EdgarPayloadError(
+            "name corroborations do not cover association-only rows exactly"
+        )
+    rows = tuple(
+        replace(
+            row,
+            candidate_evidence_pointers=matches[
+                row.listing_evidence_pointer
+            ].evidence_pointers,
+        )
+        if row.listing_evidence_pointer in expected
+        and matches[row.listing_evidence_pointer].status == "unique"
+        and matches[row.listing_evidence_pointer].candidate_ciks == row.candidate_ciks
+        else row
+        for row in discovery.rows
+    )
+    return FilingDiscoveryPlan(
+        discovery.listing_as_of,
+        discovery.listing_snapshot_id,
+        discovery.association_source_sha256,
+        discovery.association_observed_at,
+        rows,
+        version=DISCOVERY_VERSION,
+        association_unusable_rows=discovery.association_unusable_rows,
+    )
 
 
 def augment_discovery_plan_with_exact_names(

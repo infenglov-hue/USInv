@@ -885,3 +885,51 @@ depend on universe completeness.
   (fundamentals filer-status/period-end from FSDS `sub`/PIT store, price last
   bars, Alpha active/delisted lists) — arrive with the Phase 6 nightly pipeline.
 - Telegram alerting on red is Phase 7 (OPS_SPEC §3).
+
+## 2026-07-23 — Phase 2.3 association-candidate PIT corroboration
+
+Phase 2.3 D032 remains **blocked**. This change reduces one exact residual
+without weakening the gate or treating the current SEC ticker association as
+historical identity evidence.
+
+### What changed
+
+- Association-only, unique CIK candidates can now receive provenance only
+  when a PIT-bounded FSDS issuer name is an exact normalized, unique match to
+  the same CIK. A different or ambiguous name match cannot replace or support
+  the candidate.
+- `sec-name-discovery` applies this corroboration before searching still-
+  unmapped names and reports only same-CIK corroborations.
+- Price-universe batches can be metadata-rebased across a discovery snapshot
+  change when the old/new cover masters, time window, batch size and complete
+  ordered target set remain byte-for-byte equivalent. No provider request is
+  made by the rebase.
+
+### Immutable local measurement
+
+- Discovery snapshot:
+  `de9c0b38e73374c6c52be75df76babe4f11d8933dce01b201c13f275075dba44`
+- Cover snapshot:
+  `855deb9cb9424459ecc7285ccff37af583b7070e8023b4c733b7e3ce82d1ba12`
+  (master unchanged:
+  `6e0421388702786b54bb3d0ab242a351f3f2d3dd167b8b32e9b940c2dbfc46a1`)
+- Rebased price-universe snapshot:
+  `b1d4f9c410e16bf226f318c34f4eccb9eede62eb94176f9448345169613d1123`
+  (4,313 exact targets; existing immutable batches reused)
+- Universe snapshot:
+  `50bb61791948eee6a2b449874ec0490f678abc9ae12c4709a343638d953afa85`
+- Result: `identity_unmapped` **178 → 177** and
+  `superseded_sec_listing` **83 → 84**. The resolved row is stale `RWTS`,
+  corroborated to CIK 930236 and filing-proven current common ticker `RWT`.
+- The run intentionally omitted the old-cover-bound filing-SIC supplement;
+  therefore its 1,632 included / 162 sector-gap counts are diagnostic only and
+  are not a replacement D032 acceptance measurement. The 155 newly targeted
+  price series also remain unavailable locally.
+
+### Verification
+
+- `ruff check .` passed.
+- Full suite passed; **432 tests collected/passed**.
+- Look-ahead coverage remains explicit: FSDS issuer-name observations accepted
+  after the cutoff are excluded, and the new corroboration cannot alter an
+  existing candidate unless the exact unique filing-name CIK agrees.

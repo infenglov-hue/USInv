@@ -103,8 +103,10 @@ from usinv.data.edgar.live_edge import (
     read_live_edge_snapshot,
 )
 from usinv.data.edgar.name_discovery import (
+    augment_discovery_plan_with_exact_name_evidence,
     augment_discovery_plan_with_exact_names,
     fsds_company_name_observations,
+    match_discovered_listing_names,
     match_unmapped_listing_names,
     match_unmapped_listing_stems,
 )
@@ -273,6 +275,7 @@ __all__ = [
     "acquire_cover_evidence",
     "acquire_filing_sic_snapshot",
     "archive_filing",
+    "augment_discovery_plan_with_exact_name_evidence",
     "augment_discovery_plan_with_exact_names",
     "build_applicability_coverage",
     "build_cover_security_master",
@@ -296,6 +299,7 @@ __all__ = [
     "infer_domestic_flag",
     "ingest_periodic_filing",
     "load_structural_identity_facts",
+    "match_discovered_listing_names",
     "match_unmapped_listing_names",
     "match_unmapped_listing_stems",
     "materialize_cover_evidence_merge",

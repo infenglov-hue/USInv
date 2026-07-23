@@ -22,6 +22,7 @@ from usinv.data.edgar import (
     PitStoreBuilder,
     acquire_cover_evidence,
     acquire_filing_sic_snapshot,
+    augment_discovery_plan_with_exact_name_evidence,
     augment_discovery_plan_with_exact_names,
     build_cover_security_master,
     build_coverage_report,
@@ -32,6 +33,7 @@ from usinv.data.edgar import (
     eligible_ciks_from_filings,
     fsds_company_name_observations,
     fsds_quarter_range,
+    match_discovered_listing_names,
     match_unmapped_listing_names,
     match_unmapped_listing_stems,
     materialize_cover_evidence_merge,
@@ -512,8 +514,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 archive_as_of=args.archive_as_of,
             )
             observations = fsds_company_name_observations(ingested, as_of=args.as_of)
-            matches = match_unmapped_listing_names(listing, discovery, observations)
-            plan = augment_discovery_plan_with_exact_names(discovery, matches)
+            corroborations = match_discovered_listing_names(
+                listing, discovery, observations
+            )
+            plan = augment_discovery_plan_with_exact_name_evidence(
+                discovery, corroborations
+            )
+            matches = match_unmapped_listing_names(listing, plan, observations)
+            plan = augment_discovery_plan_with_exact_names(plan, matches)
             stem_matches = {}
             if args.legal_stem:
                 stem_matches = match_unmapped_listing_stems(listing, plan, observations)
@@ -524,6 +532,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         unique_matches = sum(match.status == "unique" for match in matches.values())
         ambiguous_matches = sum(match.status == "ambiguous" for match in matches.values())
+        discovery_by_pointer = {
+            row.listing_evidence_pointer: row for row in discovery.rows
+        }
+        corroborated_matches = sum(
+            match.status == "unique"
+            and match.candidate_ciks
+            == discovery_by_pointer[pointer].candidate_ciks
+            for pointer, match in corroborations.items()
+        )
         stem_unique_matches = sum(match.status == "unique" for match in stem_matches.values())
         state = "cache" if artifact.from_cache else "created"
         print(
@@ -533,6 +550,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"state={state}",
                     f"snapshot_id={artifact.snapshot_id}",
                     f"observations={len(observations)}",
+                    f"corroborated_matches={corroborated_matches}",
                     f"unique_matches={unique_matches}",
                     f"ambiguous_matches={ambiguous_matches}",
                     f"stem_unique_matches={stem_unique_matches}",
