@@ -6,6 +6,84 @@ GitHub Actions refresh attempt.
 This is the authoritative continuation document. It is intentionally detailed
 enough that Claude should not need the Codex conversation transcript.
 
+## 0A. Live Codex checkpoint — 2026-07-23, commit `fff1529`
+
+This checkpoint supersedes the older `4337072` / 178-gap continuation details
+below wherever they conflict. The user has only about 8% of the weekly Codex
+quota left and explicitly requested incremental handoff notes rather than one
+final note. Update this section after every meaningful implementation or
+measurement slice.
+
+### Exact repository state
+
+| Item | Current state |
+|---|---|
+| Branch | `agent/phase-2-3-universe-builder` |
+| HEAD | `fff1529` (`Corroborate association-only CIK candidates`) |
+| Remote | local branch is 3 commits ahead; the three local commits are `33c45ad`, `4ea3dd1`, `fff1529` |
+| Working tree after `fff1529` | Clean before this handoff-note edit |
+| Verification | `ruff check .` passed; full suite passed, **432 tests collected** |
+| Active external workflow/process | None |
+
+Phase 2.3 still has not passed D032. A documented, user-approved
+`BLUEPRINT-DEVIATION` in `docs/PROGRESS.md` allowed Phase 2.4 and later engine
+construction to proceed, but zero D032 gaps remains mandatory before any
+performance claim, paper operation or live activation. Phase 2.4 freshness
+kill-switch code already exists in local commit `4ea3dd1`.
+
+### What `fff1529` did
+
+- Added exact PIT FSDS issuer-name corroboration for unique CIK candidates that
+  previously came only from the current SEC ticker association.
+- The corroboration never changes the candidate CIK: the exact normalized name
+  must resolve uniquely to the same CIK. Mismatched or ambiguous names add no
+  provenance.
+- `sec-name-discovery` applies corroboration before searching still-unmapped
+  rows.
+- Price-universe snapshots may reuse immutable batches across a discovery
+  metadata change only when cover master, time bounds, batch size and the
+  complete ordered target set are unchanged.
+- Added regression tests, including the existing explicit post-cutoff FSDS
+  issuer-name exclusion. Full suite increased 429 -> 432.
+
+### Latest immutable local artifacts
+
+- Discovery:
+  `data/local-gate/name-plan-v14-corroborated-only/security-bootstrap/discovery/2026-07-17/de9c0b38e73374c6c52be75df76babe4f11d8933dce01b201c13f275075dba44`
+- Cover:
+  `data/local-gate/cover-v20-corroborated/security-bootstrap/complete-evidence/de9c0b38e73374c6c52be75df76babe4f11d8933dce01b201c13f275075dba44/2026-07-17/snapshots/855deb9cb9424459ecc7285ccff37af583b7070e8023b4c733b7e3ce82d1ba12`
+- Master unchanged:
+  `6e0421388702786b54bb3d0ab242a351f3f2d3dd167b8b32e9b940c2dbfc46a1`
+- Metadata-rebased 4,313-target price universe:
+  `data/local-gate/prices-lifecycle/universe-runs/b1d4f9c410e16bf226f318c34f4eccb9eede62eb94176f9448345169613d1123`
+- Diagnostic universe:
+  `data/local-gate/phase-2-3-corroborated/universe/2026-07-17/50bb61791948eee6a2b449874ec0490f678abc9ae12c4709a343638d953afa85`
+
+The exact identity result is now **177 unmapped** and **84 superseded** (was
+178 / 83). `RWTS` is the resolved stale listing: exact FSDS name evidence
+corroborates CIK 930236 and filing cover evidence proves current common ticker
+`RWT`.
+
+Do not use the diagnostic run's 1,632 included / 162 sector-gap figures as a
+new D032 measurement: the old-cover-bound filing-SIC supplement was omitted.
+Also, the 155 newly targeted price series are still not locally downloaded.
+
+### Exact non-duplicating continuation
+
+1. Do not redo v1-v19 discovery/cover work or redispatch blocked GitHub run
+   `30000558041`.
+2. If continuing D032, start from the v14/v20 artifacts above. Rebase the
+   filing-SIC supplement to the new cover metadata only after verifying its
+   target CIK set and archived header payloads are unchanged. New provider data
+   is still required for the 155 price additions and cache-missing SEC rows.
+3. Under the approved deviation, the next new product task is Phase 3.1
+   hygiene gates. Keep it a separate commit/PR-sized slice from `fff1529`.
+4. Before every new implementation slice, read the Phase 3.1 rows in
+   `docs/CODEX_TASKS.md` plus the referenced DATA/MODEL spec sections. Preserve
+   PIT, as-first-filed and fail-closed behavior; add a look-ahead regression.
+5. After each meaningful code/measurement slice, update this live checkpoint
+   immediately. Do not wait until the session end.
+
 ## 0. Read this first: 2026-07-23 continuation checkpoint
 
 This section supersedes older measurements and continuation instructions later
