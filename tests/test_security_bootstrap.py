@@ -1,19 +1,25 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from pathlib import Path
 
 import pytest
 
 from usinv.data.edgar.client import EdgarDocument, EdgarPayloadError
-from usinv.data.edgar.filing_xbrl import FilingFact, FilingParseResult
+from usinv.data.edgar.filing_xbrl import (
+    CoverSecurityClass,
+    FilingFact,
+    FilingParseResult,
+)
 from usinv.data.edgar.security_bootstrap import (
     CoverFilingEvidence,
     FilingDiscoveryPlan,
     FilingDiscoveryRow,
     build_cover_security_master,
     build_filing_discovery_plan,
+    canonical_cover_pair,
     materialize_filing_discovery_plan,
     parse_sec_ticker_associations,
     read_filing_discovery_plan,
@@ -30,6 +36,37 @@ from usinv.data.listings import (
 
 OBSERVED = datetime(2026, 7, 20, 10, tzinfo=UTC)
 CUTOFF = datetime(2026, 7, 17, 20, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("observed", "allowed"),
+    [
+        ('"CNA"', "CNA"),
+        ("BRK.A", "BRK-A"),
+        ("BAX-(NYSE)", "BAX"),
+        ("BAX (NYSE)", "BAX"),
+        ("BFA", "BF-A"),
+    ],
+)
+def test_cover_pair_accepts_only_provider_equivalent_ticker_punctuation(
+    observed: str,
+    allowed: str,
+) -> None:
+    cover = CoverSecurityClass(
+        "cover",
+        observed,
+        "NYSE",
+        "Common Stock",
+        (),
+        ("sec://cover",),
+        None,
+        None,
+    )
+
+    assert canonical_cover_pair(cover, frozenset({(allowed, "NYSE")})) == (
+        allowed,
+        "NYSE",
+    )
 
 
 def _document(payload: dict[str, object]) -> EdgarDocument:
@@ -109,6 +146,9 @@ def test_sec_ticker_file_builds_only_an_immutable_discovery_plan(tmp_path: Path)
     cached = materialize_filing_discovery_plan(plan, tmp_path)
     assert not created.from_cache and cached.from_cache
     assert read_filing_discovery_plan(created.output_dir) == plan
+    legacy = replace(plan, version="usinv-sec-filing-discovery-v4")
+    legacy_artifact = materialize_filing_discovery_plan(legacy, tmp_path / "legacy")
+    assert read_filing_discovery_plan(legacy_artifact.output_dir) == legacy
     created.output_dir.joinpath("discovery.json").write_text("{}", encoding="utf-8")
     with pytest.raises(EdgarPayloadError, match="verification"):
         materialize_filing_discovery_plan(plan, tmp_path)

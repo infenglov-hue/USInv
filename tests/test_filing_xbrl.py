@@ -159,6 +159,25 @@ def test_cover_facts_keep_share_class_dimension_together() -> None:
     assert master.resolve("AAPL", "NASDAQ", date(2025, 5, 2)).security_id == security.security_id
 
 
+def test_identical_duplicate_cover_facts_do_not_hide_the_security_class() -> None:
+    exchange = b"""<ix:nonNumeric name="dei:SecurityExchangeName" contextRef="class-a">
+      The Nasdaq Stock Market LLC
+    </ix:nonNumeric>"""
+    duplicated = INLINE_XBRL.replace(exchange, exchange + exchange)
+
+    classes = extract_cover_security_classes(
+        parse_filing_xbrl(
+            duplicated,
+            filing=_filing(),
+            source_document="duplicate-cover.htm",
+        )
+    )
+
+    assert len(classes) == 1
+    assert classes[0].ticker == "AAPL"
+    assert len(classes[0].evidence_pointers) == 4
+
+
 def test_warrant_title_mentioning_common_stock_remains_non_common() -> None:
     cover = CoverSecurityClass(
         "warrant",
@@ -364,6 +383,76 @@ def test_filing_archive_is_content_addressed_and_hash_verified(tmp_path: Path) -
     created.output_dir.joinpath("fixture-20250331.htm").write_bytes(b"tampered")
     with pytest.raises(EdgarPayloadError, match="hash mismatch"):
         archive_filing(client, _filing(), tmp_path)
+
+
+def test_live_edge_archive_can_include_only_presentation_linkbases(tmp_path: Path) -> None:
+    index = json.dumps(
+        {
+            "directory": {
+                "item": [
+                    {"name": "fixture-20250331.htm"},
+                    {"name": "fixture-20250331_pre.xml"},
+                    {"name": "fixture-20250331_lab.xml"},
+                    {"name": f"{ACCN}.txt"},
+                    {"name": "fixture-20250331.xsd"},
+                ]
+            }
+        }
+    ).encode()
+    resources = {
+        "index.json": index,
+        "fixture-20250331.htm": INLINE_XBRL,
+        "fixture-20250331_pre.xml": PRESENTATION,
+        "fixture-20250331_lab.xml": LABEL,
+        f"{ACCN}.txt": b"STANDARD INDUSTRIAL CLASSIFICATION: SOFTWARE [7372]",
+        "fixture-20250331.xsd": b"<schema/>",
+    }
+    client = FakeArchiveClient(resources)
+
+    archive = archive_filing(
+        client,
+        _filing(),
+        tmp_path,
+        include_presentation=True,
+        include_filing_header=True,
+    )
+
+    names = {item.name for item in archive.resources}
+    assert "fixture-20250331_pre.xml" in names
+    assert "fixture-20250331_lab.xml" in names
+    assert f"{ACCN}.txt" in names
+    assert "fixture-20250331.xsd" not in names
+
+
+def test_archive_publish_retries_transient_windows_permission_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import usinv.data.edgar.filing_xbrl as filing_xbrl
+
+    original_replace = Path.replace
+    attempts = 0
+
+    def flaky_replace(source: Path, target: Path) -> Path:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise PermissionError("transient scanner lock")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", flaky_replace)
+    source = tmp_path / "temporary"
+    target = tmp_path / "published"
+    source.mkdir()
+
+    filing_xbrl._replace_directory_with_retry(
+        source,
+        target,
+        initial_delay_seconds=0,
+    )
+
+    assert attempts == 2
+    assert target.is_dir()
 
 
 def test_archive_client_rejects_unsafe_filename_before_network(tmp_path: Path) -> None:

@@ -12,6 +12,7 @@ from usinv.data.edgar.companyfacts import (
     compare_edge_to_fsds,
     parse_companyfacts_document,
 )
+from usinv.data.edgar.live_edge import read_live_edge_snapshot
 from usinv.data.edgar.periods import fsds_period, nearest_month_end, quarter_count
 from usinv.data.edgar.submissions import (
     SubmissionFiling,
@@ -32,6 +33,54 @@ PARITY_FIXTURE = Path(__file__).parent / "fixtures" / "edgar" / "apple_2025_10k_
 def _document(payload: dict[str, object], url: str = URL) -> EdgarDocument:
     observed = datetime(2026, 7, 19, 12, tzinfo=UTC)
     return EdgarDocument(url, observed, observed, SHA, payload, False, False)
+
+
+def test_live_edge_snapshot_reader_restores_verified_pit_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot_id = "b" * 64
+    root = tmp_path / snapshot_id
+    root.mkdir()
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "live_edge_version": "usinv-live-edge-v2",
+                "snapshot_id": snapshot_id,
+                "batch_id": "sec-live:accession:hash",
+                "source_quarter": "2026q2",
+                "source_sha256": "c" * 64,
+                "cik": CIK,
+                "accession": ACCN,
+                "accepted": "2026-05-02T20:00:00+00:00",
+                "filing_sic": 3571,
+                "filing_sic_evidence_pointer": "sec-archive://filing.txt#sic",
+                "artifacts": {
+                    "facts_raw": {"rows": 12},
+                    "filing_facts": {"rows": 14},
+                    "presentation": {"rows": 3},
+                },
+                "issues": [
+                    {
+                        "kind": "fixture",
+                        "tag": None,
+                        "context_id": None,
+                        "detail": "retained issue",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("usinv.data.edgar.live_edge._verify", lambda *_: None)
+
+    snapshot = read_live_edge_snapshot(root)
+
+    assert snapshot.batch_id == "sec-live:accession:hash"
+    assert snapshot.source_quarter == "2026q2"
+    assert snapshot.facts_raw_rows == 12
+    assert snapshot.filing_sic == 3571
+    assert snapshot.issues[0].detail == "retained issue"
 
 
 def _submissions_payload() -> dict[str, object]:
@@ -135,6 +184,26 @@ def test_periodic_detection_cannot_see_a_future_acceptance() -> None:
             feed.filings,
             seen_accessions=(),
             as_of=datetime(2026, 7, 19),
+        )
+
+
+def test_periodic_detection_can_select_only_the_unpublished_fsds_window() -> None:
+    feed = parse_submissions_document(_document(_submissions_payload()))
+
+    selected = detect_new_periodic_filings(
+        feed.filings,
+        seen_accessions=(),
+        accepted_after=datetime(2025, 3, 31, 23, 59, 59, tzinfo=UTC),
+        as_of=datetime(2025, 7, 17, 20, tzinfo=UTC),
+    )
+
+    assert [item.accession for item in selected] == [ACCN]
+    with pytest.raises(EdgarPayloadError, match="precede"):
+        detect_new_periodic_filings(
+            feed.filings,
+            seen_accessions=(),
+            accepted_after=datetime(2025, 7, 17, 20, tzinfo=UTC),
+            as_of=datetime(2025, 7, 17, 20, tzinfo=UTC),
         )
 
 

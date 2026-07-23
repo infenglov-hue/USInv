@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import uuid
 from collections import defaultdict
@@ -33,7 +34,10 @@ from usinv.data.edgar.submissions import SubmissionFeed, SubmissionFiling
 from usinv.data.listings import AlphaListingSnapshot
 
 SEC_TICKER_FIELDS: Final = ("cik", "name", "ticker", "exchange")
-DISCOVERY_VERSION: Final = "usinv-sec-filing-discovery-v4"
+DISCOVERY_VERSION: Final = "usinv-sec-filing-discovery-v5"
+_READABLE_DISCOVERY_VERSIONS: Final = frozenset(
+    {"usinv-sec-filing-discovery-v4", DISCOVERY_VERSION}
+)
 COVER_FORMS: Final = frozenset(
     {
         "10-K",
@@ -171,6 +175,7 @@ class FilingDiscoveryRow:
     listing_evidence_pointer: str
     status: DiscoveryStatus
     candidate_ciks: tuple[int, ...]
+    candidate_evidence_pointers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +191,7 @@ class FilingDiscoveryPlan:
     def __post_init__(self) -> None:
         if (
             self.association_observed_at.tzinfo is None
+            or self.version not in _READABLE_DISCOVERY_VERSIONS
             or len(self.listing_snapshot_id) != 64
             or len(self.association_source_sha256) != 64
             or not self.rows
@@ -199,6 +205,17 @@ class FilingDiscoveryPlan:
                 cik <= 0 for cik in row.candidate_ciks
             ):
                 raise EdgarPayloadError("filing discovery CIK candidates are invalid")
+            if (
+                tuple(sorted(set(row.candidate_evidence_pointers)))
+                != row.candidate_evidence_pointers
+                or any(not pointer.strip() for pointer in row.candidate_evidence_pointers)
+                or (row.candidate_evidence_pointers and not row.candidate_ciks)
+            ):
+                raise EdgarPayloadError("filing discovery candidate evidence is invalid")
+            if self.version == "usinv-sec-filing-discovery-v4" and (
+                row.candidate_evidence_pointers
+            ):
+                raise EdgarPayloadError("v4 discovery rows cannot carry candidate evidence")
             expected_candidates = {
                 "discovered": 1,
                 "unmapped": 0,
@@ -340,7 +357,7 @@ def build_filing_discovery_plan(
 
 
 def _discovery_row_payload(row: FilingDiscoveryRow) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "ticker": row.ticker,
         "raw_exchange": row.raw_exchange,
         "normalized_exchange": row.normalized_exchange,
@@ -349,6 +366,9 @@ def _discovery_row_payload(row: FilingDiscoveryRow) -> dict[str, object]:
         "status": row.status,
         "candidate_ciks": list(row.candidate_ciks),
     }
+    if row.candidate_evidence_pointers:
+        payload["candidate_evidence_pointers"] = list(row.candidate_evidence_pointers)
+    return payload
 
 
 def _plan_payload(plan: FilingDiscoveryPlan) -> dict[str, object]:
@@ -462,7 +482,7 @@ def read_filing_discovery_plan(path: str | Path) -> FilingDiscoveryPlan:
     root = Path(path)
     try:
         payload = json.loads((root / "discovery.json").read_text(encoding="utf-8"))
-        if payload["version"] != DISCOVERY_VERSION:
+        if payload["version"] not in _READABLE_DISCOVERY_VERSIONS:
             raise ValueError("version")
         rows = tuple(
             FilingDiscoveryRow(
@@ -473,6 +493,9 @@ def read_filing_discovery_plan(path: str | Path) -> FilingDiscoveryPlan:
                 listing_evidence_pointer=row["listing_evidence_pointer"],
                 status=row["status"],
                 candidate_ciks=tuple(row["candidate_ciks"]),
+                candidate_evidence_pointers=tuple(
+                    row.get("candidate_evidence_pointers", ())
+                ),
             )
             for row in payload["rows"]
         )
@@ -482,6 +505,7 @@ def read_filing_discovery_plan(path: str | Path) -> FilingDiscoveryPlan:
             payload["association_source_sha256"],
             datetime.fromisoformat(payload["association_observed_at"]),
             rows,
+            version=payload["version"],
             association_unusable_rows=payload["association_unusable_rows"],
         )
     except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -530,17 +554,42 @@ def canonical_cover_pair(
     allowed_pairs: frozenset[tuple[str, str]],
 ) -> tuple[str, str] | None:
     """Admit an exact discovered pair or SEC's contextual NYSE-American label."""
+    raw_ticker = cover.ticker.strip().strip("\"'")
+    ticker_variants = {
+        raw_ticker,
+        raw_ticker.replace(".", "-"),
+        re.sub(
+            r"(?:\s+|-)\((?:NYSE|NASDAQ|AMEX|NYSEAMERICAN)\)$",
+            "",
+            raw_ticker,
+            flags=re.IGNORECASE,
+        ),
+    }
     try:
-        ticker = normalize_ticker(cover.ticker)
         exchange = normalize_exchange(cover.exchange)
     except SecurityMasterError:
         return None
-    observed = (ticker, exchange)
-    if observed in allowed_pairs:
-        return observed
-    same_ticker = tuple(sorted(pair for pair in allowed_pairs if pair[0] == ticker))
-    if exchange == "NYSE" and same_ticker == ((ticker, "NYSEAMERICAN"),):
-        return same_ticker[0]
+    for raw_variant in sorted(ticker_variants):
+        try:
+            ticker = normalize_ticker(raw_variant)
+        except SecurityMasterError:
+            continue
+        observed = (ticker, exchange)
+        if observed in allowed_pairs:
+            return observed
+        compact_matches = tuple(
+            sorted(
+                pair
+                for pair in allowed_pairs
+                if pair[1] == exchange
+                and pair[0].replace("-", "") == ticker.replace("-", "")
+            )
+        )
+        if len(compact_matches) == 1:
+            return compact_matches[0]
+        same_ticker = tuple(sorted(pair for pair in allowed_pairs if pair[0] == ticker))
+        if exchange == "NYSE" and same_ticker == ((ticker, "NYSEAMERICAN"),):
+            return same_ticker[0]
     return None
 
 

@@ -14,6 +14,8 @@ import pytest
 from usinv.calendar import default_calendar
 from usinv.data.edgar.bulk import FsdsQuarter
 from usinv.data.edgar.cover_acquisition import (
+    CoverAcquisitionGap,
+    CoverArchiveRecord,
     CoverFormHistoryProof,
     CoverFpiFormObservation,
     CoverShareObservation,
@@ -54,6 +56,10 @@ from usinv.data.universe_evidence import (
 from usinv.phase_2_3 import (
     Phase23BuildError,
     _active_listing_matches_discovery,
+    _filing_sic_snapshot_observations,
+    _identity_regime_evidence,
+    _supplement_sic_observations,
+    _validate_supplements_as_of,
     build_phase_2_3,
 )
 
@@ -131,6 +137,119 @@ def _cover_snapshot(tmp_path: Path, *, shares: bool = True, fpi: bool = False):
         master=master,
     )
     return security_id, materialize_cover_evidence_merge(merge, tmp_path / "cover")
+
+
+def test_foreign_regime_applies_to_unmapped_line_when_cik_has_other_security() -> None:
+    security_id, domestic_master = _master()
+    foreign_security = replace(domestic_master.securities[0], domestic_flag=False)
+    master = build_security_master((foreign_security,), domestic_master.symbols)
+    archive_accession = "0000000001-26-000001"
+    foreign_accession = "0000000001-25-000001"
+    merge = CoverEvidenceMerge(
+        plan_snapshot_id="b" * 64,
+        as_of=SIGNAL,
+        requested_ciks=(CIK,),
+        shard_snapshot_ids=("a" * 64,),
+        archives=(CoverArchiveRecord(CIK, archive_accession, "c" * 64, "d" * 64),),
+        share_observations=(),
+        fpi_form_observations=(
+            CoverFpiFormObservation(
+                CIK,
+                foreign_accession,
+                "40-F",
+                datetime(2026, 5, 1, 20, tzinfo=UTC),
+                "sec://submissions/40-f",
+            ),
+        ),
+        form_history_proofs=(),
+        acquisition_gaps=(),
+        bootstrap_gaps=(),
+        master=master,
+    )
+    row = FilingDiscoveryRow(
+        "OTHER",
+        "NYSE",
+        "NYSE",
+        "Stock",
+        "alpha-vantage://listing/1",
+        "discovered",
+        (CIK,),
+    )
+    plan = FilingDiscoveryPlan(
+        date(2026, 7, 17),
+        "e" * 64,
+        "f" * 64,
+        datetime(2026, 7, 18, tzinfo=UTC),
+        (row,),
+    )
+
+    regime = _identity_regime_evidence(plan, SimpleNamespace(merge=merge), SIGNAL)
+
+    assert regime.foreign_regime_pointers == {CIK: ("sec://submissions/40-f",)}
+    assert security_id in {security.security_id for security in master.securities}
+
+
+def test_complete_gap_free_cover_history_marks_old_listing_superseded() -> None:
+    _security_id, old_master = _master()
+    recent_symbol = replace(
+        old_master.symbols[0],
+        known_at=datetime(2026, 5, 1, 20, tzinfo=UTC),
+    )
+    master = build_security_master(old_master.securities, (recent_symbol,))
+    archives = (
+        CoverArchiveRecord(CIK, "0000000001-26-000001", "a" * 64, "b" * 64),
+        CoverArchiveRecord(CIK, "0000000001-26-000002", "c" * 64, "d" * 64),
+    )
+    proof = CoverFormHistoryProof(
+        CIK,
+        SIGNAL,
+        ("https://data.sec.gov/submissions/cik1#" + "e" * 64,),
+        "sec-submissions-complete://1/" + "f" * 64,
+    )
+    merge = CoverEvidenceMerge(
+        plan_snapshot_id="1" * 64,
+        as_of=SIGNAL,
+        requested_ciks=(CIK,),
+        shard_snapshot_ids=("2" * 64,),
+        archives=archives,
+        share_observations=(),
+        fpi_form_observations=(),
+        form_history_proofs=(proof,),
+        acquisition_gaps=(
+            CoverAcquisitionGap(
+                CIK,
+                None,
+                "unusable_submission_rows",
+                "one malformed legacy feed row",
+            ),
+        ),
+        bootstrap_gaps=(),
+        master=master,
+    )
+    row = FilingDiscoveryRow(
+        "OLD",
+        "NASDAQ",
+        "NASDAQ",
+        "Stock",
+        "alpha-vantage://listing/old",
+        "discovered",
+        (CIK,),
+        ("sec-fsds://quarter/accession?cik=1#issuer-name",),
+    )
+    plan = FilingDiscoveryPlan(
+        date(2026, 7, 17),
+        "3" * 64,
+        "4" * 64,
+        datetime(2026, 7, 18, tzinfo=UTC),
+        (row,),
+    )
+
+    regime = _identity_regime_evidence(plan, SimpleNamespace(merge=merge), SIGNAL)
+
+    assert row.listing_evidence_pointer in regime.superseded_pointers_by_listing
+    pointers = regime.superseded_pointers_by_listing[row.listing_evidence_pointer]
+    assert proof.evidence_pointer in pointers
+    assert "sec://cover/symbol" in pointers
 
 
 def _sessions() -> tuple[date, ...]:
@@ -541,6 +660,67 @@ def test_phase_2_3_composer_rejects_mixed_input_lineage_before_building() -> Non
             signal_at=SIGNAL,
             config=object(),
         )
+
+
+def test_phase_2_3_rejects_post_cutoff_live_edge_facts(tmp_path: Path) -> None:
+    facts_path = tmp_path / "filing_facts.parquet"
+    pq.write_table(
+        pa.table(
+            {
+                "accepted": pa.array(
+                    [SIGNAL, datetime(2026, 7, 18, 12, tzinfo=UTC)],
+                    type=pa.timestamp("us", tz="UTC"),
+                )
+            }
+        ),
+        facts_path,
+    )
+    supplement = SimpleNamespace(output_dir=tmp_path)
+
+    with pytest.raises(Phase23BuildError, match="post-cutoff"):
+        _validate_supplements_as_of((supplement,), SIGNAL)
+
+
+def test_live_edge_filing_header_sic_keeps_acceptance_provenance() -> None:
+    accepted = datetime(2026, 5, 1, 20, tzinfo=UTC)
+    supplement = SimpleNamespace(
+        cik=123,
+        accession="0000000123-26-000001",
+        accepted=accepted,
+        filing_sic=7372,
+        filing_sic_evidence_pointer="sec-archive://filing.txt#sic",
+    )
+
+    rows = _supplement_sic_observations((supplement,), SIGNAL)
+
+    assert len(rows) == 1
+    assert rows[0].sic == 7372
+    assert rows[0].accepted == accepted
+
+
+def test_filing_sic_snapshot_requires_the_exact_cover_lineage() -> None:
+    accepted = datetime(2026, 5, 1, 20, tzinfo=UTC)
+    record = SimpleNamespace(
+        cik=123,
+        accession="0000000123-26-000001",
+        accepted=accepted,
+        sic=7372,
+        source_url="https://www.sec.gov/filing.txt",
+        source_sha256="a" * 64,
+        header_sha256="b" * 64,
+    )
+    supplement = SimpleNamespace(
+        cover_snapshot_id="c" * 64,
+        as_of=SIGNAL,
+        records=(record,),
+    )
+
+    rows = _filing_sic_snapshot_observations((supplement,), SIGNAL, "c" * 64)
+
+    assert rows[0].cik == 123
+    assert rows[0].sic == 7372
+    with pytest.raises(Phase23BuildError, match="lineage"):
+        _filing_sic_snapshot_observations((supplement,), SIGNAL, "d" * 64)
 
 
 def test_phase_2_3_lineage_allows_same_content_retrieved_at_a_new_instant() -> None:

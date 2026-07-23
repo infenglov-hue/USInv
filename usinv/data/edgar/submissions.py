@@ -371,12 +371,18 @@ def detect_new_periodic_filings(
     *,
     seen_accessions: Iterable[str],
     as_of: datetime,
+    accepted_after: datetime | None = None,
 ) -> tuple[SubmissionFiling, ...]:
     """Return only periodic filings accepted by the caller's PIT cutoff."""
     if as_of.tzinfo is None:
         raise EdgarPayloadError("periodic filing cutoff must be timezone-aware")
+    if accepted_after is not None and accepted_after.tzinfo is None:
+        raise EdgarPayloadError("periodic filing lower bound must be timezone-aware")
     seen = frozenset(seen_accessions)
     cutoff = as_of.astimezone(UTC)
+    lower_bound = accepted_after.astimezone(UTC) if accepted_after is not None else None
+    if lower_bound is not None and lower_bound >= cutoff:
+        raise EdgarPayloadError("periodic filing lower bound must precede the cutoff")
     return tuple(
         sorted(
             (
@@ -384,6 +390,7 @@ def detect_new_periodic_filings(
                 for filing in filings
                 if filing.form in PERIODIC_FORMS
                 and filing.accession not in seen
+                and (lower_bound is None or filing.accepted > lower_bound)
                 and filing.accepted <= cutoff
             ),
             key=lambda item: (item.accepted, item.accession),

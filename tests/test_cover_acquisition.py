@@ -161,6 +161,61 @@ def test_cover_acquisition_is_pit_bounded_shardable_and_filing_backed(tmp_path: 
     assert tuple(tmp_path.glob(f"accessions/{ACCESSION}/snapshots/*/{PRIMARY}"))
 
 
+def test_name_discovered_candidate_keeps_fsds_provenance_until_cover_match(
+    tmp_path: Path,
+) -> None:
+    row = FilingDiscoveryRow(
+        "ONE",
+        "NASDAQ",
+        "NASDAQ",
+        "Stock",
+        "alpha-vantage://one/1",
+        "discovered",
+        (1,),
+        ("sec-fsds://source/accession?cik=1#issuer-name",),
+    )
+    plan = FilingDiscoveryPlan(
+        date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,)
+    )
+
+    result = acquire_cover_evidence(FakeClient(), plan, tmp_path, as_of=CUTOFF)
+    master = build_cover_security_master(result.evidence, as_of=CUTOFF).master
+
+    pointer = result.evidence[0].allowed_pair_evidence[0][2]
+    assert "alpha-vantage://one/1" in pointer
+    assert "sec-fsds://source/accession?cik=1#issuer-name" in pointer
+    assert "sec-company-tickers-exchange://" not in pointer
+    assert "TradingSymbol" in master.symbols[0].evidence_pointer
+
+
+def test_strong_entity_candidate_admits_sec_cover_ticker_expansion(tmp_path: Path) -> None:
+    row = FilingDiscoveryRow(
+        "OLD",
+        "NASDAQ",
+        "NASDAQ",
+        "Stock",
+        "alpha-vantage://old/1",
+        "discovered",
+        (1,),
+        ("sec-fsds://source/accession?cik=1#issuer-name",),
+    )
+    plan = FilingDiscoveryPlan(
+        date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,)
+    )
+
+    result = acquire_cover_evidence(
+        FakeClient("NEW"),
+        plan,
+        tmp_path,
+        as_of=CUTOFF,
+    )
+    master = build_cover_security_master(result.evidence, as_of=CUTOFF).master
+
+    assert not result.gaps
+    assert master.resolve("NEW", "NASDAQ", date(2026, 6, 1)).status == "mapped"
+    assert master.resolve("OLD", "NASDAQ", date(2026, 6, 1)).status == "unmapped"
+
+
 def test_cover_acquisition_rejects_a_cover_pair_that_does_not_match_discovery(
     tmp_path: Path,
 ) -> None:

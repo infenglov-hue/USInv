@@ -7,6 +7,7 @@ import html.entities
 import json
 import re
 import shutil
+import time
 import uuid
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
@@ -601,6 +602,17 @@ def filing_facts_to_raw(result: FilingParseResult) -> tuple[RawFact, ...]:
 
 def extract_cover_security_classes(result: FilingParseResult) -> tuple[CoverSecurityClass, ...]:
     """Extract filing-time ticker/exchange/class tuples without collapsing dimensions."""
+
+    def one_semantic_fact(facts: list[FilingFact]) -> FilingFact | None:
+        if not facts:
+            return None
+        identities = {
+            (" ".join(fact.text_value.split()), fact.dimensions) for fact in facts
+        }
+        if len(identities) != 1:
+            return None
+        return min(facts, key=lambda fact: fact.evidence_pointer)
+
     by_context: dict[str, dict[str, list[FilingFact]]] = defaultdict(lambda: defaultdict(list))
     for fact in result.facts:
         by_context[fact.context_id][fact.tag].append(fact)
@@ -612,15 +624,18 @@ def extract_cover_security_classes(result: FilingParseResult) -> tuple[CoverSecu
         shares = concepts.get("EntityCommonStockSharesOutstanding", []) + concepts.get(
             "CommonStockSharesOutstanding", []
         )
-        if len(tickers) != 1 or len(exchanges) != 1 or len(titles) != 1:
+        ticker = one_semantic_fact(tickers)
+        exchange = one_semantic_fact(exchanges)
+        title = one_semantic_fact(titles)
+        if ticker is None or exchange is None or title is None:
             continue
-        facts = (tickers[0], exchanges[0], titles[0])
+        facts = (ticker, exchange, title)
         if len({fact.dimensions for fact in facts}) != 1:
             continue
         share_fact = (
             shares[0]
             if len(shares) == 1
-            and shares[0].dimensions == tickers[0].dimensions
+            and shares[0].dimensions == ticker.dimensions
             and shares[0].value is not None
             and shares[0].value > 0
             else None
@@ -628,11 +643,16 @@ def extract_cover_security_classes(result: FilingParseResult) -> tuple[CoverSecu
         output.append(
             CoverSecurityClass(
                 context_id,
-                tickers[0].text_value,
-                exchanges[0].text_value,
-                titles[0].text_value,
-                tickers[0].dimensions,
-                tuple(sorted(fact.evidence_pointer for fact in facts)),
+                ticker.text_value,
+                exchange.text_value,
+                title.text_value,
+                ticker.dimensions,
+                tuple(
+                    sorted(
+                        fact.evidence_pointer
+                        for fact in (*tickers, *exchanges, *titles)
+                    )
+                ),
                 share_fact.value if share_fact else None,
                 share_fact.evidence_pointer if share_fact else None,
             )
@@ -852,6 +872,10 @@ def _is_instance_candidate(name: str) -> bool:
     return lowered.endswith(".xml") and not re.search(r"_(?:cal|def|lab|pre)\.xml$", lowered)
 
 
+def _is_complete_submission(name: str, accession: str) -> bool:
+    return name.casefold() == f"{accession}.txt".casefold()
+
+
 def _verify_archive(path: Path, snapshot_id: str) -> tuple[FilingArchiveResource, ...]:
     try:
         manifest = json.loads((path / "manifest.json").read_text(encoding="utf-8"))
@@ -868,18 +892,78 @@ def _verify_archive(path: Path, snapshot_id: str) -> tuple[FilingArchiveResource
     return tuple(resources)
 
 
+def _replace_directory_with_retry(
+    temporary: Path,
+    target: Path,
+    *,
+    attempts: int = 6,
+    initial_delay_seconds: float = 0.05,
+) -> None:
+    """Publish an archive despite transient Windows scanner/indexer locks."""
+    for attempt in range(attempts):
+        try:
+            temporary.replace(target)
+            return
+        except PermissionError:
+            if target.exists():
+                return
+            if attempt == attempts - 1:
+                raise
+            time.sleep(initial_delay_seconds * (2**attempt))
+
+
 def archive_filing(
     client: EdgarClient,
     filing: SubmissionFiling,
     output_root: str | Path,
     *,
     refresh: bool = False,
+    include_presentation: bool = False,
+    include_filing_header: bool = False,
+    reuse_existing: bool = False,
 ) -> FilingArchiveResult:
     """Archive primary and XBRL data files into an immutable accession snapshot."""
+    root = Path(output_root) / "accessions" / filing.accession / "snapshots"
+    if reuse_existing and not refresh and not include_presentation and not include_filing_header:
+        for target in sorted(
+            (path for path in root.glob("*") if path.is_dir()),
+            key=lambda path: path.name,
+        ):
+            try:
+                manifest = json.loads(
+                    (target / "manifest.json").read_text(encoding="utf-8")
+                )
+                resources = _verify_archive(target, target.name)
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+            names = {row.name for row in resources}
+            if (
+                manifest.get("cik") == filing.cik
+                and manifest.get("accession") == filing.accession
+                and manifest.get("accepted")
+                == filing.accepted.astimezone(UTC).isoformat()
+                and PurePosixPath(filing.primary_document).name in names
+                and "index.json" in names
+            ):
+                return FilingArchiveResult(
+                    filing.accession,
+                    target.name,
+                    target,
+                    resources,
+                    True,
+                )
     index = client.filing_resource(filing.cik, filing.accession, "index.json", refresh=refresh)
     names = _index_names(index)
     primary = PurePosixPath(filing.primary_document).name
     selected = {name for name in names if name == primary or _is_instance_candidate(name)}
+    if include_presentation:
+        selected.update(
+            name
+            for name in names
+            if name.casefold().endswith(("_pre.xml", "_lab.xml"))
+        )
+    if include_filing_header:
+        selected.update(name for name in names if _is_complete_submission(name, filing.accession))
     if primary not in selected:
         raise EdgarPayloadError("filing primary document is absent from its SEC index")
     fetched = [index]
@@ -901,7 +985,6 @@ def archive_filing(
     snapshot_id = hashlib.sha256(
         json.dumps(descriptor, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    root = Path(output_root) / "accessions" / filing.accession / "snapshots"
     target = root / snapshot_id
     if target.exists():
         resources = _verify_archive(target, snapshot_id)
@@ -939,7 +1022,7 @@ def archive_filing(
         (temporary / "manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
-        temporary.replace(target)
+        _replace_directory_with_retry(temporary, target)
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
         raise

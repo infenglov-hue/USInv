@@ -98,7 +98,7 @@ def _standard(
 def test_full_versioned_concept_catalog_is_present() -> None:
     concepts = {chain.concept for chain in CONCEPT_CHAINS}
 
-    assert CHAIN_VERSION == "usinv-sec-concepts-v2"
+    assert CHAIN_VERSION == "usinv-sec-concepts-v3"
     assert len(CONCEPT_CHAINS) == 19
     assert sum(chain.tier == "core" for chain in CONCEPT_CHAINS) == 14
     assert sum(chain.tier == "secondary" for chain in CONCEPT_CHAINS) == 5
@@ -144,6 +144,14 @@ def test_tag_precedence_derived_values_and_20f_exclusion() -> None:
     assert set(by_concept["gross_profit"].source_tags) == {TAG, "CostOfRevenue"}
     assert by_concept["current_debt_and_borrowings"].value == Decimal("10")
     assert not any(item.cik == 999999 for item in standardized)
+
+
+def test_water_utility_total_operating_revenue_is_a_registered_fallback() -> None:
+    standardized = standardize_facts([_raw("RegulatedOperatingRevenueWater", "700")])
+
+    revenue = next(item for item in standardized if item.concept == "revenue")
+    assert revenue.value == Decimal("700")
+    assert revenue.source_tags == ("RegulatedOperatingRevenueWater",)
 
 
 def test_custom_revenue_requires_unambiguous_top_line_pre_evidence() -> None:
@@ -375,7 +383,7 @@ def test_coverage_report_uses_full_issuer_concept_denominator() -> None:
     assert report.secondary_rate == 0
     assert not report.passed
     payload = json.loads(report.to_json())
-    assert payload["chain_version"] == "usinv-sec-concepts-v2"
+    assert payload["chain_version"] == "usinv-sec-concepts-v3"
     assert payload["measurement"] == "strict_observed_presence"
     assert payload["enforcement"] == "phase_2_3_final_universe_applicability"
     assert payload["missing_value_policy"] == "missing_is_not_zero"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -12,6 +13,7 @@ from pathlib import Path, PurePosixPath
 from usinv.data.edgar.client import EdgarClient, EdgarHttpError, EdgarPayloadError
 from usinv.data.edgar.filing_xbrl import (
     CoverSecurityClass,
+    FilingArchiveResult,
     FilingParseResult,
     archive_filing,
     extract_cover_security_classes,
@@ -22,6 +24,7 @@ from usinv.data.edgar.securities import SecurityMasterError, normalize_exchange,
 from usinv.data.edgar.security_bootstrap import (
     CoverFilingEvidence,
     FilingDiscoveryPlan,
+    FilingDiscoveryRow,
     canonical_cover_pair,
     select_cover_filings,
 )
@@ -186,15 +189,15 @@ def _target_pairs(plan: FilingDiscoveryPlan) -> dict[int, frozenset[tuple[str, s
     pairs: dict[int, set[tuple[str, str]]] = {}
     for row in plan.rows:
         if (
-            row.status != "discovered"
-            or len(row.candidate_ciks) != 1
+            row.status not in {"discovered", "ambiguous"}
+            or not row.candidate_ciks
             or row.normalized_exchange is None
         ):
             continue
-        cik = row.candidate_ciks[0]
-        pairs.setdefault(cik, set()).add(
-            (normalize_ticker(row.ticker), normalize_exchange(row.normalized_exchange))
-        )
+        for cik in row.candidate_ciks:
+            pairs.setdefault(cik, set()).add(
+                (normalize_ticker(row.ticker), normalize_exchange(row.normalized_exchange))
+            )
     return {cik: frozenset(values) for cik, values in pairs.items()}
 
 
@@ -204,21 +207,44 @@ def _target_pair_evidence(
     evidence: dict[int, set[tuple[str, str, str]]] = {}
     for row in plan.rows:
         if (
-            row.status != "discovered"
-            or len(row.candidate_ciks) != 1
+            row.status not in {"discovered", "ambiguous"}
+            or not row.candidate_ciks
             or row.normalized_exchange is None
         ):
             continue
-        cik = row.candidate_ciks[0]
         ticker = normalize_ticker(row.ticker)
         exchange = normalize_exchange(row.normalized_exchange)
-        association_pointer = (
-            "sec-company-tickers-exchange://"
-            f"{plan.association_source_sha256}/{cik}/{ticker}/{exchange}"
-        )
-        pointer = f"{row.listing_evidence_pointer};{association_pointer}"
-        evidence.setdefault(cik, set()).add((ticker, exchange, pointer))
+        for cik in row.candidate_ciks:
+            candidate_pointers = row.candidate_evidence_pointers or (
+                "sec-company-tickers-exchange://"
+                f"{plan.association_source_sha256}/{cik}/{ticker}/{exchange}",
+            )
+            pointer = ";".join((row.listing_evidence_pointer, *candidate_pointers))
+            evidence.setdefault(cik, set()).add((ticker, exchange, pointer))
     return {cik: tuple(sorted(values)) for cik, values in evidence.items()}
+
+
+def _cover_expansion_ciks(plan: FilingDiscoveryPlan) -> frozenset[int]:
+    """Allow SEC cover pairs beyond the listing pair for one strongly resolved entity."""
+    rows_by_cik: dict[int, list[FilingDiscoveryRow]] = {}
+    for row in plan.rows:
+        for cik in row.candidate_ciks:
+            rows_by_cik.setdefault(cik, []).append(row)
+    return frozenset(
+        cik
+        for cik, rows in rows_by_cik.items()
+        if rows
+        and all(
+            row.status == "discovered"
+            and row.candidate_ciks == (cik,)
+            and bool(row.candidate_evidence_pointers)
+            and not any(
+                "confidence=weak" in pointer
+                for pointer in row.candidate_evidence_pointers
+            )
+            for row in rows
+        )
+    )
 
 
 def _parsed_pairs(parsed: FilingParseResult) -> frozenset[tuple[str, str]]:
@@ -240,21 +266,68 @@ def acquire_cover_evidence(
     maximum_filings_per_cik: int = 4,
     maximum_ciks: int | None = None,
     start_after_cik: int | None = None,
+    target_ciks: tuple[int, ...] | None = None,
+    reuse_existing_archives: bool = False,
+    parallel_ciks: int = 1,
     refresh: bool = False,
 ) -> CoverAcquisitionResult:
     """Archive and parse a deterministic CIK shard; immutable archives make reruns resumable."""
     if as_of.tzinfo is None:
         raise EdgarPayloadError("cover acquisition cutoff must be timezone-aware")
-    if maximum_filings_per_cik <= 0 or (maximum_ciks is not None and maximum_ciks <= 0):
+    if (
+        maximum_filings_per_cik <= 0
+        or parallel_ciks <= 0
+        or (maximum_ciks is not None and maximum_ciks <= 0)
+    ):
         raise EdgarPayloadError("cover acquisition limits must be positive")
     cutoff = as_of.astimezone(UTC)
     pairs_by_cik = _target_pairs(plan)
     pair_evidence_by_cik = _target_pair_evidence(plan)
-    eligible = tuple(
+    cover_expansion_ciks = _cover_expansion_ciks(plan)
+    eligible_all = tuple(
         cik for cik in sorted(pairs_by_cik) if start_after_cik is None or cik > start_after_cik
     )
+    if target_ciks is not None:
+        canonical_targets = tuple(sorted(set(target_ciks)))
+        if canonical_targets != target_ciks or not set(canonical_targets) <= set(eligible_all):
+            raise EdgarPayloadError("cover acquisition target CIKs are invalid for the plan")
+        eligible = canonical_targets
+    else:
+        eligible = eligible_all
     requested = eligible[:maximum_ciks] if maximum_ciks is not None else eligible
     deferred = eligible[len(requested) :]
+    if parallel_ciks > 1 and len(requested) > 1:
+        def acquire_one(cik: int) -> CoverAcquisitionResult:
+            return acquire_cover_evidence(
+                client,
+                plan,
+                archive_root,
+                as_of=cutoff,
+                maximum_filings_per_cik=maximum_filings_per_cik,
+                start_after_cik=start_after_cik,
+                target_ciks=(cik,),
+                reuse_existing_archives=reuse_existing_archives,
+                parallel_ciks=1,
+                refresh=refresh,
+            )
+
+        with ThreadPoolExecutor(max_workers=min(parallel_ciks, len(requested))) as executor:
+            parts = tuple(executor.map(acquire_one, requested))
+        return CoverAcquisitionResult(
+            plan.snapshot_id,
+            cutoff,
+            requested,
+            deferred,
+            start_after_cik,
+            sum(part.selected_filings for part in parts),
+            sum(part.archived_filings for part in parts),
+            tuple(row for part in parts for row in part.archives),
+            tuple(row for part in parts for row in part.share_observations),
+            tuple(row for part in parts for row in part.evidence),
+            tuple(row for part in parts for row in part.gaps),
+            tuple(row for part in parts for row in part.fpi_form_observations),
+            tuple(row for part in parts for row in part.form_history_proofs),
+        )
     evidence: list[CoverFilingEvidence] = []
     archives: list[CoverArchiveRecord] = []
     share_observations: list[CoverShareObservation] = []
@@ -379,12 +452,26 @@ def acquire_cover_evidence(
             continue
 
         allowed_pairs = pairs_by_cik[cik]
-        for filing in selected:
+        def archive_selected(
+            filing: SubmissionFiling,
+        ) -> FilingArchiveResult | EdgarHttpError:
             try:
-                archived = archive_filing(client, filing, archive_root, refresh=refresh)
+                return archive_filing(
+                    client,
+                    filing,
+                    archive_root,
+                    refresh=refresh,
+                    reuse_existing=reuse_existing_archives,
+                )
             except EdgarHttpError as exc:
                 if exc.status != 404:
                     raise
+                return exc
+
+        with ThreadPoolExecutor(max_workers=min(4, len(selected))) as executor:
+            archived_selected = tuple(executor.map(archive_selected, selected))
+        for filing, archived in zip(selected, archived_selected, strict=True):
+            if isinstance(archived, EdgarHttpError):
                 gaps.append(
                     CoverAcquisitionGap(
                         cik,
@@ -422,6 +509,7 @@ def acquire_cover_evidence(
                 ),
             )
             admitted: tuple[tuple[CoverSecurityClass, tuple[str, str]], ...] = ()
+            effective_allowed_pairs = allowed_pairs
             observed_pairs: set[tuple[str, str]] = set()
             parse_failures: list[str] = []
             for candidate_name in candidate_names:
@@ -434,9 +522,15 @@ def acquire_cover_evidence(
                 except EdgarPayloadError as exc:
                     parse_failures.append(f"{candidate_name}: {exc}")
                     continue
-                observed_pairs.update(_parsed_pairs(parsed))
+                parsed_pairs = _parsed_pairs(parsed)
+                observed_pairs.update(parsed_pairs)
+                effective_allowed_pairs = (
+                    allowed_pairs | parsed_pairs
+                    if cik in cover_expansion_ciks
+                    else allowed_pairs
+                )
                 candidate_admitted = tuple(
-                    (cover, canonical_cover_pair(cover, allowed_pairs))
+                    (cover, canonical_cover_pair(cover, effective_allowed_pairs))
                     for cover in extract_cover_security_classes(parsed)
                 )
                 admitted = tuple(
@@ -478,7 +572,7 @@ def acquire_cover_evidence(
                 except SecurityMasterError:
                     continue
                 if (
-                    pair in allowed_pairs
+                    pair in effective_allowed_pairs
                     and cover.shares_outstanding is not None
                     and cover.shares_evidence_pointer is not None
                 ):
@@ -496,7 +590,7 @@ def acquire_cover_evidence(
                     filing,
                     parsed,
                     domestic_flag,
-                    allowed_pairs,
+                    effective_allowed_pairs,
                     pair_evidence_by_cik[cik],
                 )
             )

@@ -281,6 +281,16 @@ def acquire_price_universe(
             PriceQuery(symbols, plan.start_at, plan.signal_at, "all")
         )
         snapshots.append(materialize_price_snapshot(raw, adjusted, bindings, output))
+    return _materialize_price_universe_run(plan, tuple(snapshots), output)
+
+
+def _materialize_price_universe_run(
+    plan: PriceUniversePlan,
+    snapshots: tuple[PriceSnapshot, ...],
+    output: Path,
+) -> PriceUniverseSnapshot:
+    """Seal one already-verified exact batch set under a specific plan lineage."""
+
     ordered = tuple(snapshots)
     payload = _run_payload(plan, ordered)
     snapshot_id = hashlib.sha256(_canonical(payload)).hexdigest()
@@ -310,4 +320,34 @@ def acquire_price_universe(
         created.plan,
         created.price_snapshots,
         False,
+    )
+
+
+def rebase_price_universe_snapshot(
+    source: PriceUniverseSnapshot,
+    old_cover: CoverEvidenceSnapshot,
+    new_cover: CoverEvidenceSnapshot,
+    plan: PriceUniversePlan,
+    output_root: str | Path,
+) -> PriceUniverseSnapshot:
+    """Reuse immutable price batches when only cover metadata changed."""
+
+    verified_source = read_price_universe_snapshot(source.output_dir)
+    verified_old = read_cover_evidence_snapshot(old_cover.output_dir)
+    verified_new = read_cover_evidence_snapshot(new_cover.output_dir)
+    if (
+        verified_source.plan.cover_snapshot_id != verified_old.snapshot_id
+        or plan.cover_snapshot_id != verified_new.snapshot_id
+        or verified_old.master_snapshot_id != verified_new.master_snapshot_id
+        or verified_source.plan.discovery_snapshot_id != plan.discovery_snapshot_id
+        or verified_source.plan.signal_at != plan.signal_at
+        or verified_source.plan.start_at != plan.start_at
+        or verified_source.plan.batch_size != plan.batch_size
+        or verified_source.plan.targets != plan.targets
+    ):
+        raise PriceUniverseError("price-universe rebase changes the priced security universe")
+    return _materialize_price_universe_run(
+        plan,
+        verified_source.price_snapshots,
+        Path(output_root),
     )

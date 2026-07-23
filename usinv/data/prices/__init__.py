@@ -73,6 +73,7 @@ from usinv.data.prices.universe import (
     acquire_price_universe,
     build_price_universe_plan,
     read_price_universe_snapshot,
+    rebase_price_universe_snapshot,
 )
 
 __all__ = [
@@ -135,5 +136,6 @@ __all__ = [
     "read_price_snapshot",
     "read_price_universe_snapshot",
     "read_stooq_bulk",
+    "rebase_price_universe_snapshot",
     "reconcile_corporate_actions",
 ]

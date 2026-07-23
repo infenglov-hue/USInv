@@ -20,6 +20,7 @@ from usinv.data.edgar.cover_acquisition import (
 )
 from usinv.data.edgar.cover_shards import (
     CoverEvidenceMerge,
+    cover_plan_changed_ciks,
     materialize_cover_evidence_merge,
     materialize_cover_evidence_shard,
     merge_cover_evidence_shards,
@@ -33,7 +34,11 @@ from usinv.data.edgar.securities import (
     build_security_master,
     mint_security_id,
 )
-from usinv.data.edgar.security_bootstrap import CoverSecurityBootstrap
+from usinv.data.edgar.security_bootstrap import (
+    CoverSecurityBootstrap,
+    FilingDiscoveryPlan,
+    FilingDiscoveryRow,
+)
 
 CUTOFF = datetime(2026, 7, 17, 20, tzinfo=UTC)
 PLAN = "a" * 64
@@ -112,6 +117,26 @@ def _inputs(cik: int, ticker: str):
     )
     bootstrap = CoverSecurityBootstrap(master, 1, 1, ())
     return acquisition, bootstrap
+
+
+def test_cover_plan_change_targets_only_changed_cik_pairs() -> None:
+    def plan(rows: tuple[FilingDiscoveryRow, ...]) -> FilingDiscoveryPlan:
+        return FilingDiscoveryPlan(
+            date(2026, 7, 17),
+            "b" * 64,
+            "c" * 64,
+            CUTOFF,
+            rows,
+        )
+
+    stable = FilingDiscoveryRow(
+        "ONE", "NASDAQ", "NASDAQ", "Stock", "listing://1", "discovered", (1,)
+    )
+    added = FilingDiscoveryRow(
+        "TWO", "NYSE", "NYSE", "Stock", "listing://2", "discovered", (2,)
+    )
+
+    assert cover_plan_changed_ciks(plan((stable,)), plan((stable, added))) == (2,)
 
 
 def test_cover_evidence_shard_is_immutable_compact_and_verified(tmp_path: Path) -> None:
@@ -352,6 +377,73 @@ def test_cover_reconciliation_keeps_concurrent_generic_classes_ambiguous() -> No
     assert result.ambiguous_groups == 1
     assert result.rewritten_security_ids == 0
     assert result.merge.master.securities == merged.master.securities
+
+
+def test_cover_reconciliation_collapses_exact_overlapping_symbol_identity() -> None:
+    cik = 45
+    anchors = (
+        'sec-cover-class:"common stock"',
+        'sec-cover-class:"voting common stock"',
+    )
+    security_ids = tuple(mint_security_id(cik, anchor) for anchor in anchors)
+    securities = tuple(
+        Security(
+            security_id,
+            cik,
+            title,
+            "common_stock",
+            True,
+            anchor,
+            "sec_xbrl_cover",
+            f"sec://45/{index}",
+        )
+        for index, (security_id, anchor, title) in enumerate(
+            zip(
+                security_ids,
+                anchors,
+                ("Common Stock", "Voting CommonStock"),
+                strict=True,
+            )
+        )
+    )
+    symbols = tuple(
+        SymbolInterval(
+            security_id,
+            "EXACT",
+            "NYSE",
+            valid_from,
+            None,
+            "sec_xbrl_cover",
+            "high",
+            f"sec://45/{index}",
+            datetime.combine(valid_from, datetime.min.time(), tzinfo=UTC),
+            "historical_interval",
+        )
+        for index, (security_id, valid_from) in enumerate(
+            zip(security_ids, (date(2026, 4, 1), date(2026, 5, 1)), strict=True)
+        )
+    )
+    merged = CoverEvidenceMerge(
+        PLAN,
+        CUTOFF,
+        (cik,),
+        ("b" * 64,),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        build_security_master(securities, symbols),
+    )
+
+    result = reconcile_cover_evidence_merge(merged)
+
+    assert result.collapsed_groups == 1
+    assert result.ambiguous_groups == 0
+    assert result.rewritten_security_ids == 2
+    assert len(result.merge.master.securities) == 1
+    assert result.merge.master.resolve("EXACT", "NYSE", date(2026, 6, 1)).status == "mapped"
 
 
 def test_cover_reconciliation_preserves_ticker_change_pit_boundaries() -> None:

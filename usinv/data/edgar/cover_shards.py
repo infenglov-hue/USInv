@@ -6,8 +6,9 @@ import hashlib
 import json
 import re
 import shutil
+import time
 import uuid
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime
@@ -37,14 +38,19 @@ from usinv.data.edgar.securities import (
 from usinv.data.edgar.security_bootstrap import (
     CoverBootstrapGap,
     CoverSecurityBootstrap,
+    FilingDiscoveryPlan,
     _collapse_symbol_observations,
 )
 
-COVER_IDENTITY_RECONCILIATION_VERSION: Final = "usinv-cover-semantic-equity-v1"
+COVER_IDENTITY_RECONCILIATION_VERSION: Final = "usinv-cover-semantic-equity-v2"
 COVER_MERGE_VERSION: Final = "usinv-cover-evidence-merge-v4"
 COVER_SHARD_VERSION: Final = "usinv-cover-evidence-shard-v4"
 _SUPPORTED_COVER_MERGE_VERSIONS: Final = frozenset(
-    {"usinv-cover-evidence-merge-v2", COVER_MERGE_VERSION}
+    {
+        "usinv-cover-evidence-merge-v2",
+        "usinv-cover-evidence-merge-v3",
+        COVER_MERGE_VERSION,
+    }
 )
 _SHA256_PATTERN: Final = re.compile(r"^[0-9a-f]{64}$")
 _EQUITY_CLASS_PATTERN: Final = re.compile(
@@ -68,6 +74,19 @@ _DIMENSION_CLASS_PATTERNS: Final = (
     ),
     re.compile(r"^class([a-z0-9]+)$", re.IGNORECASE),
 )
+
+
+def _publish_directory(temporary: Path, target: Path) -> None:
+    for attempt in range(6):
+        try:
+            temporary.replace(target)
+            return
+        except PermissionError:
+            if target.exists():
+                return
+            if attempt == 5:
+                raise
+            time.sleep(0.05 * (2**attempt))
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +140,153 @@ class CoverIdentityReconciliation:
     collapsed_groups: int
     rewritten_security_ids: int
     ambiguous_groups: int
+
+
+def patch_cover_evidence_merge(
+    source: CoverEvidenceSnapshot,
+    shard: CoverEvidenceShard,
+) -> CoverEvidenceMerge:
+    """Replace an exact CIK subset in complete evidence with a verified fresh shard."""
+
+    targets = frozenset(shard.requested_ciks)
+    if (
+        not targets
+        or shard.plan_snapshot_id != source.merge.plan_snapshot_id
+        or shard.as_of.astimezone(UTC) != source.merge.as_of.astimezone(UTC)
+        or not targets < frozenset(source.merge.requested_ciks)
+        or shard.deferred_ciks != 0
+    ):
+        raise EdgarPayloadError("cover evidence patch does not match its complete source")
+    return _replace_cover_subset(
+        source,
+        shard,
+        plan_snapshot_id=source.merge.plan_snapshot_id,
+        requested_ciks=source.merge.requested_ciks,
+    )
+
+
+def _discovery_pairs(
+    plan: FilingDiscoveryPlan,
+) -> dict[int, frozenset[tuple[str, str]]]:
+    pairs: dict[int, set[tuple[str, str]]] = defaultdict(set)
+    for row in plan.rows:
+        if (
+            row.status in {"discovered", "ambiguous"}
+            and row.candidate_ciks
+            and row.normalized_exchange is not None
+        ):
+            for cik in row.candidate_ciks:
+                pairs[cik].add((row.ticker, row.normalized_exchange))
+    return {cik: frozenset(values) for cik, values in pairs.items()}
+
+
+def cover_plan_changed_ciks(
+    old_plan: FilingDiscoveryPlan,
+    new_plan: FilingDiscoveryPlan,
+) -> tuple[int, ...]:
+    """Return only CIKs whose exact discovered ticker/exchange set changed."""
+
+    old_pairs = _discovery_pairs(old_plan)
+    new_pairs = _discovery_pairs(new_plan)
+    return tuple(
+        sorted(
+            cik
+            for cik in set(old_pairs) | set(new_pairs)
+            if old_pairs.get(cik) != new_pairs.get(cik)
+        )
+    )
+
+
+def rebase_cover_evidence_plan(
+    source: CoverEvidenceSnapshot,
+    old_plan: FilingDiscoveryPlan,
+    new_plan: FilingDiscoveryPlan,
+    shard: CoverEvidenceShard,
+) -> CoverEvidenceMerge:
+    """Carry unchanged cover evidence into a conservative discovery-plan extension."""
+
+    old_pairs = _discovery_pairs(old_plan)
+    new_pairs = _discovery_pairs(new_plan)
+    changed = frozenset(cover_plan_changed_ciks(old_plan, new_plan))
+    if (
+        source.merge.plan_snapshot_id != old_plan.snapshot_id
+        or shard.plan_snapshot_id != new_plan.snapshot_id
+        or frozenset(shard.requested_ciks) != changed
+        or tuple(sorted(old_pairs)) != source.merge.requested_ciks
+        or tuple(sorted(new_pairs)) != tuple(sorted(set(source.merge.requested_ciks) | changed))
+        or old_plan.listing_snapshot_id != new_plan.listing_snapshot_id
+        or old_plan.listing_as_of != new_plan.listing_as_of
+        or old_plan.association_source_sha256 != new_plan.association_source_sha256
+        or old_plan.association_observed_at != new_plan.association_observed_at
+        or shard.as_of.astimezone(UTC) != source.merge.as_of.astimezone(UTC)
+        or shard.deferred_ciks != 0
+    ):
+        raise EdgarPayloadError("cover evidence plan rebase is not an exact conservative extension")
+    return _replace_cover_subset(
+        source,
+        shard,
+        plan_snapshot_id=new_plan.snapshot_id,
+        requested_ciks=tuple(sorted(new_pairs)),
+    )
+
+
+def _replace_cover_subset(
+    source: CoverEvidenceSnapshot,
+    shard: CoverEvidenceShard,
+    *,
+    plan_snapshot_id: str,
+    requested_ciks: tuple[int, ...],
+) -> CoverEvidenceMerge:
+    """Replace shard CIKs while retaining all unrelated immutable evidence."""
+
+    targets = frozenset(shard.requested_ciks)
+    retained_securities = tuple(
+        row for row in source.merge.master.securities if row.cik not in targets
+    )
+    retained_security_ids = {row.security_id for row in retained_securities}
+    master = build_security_master(
+        (*retained_securities, *shard.master.securities),
+        (
+            *(
+                row
+                for row in source.merge.master.symbols
+                if row.security_id in retained_security_ids
+            ),
+            *shard.master.symbols,
+        ),
+    )
+    patched = replace(
+        source.merge,
+        plan_snapshot_id=plan_snapshot_id,
+        requested_ciks=requested_ciks,
+        shard_snapshot_ids=tuple(
+            sorted({*source.merge.shard_snapshot_ids, shard.snapshot_id})
+        ),
+        archives=tuple(row for row in source.merge.archives if row.cik not in targets)
+        + shard.archives,
+        share_observations=tuple(
+            row for row in source.merge.share_observations if row.cik not in targets
+        )
+        + shard.share_observations,
+        fpi_form_observations=tuple(
+            row for row in source.merge.fpi_form_observations if row.cik not in targets
+        )
+        + shard.fpi_form_observations,
+        form_history_proofs=tuple(
+            row for row in source.merge.form_history_proofs if row.cik not in targets
+        )
+        + shard.form_history_proofs,
+        acquisition_gaps=tuple(
+            row for row in source.merge.acquisition_gaps if row.cik not in targets
+        )
+        + shard.acquisition_gaps,
+        bootstrap_gaps=tuple(
+            row for row in source.merge.bootstrap_gaps if row.cik not in targets
+        )
+        + shard.bootstrap_gaps,
+        master=master,
+    )
+    return reconcile_cover_evidence_merge(patched).merge
 
 
 def _dimension_equity_class(identity_anchor: str) -> str | None:
@@ -188,14 +354,54 @@ def reconcile_cover_evidence_merge(merged: CoverEvidenceMerge) -> CoverIdentityR
     symbols_by_security: dict[str, list[SymbolInterval]] = defaultdict(list)
     for symbol in merged.master.symbols:
         symbols_by_security[symbol.security_id].append(symbol)
+    parent = {
+        security.security_id: security.security_id for security in merged.master.securities
+    }
+
+    def find(security_id: str) -> str:
+        while parent[security_id] != security_id:
+            parent[security_id] = parent[parent[security_id]]
+            security_id = parent[security_id]
+        return security_id
+
+    def union(left: str, right: str) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root == right_root:
+            return
+        parent[max(left_root, right_root)] = min(left_root, right_root)
+
+    securities_by_id = {
+        security.security_id: security for security in merged.master.securities
+    }
+    intervals_by_pair: dict[tuple[int, str, str], list[SymbolInterval]] = defaultdict(list)
+    for symbol in merged.master.symbols:
+        security = securities_by_id[symbol.security_id]
+        if security.security_type == "common_stock":
+            intervals_by_pair[(security.cik, symbol.ticker, symbol.exchange)].append(symbol)
+    for intervals in intervals_by_pair.values():
+        for index, left in enumerate(intervals):
+            for right in intervals[index + 1 :]:
+                left_end = left.valid_to or date.max
+                right_end = right.valid_to or date.max
+                if left.valid_from <= right_end and right.valid_from <= left_end:
+                    union(left.security_id, right.security_id)
+    component_sizes = Counter(find(security_id) for security_id in parent)
+
     equity_groups: dict[tuple[int, str], list[Security]] = defaultdict(list)
     untouched: list[Security] = []
     for security in merged.master.securities:
+        component = find(security.security_id)
         key = _semantic_equity_key(security)
-        if key is None:
+        if (
+            component_sizes[component] > 1
+            and security.security_type == "common_stock"
+        ):
+            key = f"common-stock:exact-symbol-overlap:{component}"
+        elif key is None:
             untouched.append(security)
-        else:
-            equity_groups[(security.cik, key)].append(security)
+            continue
+        equity_groups[(security.cik, key)].append(security)
     if any(not symbols_by_security[security.security_id] for security in merged.master.securities):
         raise EdgarPayloadError("cover identity reconciliation requires symbol evidence")
 
@@ -485,7 +691,7 @@ def materialize_cover_evidence_shard(
             encoding="utf-8",
         )
         root.mkdir(parents=True, exist_ok=True)
-        temporary.replace(target)
+        _publish_directory(temporary, target)
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
         raise
@@ -738,7 +944,7 @@ def materialize_cover_evidence_merge(
             encoding="utf-8",
         )
         root.mkdir(parents=True, exist_ok=True)
-        temporary.replace(target)
+        _publish_directory(temporary, target)
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
         raise

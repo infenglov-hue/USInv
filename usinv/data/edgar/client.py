@@ -12,12 +12,12 @@ import time
 import zlib
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Final, Protocol
 from urllib.error import HTTPError
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 from usinv import __version__
@@ -26,7 +26,8 @@ from usinv.config import AppConfig
 BASE_URL: Final = "https://data.sec.gov"
 ARCHIVE_BASE_URL: Final = "https://www.sec.gov/Archives/edgar/data"
 COMPANY_TICKERS_EXCHANGE_URL: Final = "https://www.sec.gov/files/company_tickers_exchange.json"
-ALLOWED_SEC_HOSTS: Final = frozenset({"data.sec.gov", "www.sec.gov"})
+EFTS_SEARCH_URL: Final = "https://efts.sec.gov/LATEST/search-index"
+ALLOWED_SEC_HOSTS: Final = frozenset({"data.sec.gov", "efts.sec.gov", "www.sec.gov"})
 RETRIABLE_STATUS_CODES: Final = frozenset({403, 429, 500, 502, 503, 504})
 EMAIL_PATTERN: Final = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
@@ -433,14 +434,21 @@ class EdgarClient:
         return payload
 
     @staticmethod
-    def _validate_sec_url(url: str) -> str:
+    def _validate_sec_url(url: str, *, allow_efts_query: bool = False) -> str:
         parsed = urlsplit(url)
         if (
             parsed.scheme != "https"
             or parsed.hostname not in ALLOWED_SEC_HOSTS
             or parsed.username is not None
             or parsed.password is not None
-            or parsed.query
+            or (
+                parsed.query
+                and not (
+                    allow_efts_query
+                    and parsed.hostname == "efts.sec.gov"
+                    and parsed.path == "/LATEST/search-index"
+                )
+            )
             or parsed.fragment
             or ".." in parsed.path.split("/")
         ):
@@ -453,8 +461,9 @@ class EdgarClient:
         *,
         refresh: bool,
         accept: str,
+        allow_efts_query: bool = False,
     ) -> EdgarResource:
-        url = self._validate_sec_url(url)
+        url = self._validate_sec_url(url, allow_efts_query=allow_efts_query)
         persistent_cache = accept != "*/*" or self.cache_binary_resources
         cached = self._cache.load(url) if persistent_cache else None
         if cached is not None and not refresh and self._is_fresh(cached):
@@ -596,6 +605,55 @@ class EdgarClient:
             revalidated=resource.revalidated,
         )
         return self._require_fields(document, ("fields", "data"), "company tickers exchange")
+
+    def full_text_search(
+        self,
+        query: str,
+        *,
+        start: date,
+        end: date,
+        forms: tuple[str, ...] = ("10-K", "10-Q", "20-F", "40-F", "8-K"),
+        refresh: bool = False,
+    ) -> EdgarDocument:
+        """Fetch one hash-cached SEC EFTS query for discovery-only candidates."""
+
+        normalized = query.strip().upper()
+        if (
+            not normalized
+            or len(normalized) > 32
+            or not re.fullmatch(r"[A-Z0-9./()\- ]+", normalized)
+            or start > end
+            or not forms
+        ):
+            raise EdgarConfigurationError("unsafe SEC full-text search query")
+        url = f"{EFTS_SEARCH_URL}?{urlencode({
+            'q': normalized,
+            'dateRange': 'custom',
+            'startdt': start.isoformat(),
+            'enddt': end.isoformat(),
+            'forms': ','.join(forms),
+        })}"
+        resource = self._request_resource(
+            url,
+            refresh=refresh,
+            accept="application/json",
+            allow_efts_query=True,
+        )
+        try:
+            payload = self._decode_payload(resource.body, resource.url)
+        except EdgarPayloadError:
+            self._cache.delete(resource.url)
+            raise
+        document = EdgarDocument(
+            url=resource.url,
+            retrieved_at=resource.retrieved_at,
+            validated_at=resource.validated_at,
+            content_sha256=resource.content_sha256,
+            payload=payload,
+            from_cache=resource.from_cache,
+            revalidated=resource.revalidated,
+        )
+        return self._require_fields(document, ("hits", "aggregations"), "full-text search")
 
     def submission_history(self, filename: str, *, refresh: bool = False) -> EdgarDocument:
         """Fetch one SEC-declared older submissions page by its safe filename."""

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections import deque
 from collections.abc import Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -117,6 +117,30 @@ def test_current_ticker_association_endpoint_is_explicitly_supported(tmp_path: P
     assert document.payload == payload
     assert transport.calls[0][0] == "https://www.sec.gov/files/company_tickers_exchange.json"
     assert transport.calls[0][1]["User-Agent"] == "USInv/0.1.0 ops@usinv.dev"
+
+
+def test_full_text_search_is_bounded_cached_and_uses_the_efts_host(tmp_path: Path) -> None:
+    payload = {"hits": {"total": {"value": 1}}, "aggregations": {"entity_filter": {}}}
+    transport = FakeTransport(_response(payload))
+    client = _client(tmp_path, transport)
+
+    document = client.full_text_search(
+        "UCBI",
+        start=date(2009, 1, 1),
+        end=date(2026, 7, 17),
+    )
+
+    assert document.payload == payload
+    assert transport.calls[0][0].startswith(
+        "https://efts.sec.gov/LATEST/search-index?"
+    )
+    assert "q=UCBI" in transport.calls[0][0]
+    with pytest.raises(EdgarConfigurationError, match="unsafe"):
+        client.full_text_search(
+            "unsafe&query",
+            start=date(2009, 1, 1),
+            end=date(2026, 7, 17),
+        )
 
 
 def test_binary_resource_cache_can_be_disabled_when_the_archive_is_authoritative(

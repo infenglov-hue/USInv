@@ -9,7 +9,7 @@ import shutil
 import uuid
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -26,29 +26,85 @@ from usinv.data.edgar.securities import (
     Security,
     SecurityMaster,
     SecurityMasterError,
+    SymbolInterval,
     is_explicit_non_common_security_title,
 )
 from usinv.data.listings import AlphaListingRow, AlphaListingSnapshot
 from usinv.data.tiingo_lifecycle import TiingoLifecycleSnapshot
 from usinv.scoring.sectors import SectorClassification, SectorMappingError, classify_sic
 
-UNIVERSE_VERSION: Final = "usinv-universe-v2"
+UNIVERSE_VERSION: Final = "usinv-universe-v4"
 HYGIENE_STUB_VERSION: Final = "phase-2.3-pass-through-v1"
 _EVIDENCED_NON_MEMBER_STATUSES: Final = frozenset(
-    {"non_common_listing", "non_domestic_listing", "no_periodic_filing_at_cutoff"}
+    {
+        "exchange_test_listing",
+        "non_common_listing",
+        "non_domestic_listing",
+        "no_periodic_filing_at_cutoff",
+        "superseded_sec_listing",
+    }
+)
+_CTA_TEST_SYMBOL: Final = re.compile(
+    r"^(?:ATEST|CTEST|MTEST|NTEST|PTEST)(?:-[A-Z])?$|^(?:CBO|CBX|ZVV|ZZK)$",
+    re.IGNORECASE,
+)
+_NASDAQ_TEST_SYMBOL: Final = re.compile(
+    r"^(?:ZAZZT|ZBZZT|ZCZZT|ZJZZT|ZVZZT|ZWZZT|ZXZZT|ZXYZ-A)$",
+    re.IGNORECASE,
+)
+_CTA_TEST_SYMBOL_EVIDENCE: Final = (
+    "https://www.ctaplan.com/publicdocs/ctaplan/notifications/trader-update/"
+    "CQS_BINARY_INPUT_SPECIFICATION.pdf#dedicated-test-symbols"
+)
+_NASDAQ_TEST_SYMBOL_EVIDENCE: Final = (
+    "https://www.nasdaqtrader.com/MicroNews.aspx?id=ERA2016-3"
+    "#reserved-test-symbols"
 )
 FPI_FORMS: Final = frozenset({"20-F", "40-F", "6-K", "F-1"})
 PRE_REVENUE_BIOTECH_SICS: Final = frozenset({2834, 2836, 8731})
 NON_COMMON_LISTING_NAME_PATTERN: Final = re.compile(
     r"\b(?:ETF|exchange[- ]traded funds?|warrants?|rights?|depositary shares?|"
+    r"common shares? of beneficial interest|royalty trust|oil trust|"
+    r"rolling shares?|non[- ]?voting shares?|"
     r"preferred(?:\s+\w+){0,3}\s+(?:stock|shares?|securities|units?|lp)|"
-    r"(?:senior|subordinated|convertible) notes?|bonds?)\b",
+    r"(?:senior|subordinated|convertible) notes?|bonds?|ETNs?|fund|pfd|"
+    r"wt(?:\s+exp)?|rt|when[-\s]*(?:issued|distributed))\b",
+    re.IGNORECASE,
+)
+NON_COMMON_LISTING_PRODUCT_PATTERN: Final = re.compile(
+    r"\b(?:ProShares|iShares|Tidal Trust|Grayscale Investments|Innovator|"
+    r"KraneShares|VistaShares|Timothy Plan|Hedgeye|Milliman|FundVantage Trust|"
+    r"PPLUS Trust|Synthetic Fixed[- ]?Income Securities|Structured Products Corp|"
+    r"Lehman ABS Corp|Merrill Lynch Depositor|"
+    r"BBH Trust Select (?:Large|Mid) Cap|BNY Mellon Core Plus|"
+    r"Impax Global Infrastructure|Virtus Duff & Phelps Real Estate Income|"
+    r"Wedbush ReturnOnLeadership U\.S\. LargeCap|First Eagle Mid Cap Equity|"
+    r"Franklin Small Cap Enhanced|FIS Faith Income|"
+    r"PLUS Korea Manufacturing Core Alliance Index|"
+    r"Neuberger International Core Equity|Northern Trust US Equity|"
+    r"Polen 5Perspectives (?:Large|SmallMid) Growth|"
+    r"Columbia Research Enhanced Small Cap|ALPS Nautilus SMR Nuclear & Technology|"
+    r"SMART Small Cap|Virtus Silvant SmallMid Growth|Transamerica Large Value Active|"
+    r"THOR AdaptiveRisk Dynamic|Virtus Emerging Markets Dividend|"
+    r"Amplify Municipal CEF High Income|"
+    r"(?:Marine Petroleum|VOC Energy) Trust|Dillards Capital Trust|"
+    r"Empire State Realty OP LP|NextEra Energy Capital Holdings|"
+    r"Entergy (?:Louisiana LLC|New Orleans Inc|Utility Enterprises Inc)|"
+    r"Tennessee Valley Authority|"
+    r"autocallable|managed 10 buffer|2x daily|daily target 2x|ultrashort|"
+    r"money market|term TIPS|AAA CLO|bitcoin trust|CoinDesk 20 Crypto|"
+    r"currency debasement|treasury duration rotation|fixed income|"
+    r"emerging markets debt|healthcare inflation|\d+\s+Nts\b)\b",
     re.IGNORECASE,
 )
 NON_COMMON_LISTING_UNIT_PATTERN: Final = re.compile(r"\bunits?\b", re.IGNORECASE)
 COMMON_UNIT_PATTERN: Final = re.compile(r"\bcommon units?\b", re.IGNORECASE)
 NYSE_NON_COMMON_TICKER_PATTERN: Final = re.compile(
-    r"(?:-P(?:-[A-Z0-9]+)?|-WS(?:-[A-Z0-9]+)?)$",
+    r"(?:-P(?:-[A-Z0-9]+)?|-WS(?:-[A-Z0-9]+)?|/P[A-Z]|-UN|-WD)$",
+    re.IGNORECASE,
+)
+NASDAQ_NON_COMMON_FIFTH_CHARACTER: Final = re.compile(
+    r"^[A-Z]{4}[DGHILMNOPRUVWXZ]$",
     re.IGNORECASE,
 )
 SizeBucket = Literal["core", "large_cap"]
@@ -343,6 +399,14 @@ def _reason(flag: bool, value: str, reasons: list[str]) -> None:
         reasons.append(value)
 
 
+def _exchange_test_evidence(ticker: str, exchange: str) -> str | None:
+    if exchange in {"NYSE", "NYSEAMERICAN"} and _CTA_TEST_SYMBOL.fullmatch(ticker):
+        return _CTA_TEST_SYMBOL_EVIDENCE
+    if exchange == "NASDAQ" and _NASDAQ_TEST_SYMBOL.fullmatch(ticker):
+        return _NASDAQ_TEST_SYMBOL_EVIDENCE
+    return None
+
+
 @dataclass(slots=True)
 class _WorkRow:
     listing: AlphaListingRow
@@ -380,6 +444,9 @@ class IdentityRegimeEvidence:
     candidate_ciks_by_pointer: Mapping[str, tuple[int, ...]]
     foreign_regime_pointers: Mapping[int, tuple[str, ...]]
     no_periodic_pointers: Mapping[int, tuple[str, ...]]
+    superseded_pointers_by_listing: Mapping[str, tuple[str, ...]] = field(
+        default_factory=dict
+    )
 
 
 def build_universe_snapshot(
@@ -415,6 +482,11 @@ def build_universe_snapshot(
         _validate_pit_evidence(item, signal_at)
         evidence_by_security[item.security_id] = item
     securities = {security.security_id: security for security in master.securities}
+    common_symbol_history: dict[tuple[int, str, str], list[SymbolInterval]] = defaultdict(list)
+    for symbol in master.symbols:
+        security = securities[symbol.security_id]
+        if security.security_type == "common_stock":
+            common_symbol_history[(security.cik, symbol.ticker, symbol.exchange)].append(symbol)
     approved_exchanges: set[str] = set()
     for exchange in config.exchanges:
         try:
@@ -492,7 +564,15 @@ def build_universe_snapshot(
                         for item in candidates
                     ):
                         mapping_status = "non_common_listing"
+            test_evidence = _exchange_test_evidence(listing.symbol, exchange)
+            if test_evidence is not None:
+                mapping_status = "exchange_test_listing"
+                mapping_pass = False
+                security = None
+                pointers.add(test_evidence)
             if explicit_non_common_listing and not mapping_pass:
+                mapping_status = "non_common_listing"
+            if non_stock_evidence and not mapping_pass:
                 mapping_status = "non_common_listing"
             if mapping_status == "unmapped" and regime is not None:
                 listing_pointer = (
@@ -511,6 +591,32 @@ def build_universe_snapshot(
                     mapping_status = "no_periodic_filing_at_cutoff"
                     for cik in candidate_ciks:
                         pointers.update(regime.no_periodic_pointers[cik])
+                elif listing_pointer in regime.superseded_pointers_by_listing:
+                    mapping_status = "superseded_sec_listing"
+                    pointers.update(
+                        regime.superseded_pointers_by_listing[listing_pointer]
+                    )
+                elif candidate_ciks:
+                    superseded = {
+                        cik: tuple(
+                            symbol
+                            for symbol in common_symbol_history.get(
+                                (cik, listing.symbol, exchange),
+                                (),
+                            )
+                            if symbol.valid_to is not None
+                            and symbol.valid_to <= session
+                            and symbol.known_at.astimezone(UTC)
+                            <= signal_at.astimezone(UTC)
+                            and symbol.confidence == "high"
+                            and symbol.scope == "historical_interval"
+                        )
+                        for cik in candidate_ciks
+                    }
+                    if all(superseded.values()):
+                        mapping_status = "superseded_sec_listing"
+                        for symbols in superseded.values():
+                            pointers.update(symbol.evidence_pointer for symbol in symbols)
         item = evidence_by_security.get(security.security_id) if security else None
         if item is not None:
             raw_close, median_dollar_volume, price_pointers = _market_metrics(
@@ -738,6 +844,8 @@ def _is_explicit_non_common_listing(listing: AlphaListingRow) -> bool:
     """Recognize provider rows that explicitly describe a non-common instrument."""
     if NON_COMMON_LISTING_NAME_PATTERN.search(listing.name):
         return True
+    if NON_COMMON_LISTING_PRODUCT_PATTERN.search(listing.name):
+        return True
     if bool(NON_COMMON_LISTING_UNIT_PATTERN.search(listing.name)) and not (
         COMMON_UNIT_PATTERN.search(listing.name)
     ):
@@ -746,8 +854,12 @@ def _is_explicit_non_common_listing(listing: AlphaListingRow) -> bool:
         exchange = _normalize_exchange(listing.exchange)
     except SecurityMasterError:
         return False
-    return exchange in {"NYSE", "NYSEAMERICAN"} and bool(
-        NYSE_NON_COMMON_TICKER_PATTERN.search(listing.symbol)
+    return (
+        exchange in {"NYSE", "NYSEAMERICAN", "NASDAQ"}
+        and bool(NYSE_NON_COMMON_TICKER_PATTERN.search(listing.symbol))
+    ) or (
+        exchange == "NASDAQ"
+        and bool(NASDAQ_NON_COMMON_FIFTH_CHARACTER.fullmatch(listing.symbol))
     )
 
 

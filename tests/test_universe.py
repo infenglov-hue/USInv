@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -462,7 +462,10 @@ def test_common_unit_provider_stock_remains_an_identity_candidate() -> None:
     assert snapshot.identity_mapping_gaps == (row,)
 
 
-@pytest.mark.parametrize("ticker", ["ONE-P-A", "ONE-P", "ONE-WS"])
+@pytest.mark.parametrize(
+    "ticker",
+    ["ONE-P-A", "ONE-P", "ONE-WS", "ONE-UN", "ONE-WD"],
+)
 def test_nyse_non_common_suffix_is_not_an_identity_gap(ticker: str) -> None:
     _master, snapshot = _build(
         _listing_snapshot([(ticker, "One Corp", "NYSE", "Stock")]),
@@ -476,7 +479,35 @@ def test_nyse_non_common_suffix_is_not_an_identity_gap(ticker: str) -> None:
     assert not snapshot.identity_mapping_gaps
 
 
-def test_nyse_when_issued_suffix_remains_an_identity_candidate() -> None:
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Common Shares of Beneficial Interest",
+        "Permian Basin Royalty Trust",
+        "ProShares Ultra Top QQQ",
+        "Innovator Nasdaq100 Managed 10 Buffer",
+        "Synthetic Fixed-Income Securities Inc",
+        "BBH Trust Select Large Cap",
+        "Polen 5Perspectives SmallMid Growth",
+        "Amplify Municipal CEF High Income",
+        "VOC Energy Trust",
+        "NextEra Energy Capital Holdings Inc",
+        "Tennessee Valley Authority",
+    ],
+)
+def test_explicit_product_name_is_not_an_identity_gap(name: str) -> None:
+    _master, snapshot = _build(
+        _listing_snapshot([("PROD", name, "NYSE", "Stock")]),
+        [],
+        [],
+        [],
+    )
+
+    assert snapshot.rows[0].mapping_status == "non_common_listing"
+    assert not snapshot.identity_mapping_gaps
+
+
+def test_explicit_when_issued_listing_is_not_an_identity_candidate() -> None:
     _master, snapshot = _build(
         _listing_snapshot([("ONE-W", "One Corp When Issued", "NYSE", "Stock")]),
         [],
@@ -485,8 +516,38 @@ def test_nyse_when_issued_suffix_remains_an_identity_candidate() -> None:
     )
 
     row = snapshot.rows[0]
-    assert row.mapping_status == "unmapped"
-    assert snapshot.identity_mapping_gaps == (row,)
+    assert row.mapping_status == "non_common_listing"
+    assert not snapshot.identity_mapping_gaps
+
+
+@pytest.mark.parametrize("ticker", ["BC/PB", "BC/PC"])
+def test_nyse_slash_preferred_suffix_is_not_an_identity_gap(ticker: str) -> None:
+    _master, snapshot = _build(
+        _listing_snapshot([(ticker, "Brunswick Corp", "NYSE", "Stock")]),
+        [],
+        [],
+        [],
+    )
+
+    row = snapshot.rows[0]
+    assert row.mapping_status == "non_common_listing"
+    assert not snapshot.identity_mapping_gaps
+
+
+@pytest.mark.parametrize("ticker", ["ALPXR", "AEPPZ", "AAPGV", "KNWND"])
+def test_nasdaq_fifth_character_non_common_issue_is_not_an_identity_gap(
+    ticker: str,
+) -> None:
+    _master, snapshot = _build(
+        _listing_snapshot([(ticker, "One Corp", "NASDAQ", "Stock")]),
+        [],
+        [],
+        [],
+    )
+
+    row = snapshot.rows[0]
+    assert row.mapping_status == "non_common_listing"
+    assert not snapshot.identity_mapping_gaps
 
 
 def test_independent_lifecycle_end_is_diagnostic_and_does_not_weaken_identity_gate() -> None:
@@ -523,6 +584,39 @@ def test_independent_lifecycle_end_is_diagnostic_and_does_not_weaken_identity_ga
     assert any(pointer.startswith("tiingo-supported://") for pointer in row.evidence_pointers)
 
 
+def test_independent_lifecycle_non_stock_proof_closes_the_identity_gap() -> None:
+    listing = _listing_snapshot([("FUND", "Provider Strategy", "NYSE", "Stock")])
+    lifecycle = TiingoLifecycleSnapshot(
+        "a" * 64,
+        (
+            TiingoLifecycleRow(
+                "FUND",
+                "NYSE",
+                "ETF",
+                "USD",
+                date(2020, 1, 1),
+                None,
+                2,
+            ),
+        ),
+    )
+    snapshot = build_universe_snapshot(
+        listing,
+        build_security_master([], []),
+        [],
+        signal_at=SIGNAL_AT,
+        config=CONFIG,
+        config_hash="c" * 64,
+        security_master_snapshot_id="m" * 64,
+        lifecycle=lifecycle,
+    )
+
+    row = snapshot.rows[0]
+    assert row.mapping_status == "non_common_listing"
+    assert not snapshot.identity_mapping_gaps
+    assert any(pointer.startswith("tiingo-supported://") for pointer in row.evidence_pointers)
+
+
 def test_company_name_containing_preferred_remains_an_identity_candidate() -> None:
     _master, snapshot = _build(
         _listing_snapshot([("PFBC", "Preferred Bank", "NASDAQ", "Stock")]),
@@ -534,6 +628,38 @@ def test_company_name_containing_preferred_remains_an_identity_candidate() -> No
     row = snapshot.rows[0]
     assert row.mapping_status == "unmapped"
     assert snapshot.identity_mapping_gaps == (row,)
+
+
+@pytest.mark.parametrize(
+    ("ticker", "exchange"),
+    [
+        ("CTEST", "NYSE"),
+        ("MTEST-A", "NYSE"),
+        ("NTEST-Z", "NYSE"),
+        ("PTEST-W", "NYSE"),
+        ("ZZK", "NYSE"),
+        ("ZVZZT", "NASDAQ"),
+        ("ZXYZ-A", "NASDAQ"),
+    ],
+)
+def test_dedicated_test_symbol_is_evidenced_non_member(
+    ticker: str,
+    exchange: str,
+) -> None:
+    _master, snapshot = _build(
+        _listing_snapshot([(ticker, "", exchange, "Stock")]),
+        [],
+        [],
+        [],
+    )
+
+    row = snapshot.rows[0]
+    assert row.mapping_status == "exchange_test_listing"
+    assert not snapshot.identity_mapping_gaps
+    assert any(
+        "CQS_BINARY_INPUT_SPECIFICATION.pdf" in p or "ERA2016-3" in p
+        for p in row.evidence_pointers
+    )
 
 
 def test_non_common_cover_mapping_is_an_exclusion_not_an_identity_gap() -> None:
@@ -737,6 +863,119 @@ def test_regime_evidence_never_reclassifies_mixed_or_unlisted_candidates() -> No
     snapshot = build_universe_snapshot(
         listings,
         build_security_master([], []),
+        [],
+        signal_at=SIGNAL_AT,
+        config=CONFIG,
+        config_hash="a" * 64,
+        security_master_snapshot_id="b" * 64,
+        regime=regime,
+    )
+
+    assert snapshot.rows[0].mapping_status == "unmapped"
+    assert len(snapshot.identity_mapping_gaps) == 1
+
+
+def test_sec_symbol_interval_proves_listing_was_superseded() -> None:
+    listings = _listing_snapshot([("OLD", "Renamed Corp", "NASDAQ", "Stock")])
+    row = next(item for item in listings.rows if item.state == "active")
+    security = _security(702, "sec-cover:renamed")
+    old_symbol = SymbolInterval(
+        security.security_id,
+        "OLD",
+        "NASDAQ",
+        date(2025, 1, 1),
+        date(2026, 6, 1),
+        "sec_xbrl_cover",
+        "high",
+        "sec://702/old-ticker",
+        datetime(2026, 6, 1, 20, tzinfo=UTC),
+        "historical_interval",
+    )
+    current_symbol = _symbol(security, "NEW")
+    regime = IdentityRegimeEvidence(
+        candidate_ciks_by_pointer={
+            f"alpha-vantage://{row.source_sha256}/{row.row_number}": (702,),
+        },
+        foreign_regime_pointers={},
+        no_periodic_pointers={},
+    )
+
+    snapshot = build_universe_snapshot(
+        listings,
+        build_security_master([security], [old_symbol, current_symbol]),
+        [],
+        signal_at=SIGNAL_AT,
+        config=CONFIG,
+        config_hash="a" * 64,
+        security_master_snapshot_id="b" * 64,
+        regime=regime,
+    )
+
+    result = snapshot.rows[0]
+    assert result.mapping_status == "superseded_sec_listing"
+    assert "sec://702/old-ticker" in result.evidence_pointers
+    assert not snapshot.identity_mapping_gaps
+
+
+def test_complete_sec_cover_history_proves_listing_was_superseded() -> None:
+    listings = _listing_snapshot([("OLD", "Renamed Corp", "NASDAQ", "Stock")])
+    row = next(item for item in listings.rows if item.state == "active")
+    regime = IdentityRegimeEvidence(
+        candidate_ciks_by_pointer={
+            f"alpha-vantage://{row.source_sha256}/{row.row_number}": (704,),
+        },
+        foreign_regime_pointers={},
+        no_periodic_pointers={},
+        superseded_pointers_by_listing={
+            f"alpha-vantage://{row.source_sha256}/{row.row_number}": (
+                "sec-history://704/complete",
+            ),
+        },
+    )
+
+    snapshot = build_universe_snapshot(
+        listings,
+        build_security_master([], []),
+        [],
+        signal_at=SIGNAL_AT,
+        config=CONFIG,
+        config_hash="a" * 64,
+        security_master_snapshot_id="b" * 64,
+        regime=regime,
+    )
+
+    assert snapshot.rows[0].mapping_status == "superseded_sec_listing"
+    assert "sec-history://704/complete" in snapshot.rows[0].evidence_pointers
+    assert not snapshot.identity_mapping_gaps
+
+
+def test_future_known_symbol_interval_cannot_supersede_listing() -> None:
+    listings = _listing_snapshot([("OLD", "Renamed Corp", "NASDAQ", "Stock")])
+    row = next(item for item in listings.rows if item.state == "active")
+    security = _security(703, "sec-cover:renamed")
+    old_symbol = SymbolInterval(
+        security.security_id,
+        "OLD",
+        "NASDAQ",
+        date(2025, 1, 1),
+        date(2026, 6, 1),
+        "sec_xbrl_cover",
+        "high",
+        "sec://703/future-ticker-evidence",
+        SIGNAL_AT + timedelta(days=1),
+        "historical_interval",
+    )
+    regime = IdentityRegimeEvidence(
+        candidate_ciks_by_pointer={
+            f"alpha-vantage://{row.source_sha256}/{row.row_number}": (703,),
+        },
+        foreign_regime_pointers={},
+        no_periodic_pointers={},
+    )
+
+    snapshot = build_universe_snapshot(
+        listings,
+        build_security_master([security], [old_symbol]),
         [],
         signal_at=SIGNAL_AT,
         config=CONFIG,
