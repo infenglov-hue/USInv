@@ -1,10 +1,127 @@
 # USInv — complete Claude handoff
 
-Updated: 2026-07-21 after all Codex work and GitHub Actions were stopped at
-the user's request.
+Updated: 2026-07-23 after local Phase 2.3 identity remediation and a blocked
+GitHub Actions refresh attempt.
 
 This is the authoritative continuation document. It is intentionally detailed
 enough that Claude should not need the Codex conversation transcript.
+
+## 0. Read this first: 2026-07-23 continuation checkpoint
+
+This section supersedes older measurements and continuation instructions later
+in this document where they conflict.
+
+### Repository and verification state
+
+| Item | Current state |
+|---|---|
+| Active branch | `agent/phase-2-3-universe-builder` |
+| Latest functional commit | `4337072` (`Reduce Phase 2.3 identity gaps with PIT evidence`) |
+| Remote state | `4337072` was pushed successfully to the active branch |
+| Working tree at handoff edit start | Clean |
+| Verification | `ruff check .` passed; full suite **413 passed in 41.42s** |
+| Phase | **2.3 still in progress; D032 has not passed** |
+| Active workflow | None |
+
+Do not claim Phase 2.3 complete. The hard D032 acceptance rule remains zero
+identity, FF49/sector and mandatory-input gaps, core applicability >=90% and
+secondary applicability >=75%. No threshold was weakened.
+
+### What Codex changed after the older handoff
+
+- Cover reconciliation now safely unions same-CIK, exact-ticker/exchange,
+  overlapping common-stock intervals despite harmless SEC identity wording
+  drift. Genuine multi-class ambiguity remains quarantined.
+- Added narrow historical ticker normalization for observed `BAX (NYSE)`,
+  `BAX-(NYSE)` and unique allowed-pair `BFA` -> `BF-A` cases.
+- Added filing-proven `superseded_sec_listing` classification. It requires a
+  historical exact SEC interval ending before the cutoff, current different
+  common ticker evidence, complete recent cover history and form proof.
+  Future-known intervals cannot classify an old row; regression coverage
+  explicitly guards this PIT boundary.
+- Foreign-filer classification now accepts the conservative case where every
+  master security for the CIK is filing-proven `domestic_flag=False`, even if
+  archived cover history also contains 8-K/10-K forms.
+- Added exact non-common product evidence for observed explicit trust/fund/debt
+  issuer names. These are registered exact patterns, not broad suffix guesses.
+- Added exact normalized EFTS entity-name discovery plus a suffix-insensitive
+  company-stem candidate with explicitly weak confidence. Weak discovery alone
+  cannot create a historical identity.
+- The CLI discovery path gained optional `--listing-snapshot` support for
+  exact entity-name matching.
+- Strongly resolved unique CIKs can admit actual SEC cover tickers beyond a
+  stale listing pair. Weak or multi-candidate discoveries remain fail-closed.
+- Reconciliation/version constants were bumped so stale evidence cannot be
+  silently read as if produced by the new rules.
+
+### Latest local immutable artifacts and measurement
+
+All work below was cache-only/offline; no SEC contact identity or provider
+credential was fabricated.
+
+- Discovery plan:
+  `data/local-gate/name-plan-v13-stem-cache/security-bootstrap/discovery/2026-07-17/ac7f40631da48e4a39069c2bdfd50aeb58edfae1b631db6f790503aca69f0b20`
+- Versioned cover evidence:
+  `data/local-gate/cover-v19-versioned/security-bootstrap/complete-evidence/ac7f40631da48e4a39069c2bdfd50aeb58edfae1b631db6f790503aca69f0b20/2026-07-17/snapshots/fedb139a4fd15dde7fca5f913b706ca0d21789472a813d55745de0d9055c9339`
+- Master snapshot hash:
+  `6e0421388702786b54bb3d0ab242a351f3f2d3dd167b8b32e9b940c2dbfc46a1`
+
+Latest 14,207-candidate identity status:
+
+| Status | Count |
+|---|---:|
+| mapped | 5,682 |
+| non-common | 1,996 |
+| non-domestic | 292 |
+| unmapped/identity gap | **178** |
+| superseded SEC listing | 83 |
+| exchange test | 43 |
+| no periodic filing | 39 |
+| not attempted / outside identity attempt | 5,894 |
+
+The 178 identity gaps comprise 77 candidate-discovery rows and 101
+no-candidate rows. This improves the immediately preceding local measurement
+from 358 to 178, but it is not a D032 pass.
+
+The new cover/master state expands the exact price universe from 4,159 to
+4,313 targets: 155 additions and one removal (`LIXT`). Those 155 additions
+have not been downloaded because no local Alpaca credentials are available.
+Therefore the latest full universe/D032 result has not been measured and the
+older mandatory/sector counts must not be presented as current.
+
+### External-state findings
+
+- No local `USINV_EDGAR_EMAIL`, Alpaca key/secret or usable `.env` was found.
+- Cache-complete name discovery admitted useful identities, but roughly 50
+  changed/new CIK candidates still lack local submissions cache.
+- GitHub authentication initially used the wrong active account. Codex
+  temporarily switched to `infenglov-hue`, pushed `4337072`, then restored
+  `Somethinglikeu-hub` as the previously active account.
+- A single non-duplicating SEC refresh was dispatched from plan run
+  `29772784252`: GitHub Actions run
+  [`30000558041`](https://github.com/infenglov-hue/USInv/actions/runs/30000558041).
+  It never started. GitHub reported: recent account payments failed or the
+  spending limit must be increased. No data artifact was produced.
+- The user explicitly decided not to wait for GitHub: continue constructing
+  and verifying the project locally; publishing can happen later.
+
+### Exact next step for Claude
+
+1. Stay on Phase 2.3 and inspect `git status` plus commit `4337072`. Preserve
+   all local immutable artifacts above.
+2. Do **not** redispatch run `30000558041` or wait for GitHub billing.
+3. Continue cache-only classification of the 178 exact residual identity rows,
+   preserving PIT and fail-closed rules. Start from the latest gap artifact;
+   do not rebuild v1-v18 evidence.
+4. For gaps that genuinely require new provider data, the user must set
+   credentials locally without pasting them into chat:
+   `USINV_EDGAR_EMAIL`, `ALPACA_KEY_ID`, `ALPACA_SECRET_KEY`. Once present,
+   acquire only the missing SEC submissions and 155 added price targets.
+5. Rebuild the complete local Phase 2.3 snapshot, measure current identity,
+   FF49/sector, mandatory, core and secondary gates, and retain hashes/config.
+6. Fix only evidence-backed residuals. Phase 2.3 ends only after a genuine
+   local D032 pass, Ruff and the full test suite. GitHub upload may follow
+   later.
 
 ## 1. Immediate repository state
 
@@ -14,11 +131,11 @@ enough that Claude should not need the Codex conversation transcript.
 | Working directory | `C:\Ai Projects\USInv` |
 | Main branch | `main` at `f71dc5e` — Phase 2.2 merged |
 | Active development branch | `agent/phase-2-3-universe-builder` |
-| Branch HEAD | The commit containing this file; verify with `git rev-parse HEAD` |
-| Latest functional code commit | `ac10b01` (`Bound SEC shard disk usage`) |
+| Branch HEAD before this handoff edit | `4337072` |
+| Latest functional code commit | `4337072` (`Reduce Phase 2.3 identity gaps with PIT evidence`) |
 | Current phase | Phase 2.3, universe/identity/D032 remediation |
-| Tests | 321 passing; Ruff passing |
-| Active GitHub Actions | None; run `29821740675` was cancelled deliberately |
+| Tests | 413 passing; Ruff passing |
+| Active GitHub Actions | None; run `30000558041` was rejected before start by billing/spending limit |
 | Active Codex monitoring | Stopped; do not assume any background continuation |
 
 Do not work in or import from MobileInv. USInv is deliberately independent.
