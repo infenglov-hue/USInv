@@ -774,3 +774,114 @@
   selected; no backtest may start before their rights and sample gates pass.
 - Alpha Vantage and EDGAR secrets are registered and are not blockers. Broker
   funding remains a later paper/live activation gate.
+
+## 2026-07-23 — Phase 2.3 checkpoint and documented deviation (BLUEPRINT-DEVIATION)
+
+Phase 2.3 D032 universe gate is **NOT passed**. User decision (2026-07-23):
+proceed to later phases under a documented deviation per AGENTS.md rule 75
+("If reality contradicts this blueprint... mark BLUEPRINT-DEVIATION and surface
+for user review"). The **full D032 pass remains a hard prerequisite before any
+performance claim (rule 6), paper operation, or live activation** — none of
+which may occur on the residual universe.
+
+### Measured state (local build, snapshot `cfc5bad6...`, signal 2026-07-17)
+
+- candidates 14,207; **included 1,646**
+- core coverage **90.83%** (PASS >=90%); secondary **78.12%** (PASS >=75%)
+- **identity gaps 178** (BLOCKING); **sector gaps 51** (BLOCKING); mandatory pending (gate short-circuits on identity)
+- Membership waterfall accounting for the 14,207: 5,658 non-stock (ETF/fund),
+  ~3,400 non-common (preferred/warrant/unit/right), 2,287 secondary share
+  class, ~640 foreign, 236 unsupported exchange, 23 below market-cap floor,
+  178 identity residual -> 1,646 included. 1,646 sits between Russell 1000 and
+  3000 — a normal quality-screened US-equity universe size, not a data loss.
+
+### Residual buckets (identity 178) — the closure plan
+
+- 129 `no_sec_match_other` — name-based EDGAR resolution -> superseded /
+  foreign-40F / evidence-backed "no SEC match" exclusion (mostly coverage-safe).
+- 25 `sec_domestic_10x_filer` — real domestic filers whose cover extraction
+  failed; repair/re-acquire. May become INCLUDED -> watch core>=90%.
+- 15 `sec_registered_no_periodic` — need form_history_proofs -> `no_periodic`.
+- 8 blank-name + 1 fund — explicit evidence-backed exclusion rules.
+- Sector 51 = 46 BDCs (SIC 6726; need cover-archived filing so filing-sic-sync
+  yields their SIC -> `sector_excluded`) + 5 FF49-table (SIC 900/3990 need a
+  Fama-French-correct mapping decision).
+
+### Product impact of proceeding on the residual
+
+Residual is ~2% of the candidate universe, concentrated in the 25 cover-failed
+domestic rows; nearly all other residual fails other filters and would resolve
+as exclusions. The included investable set (1,646) is sound and PIT-correct;
+the engine can be built and validated on it. **Only genuine watch item:**
+whether the 25 cover-failed rows share a characteristic that would bias a
+backtest — must be closed before any performance claim.
+
+### Resume artifacts (immutable, under `data/local-gate/`, gitignored)
+
+- listing `ead12cd7...`; discovery v13 `ac7f4063...`; cover v19 `fedb139a...`;
+  price universe `prices-lifecycle/universe-runs/edf85553...`; filing-sic-v1
+  `0e7c45ec...`; Tiingo lifecycle `private-lifecycle/supported_tickers.zip`.
+- Local gate = `universe-price-sync` + `phase-2-3-build` (paths as in
+  `CONTINUE_HERE.md` §3, updated to v13/v19 + the price/filing-sic supplements).
+- A 7-step closure plan is tracked in the working session task list.
+
+### Verification
+
+- ruff green; full suite 413 passed (per CLAUDE_HANDOFF).
+- Alpaca + EDGAR credentials are now local (`.env`, gitignored). Price sync and
+  the full phase-2-3-build were reproduced this session (identity 178 confirmed
+  in a full build; sector reduced 162 -> 51 via filing-header SIC supplement).
+- Latest functional commit `4337072` (pushed); doc commits follow.
+
+### Next
+
+Advance to Phase 2.4 (freshness/coverage kill-switch) and/or Phase 3 (hygiene &
+signals) on the current included universe, honoring the pre-claim/paper/live
+gate above. This PROGRESS entry is the surfaced BLUEPRINT-DEVIATION record.
+
+## 2026-07-23 — Phase 2.4 freshness / kill-switch gates implemented
+
+Built the Phase 2.4 freshness + coverage kill-switch (DATA_SPEC §8/§6, OPS_SPEC
+§3). Proceeded under the Phase 2.3 documented deviation above; freshness does not
+depend on universe completeness.
+
+### What was done
+
+- `usinv/freshness.py`: pure, testable gate evaluators + a `FreshnessReport`
+  aggregator and `enforce_freshness_gate` kill-switch (`FreshnessGateError`):
+  - **Fundamentals** — a scored security is stale when its next periodic report
+    is past `period_end + due_window(form, filer) + grace`; red when the stale
+    fraction exceeds 10%. Due windows: 10-Q 40/40/45d, 10-K 60/75/90d
+    (LAF/ACC/other), grace 5 XNYS sessions.
+  - **Prices** — any active-universe security whose last bar is older than 3
+    XNYS sessions is red.
+  - **Delisted-coverage audit** — a master-active symbol absent from BOTH the
+    active and delisted Alpha lists is an unexplained gap ⇒ red.
+  - **Macro** — series older than `2× cadence` are red (no macro series exist
+    until Phase 3.4; the gate is skipped when no macro inputs are supplied).
+- `usinv/config/freshness.yaml` + `FreshnessConfig` wired into `AppConfig`
+  (config-tunable thresholds; blueprint defaults are the initial values).
+- CLI `freshness-gate --inputs <json> [--as-of] [--output]`: prints the health
+  block and exits non-zero (red) on any stale gate.
+- `.github/workflows/nightly-data.yml`: runs the kill-switch test and the
+  freshness gate red-on-failure. The live nightly pipeline (EDGAR/price/macro
+  pull that produces the real inputs file) lands in later phases; the fixture
+  and pinned `--as-of` are a documented placeholder.
+- `tests/test_freshness.py`: 16 tests incl. the **stale-fixture → red
+  kill-switch demo** (the Phase 2.4 acceptance gate) and the fresh → green path.
+
+### Verification
+
+- `ruff check .` passes; the new files pass `ruff format --check`.
+- Full suite **429 passed** (was 413; +16 freshness tests, no regressions).
+- CLI verified locally: fresh fixture exit 0 (green), stale fixture exit 2 (red).
+- NOTE (pre-existing, not introduced here): ~25 already-committed files are
+  flagged by `ruff format --check` under ruff 0.15.x (format drift vs the
+  version they were committed with). Out of scope for this change; not touched.
+
+### Remaining for a full Phase 2.4 close
+
+- Artifact adapters that build the freshness inputs from the live nightly pull
+  (fundamentals filer-status/period-end from FSDS `sub`/PIT store, price last
+  bars, Alpha active/delisted lists) — arrive with the Phase 6 nightly pipeline.
+- Telegram alerting on red is Phase 7 (OPS_SPEC §3).

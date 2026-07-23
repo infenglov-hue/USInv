@@ -1,0 +1,15 @@
+# Phase 2.4 freshness / kill-switch thresholds (DATA_SPEC §8).
+# These blueprint defaults ARE the initial values and are config-tunable.
+fundamentals_stale_fraction_max: 0.10
+fundamentals_grace_business_days: 5
+# Periodic-report due windows in calendar days, by form and SEC filer category.
+form10q_due_days_large_accelerated: 40
+form10q_due_days_accelerated: 40
+form10q_due_days_other: 45
+form10k_due_days_large_accelerated: 60
+form10k_due_days_accelerated: 75
+form10k_due_days_other: 90
+# Prices: any active-universe last bar older than this many XNYS sessions is red.
+price_max_sessions_stale: 3
+# Macro: per-series max age = this multiple of the series publication cadence.
+macro_max_age_cadence_multiple: 2

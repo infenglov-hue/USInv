@@ -1,0 +1,21 @@
+{
+  "scored_total": 3,
+  "fundamentals": [
+    {"security_id": "SEC-A", "filer_category": "large_accelerated", "next_form": "10-Q", "next_period_end": "2026-01-31"},
+    {"security_id": "SEC-B", "filer_category": "accelerated", "next_form": "10-Q", "next_period_end": "2026-01-31"},
+    {"security_id": "SEC-C", "filer_category": "other", "next_form": "10-K", "next_period_end": "2026-01-31"}
+  ],
+  "prices": [
+    {"security_id": "SEC-A", "last_bar_session": "2026-02-13"},
+    {"security_id": "SEC-B", "last_bar_session": "2026-02-17"},
+    {"security_id": "SEC-C", "last_bar_session": "2026-02-13"}
+  ],
+  "delisted": {
+    "active_symbols": ["AAA", "BBB"],
+    "delisted_symbols": ["CCC"],
+    "master_active_symbols": ["AAA", "BBB"]
+  },
+  "macro": [
+    {"series_id": "NFCI", "last_observation": "2026-02-11", "cadence_days": 7}
+  ]
+}

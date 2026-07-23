@@ -73,6 +73,15 @@ from usinv.data.prices import (
     rebase_price_universe_snapshot,
 )
 from usinv.data.tiingo_lifecycle import read_tiingo_lifecycle_zip
+from usinv.freshness import (
+    DelistedAuditInput,
+    FreshnessGateError,
+    FundamentalsFreshnessInput,
+    MacroFreshnessInput,
+    PriceFreshnessInput,
+    build_freshness_report,
+    enforce_freshness_gate,
+)
 from usinv.phase_2_3 import Phase23BuildError, build_phase_2_3
 from usinv.universe import (
     UniverseError,
@@ -403,6 +412,15 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="return a failing status unless core and secondary thresholds pass",
     )
+    freshness = subcommands.add_parser(
+        "freshness-gate",
+        help="run the Phase 2.4 freshness/coverage kill-switch over a JSON inputs file",
+    )
+    freshness.add_argument("--inputs", type=Path, required=True)
+    freshness.add_argument(
+        "--as-of", type=_aware_datetime, help="evaluation instant (default: now, UTC)"
+    )
+    freshness.add_argument("--output", type=Path, help="write the health-block JSON here")
     return parser
 
 
@@ -506,9 +524,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         unique_matches = sum(match.status == "unique" for match in matches.values())
         ambiguous_matches = sum(match.status == "ambiguous" for match in matches.values())
-        stem_unique_matches = sum(
-            match.status == "unique" for match in stem_matches.values()
-        )
+        stem_unique_matches = sum(match.status == "unique" for match in stem_matches.values())
         state = "cache" if artifact.from_cache else "created"
         print(
             " ".join(
@@ -533,9 +549,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.listing_snapshot is not None:
                 listing = read_alpha_listing_snapshot(args.listing_snapshot)
                 if listing.as_of != discovery.listing_as_of:
-                    raise EdgarError(
-                        "ticker-history listing and discovery dates do not match"
-                    )
+                    raise EdgarError("ticker-history listing and discovery dates do not match")
                 listing_names_by_pointer = {
                     f"alpha-vantage://{row.source_sha256}/{row.row_number}": row.name
                     for row in listing.rows
@@ -550,9 +564,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 client,
                 discovery,
                 as_of=args.as_of,
-                target_tickers=(
-                    frozenset(args.target_ticker) if args.target_ticker else None
-                ),
+                target_tickers=(frozenset(args.target_ticker) if args.target_ticker else None),
                 listing_names_by_pointer=listing_names_by_pointer,
                 refresh=args.refresh,
             )
@@ -562,9 +574,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"sec_ticker_history_discovery_failed: {exc}", file=sys.stderr)
             return 2
         unique_matches = sum(match.status == "unique" for match in matches.values())
-        query_count = (
-            len(set(args.target_ticker)) if args.target_ticker else len(matches)
-        )
+        query_count = len(set(args.target_ticker)) if args.target_ticker else len(matches)
         print(
             " ".join(
                 (
@@ -630,8 +640,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"sec_cover_upgrade_40f_failed: {exc}", file=sys.stderr)
             return 2
         forty_f_count = sum(
-            row.form.upper().removesuffix("/A") == "40-F"
-            for row in shard.fpi_form_observations
+            row.form.upper().removesuffix("/A") == "40-F" for row in shard.fpi_form_observations
         )
         print(
             " ".join(
@@ -925,9 +934,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.fsds_end,
                 archive_as_of=args.archive_as_of,
             )
-            supplements = tuple(
-                read_live_edge_snapshot(path) for path in args.live_edge_snapshot
-            )
+            supplements = tuple(read_live_edge_snapshot(path) for path in args.live_edge_snapshot)
             filing_sic_supplements = tuple(
                 read_filing_sic_snapshot(path) for path in args.filing_sic_snapshot
             )
@@ -1318,4 +1325,72 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
         return 3 if args.enforce and not report.passed else 0
+    if args.command == "freshness-gate":
+        config = load_config()
+        payload = json.loads(args.inputs.read_text(encoding="utf-8"))
+        as_of = args.as_of or datetime.now(UTC)
+        delisted_raw = payload.get("delisted", {})
+        try:
+            report = build_freshness_report(
+                as_of=as_of,
+                fundamentals_inputs=[
+                    FundamentalsFreshnessInput(
+                        row["security_id"],
+                        row["filer_category"],
+                        row["next_form"],
+                        date.fromisoformat(row["next_period_end"]),
+                    )
+                    for row in payload.get("fundamentals", [])
+                ],
+                scored_total=int(payload.get("scored_total", 0)),
+                price_inputs=[
+                    PriceFreshnessInput(
+                        row["security_id"], date.fromisoformat(row["last_bar_session"])
+                    )
+                    for row in payload.get("prices", [])
+                ],
+                delisted=DelistedAuditInput(
+                    frozenset(delisted_raw.get("active_symbols", [])),
+                    frozenset(delisted_raw.get("delisted_symbols", [])),
+                    frozenset(delisted_raw.get("master_active_symbols", [])),
+                ),
+                macro_inputs=(
+                    [
+                        MacroFreshnessInput(
+                            row["series_id"],
+                            date.fromisoformat(row["last_observation"]),
+                            int(row["cadence_days"]),
+                        )
+                        for row in payload["macro"]
+                    ]
+                    if "macro" in payload
+                    else None
+                ),
+                config=config.freshness,
+            )
+        except (KeyError, ValueError) as exc:
+            print(f"freshness_gate_failed: {exc}", file=sys.stderr)
+            return 2
+        block = report.health_block()
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(block, indent=2, sort_keys=True), encoding="utf-8")
+        print(
+            " ".join(
+                (
+                    "freshness_gate_ok" if report.passed else "freshness_gate_red",
+                    f"fundamentals_stale={len(report.fundamentals.stale_security_ids)}"
+                    f"/{report.fundamentals.scored_total}",
+                    f"prices_stale={len(report.prices.stale_security_ids)}",
+                    f"delisted_unexplained={len(report.delisted.unexplained_symbols)}",
+                    f"gate={'passed' if report.passed else 'red'}",
+                )
+            )
+        )
+        try:
+            enforce_freshness_gate(report)
+        except FreshnessGateError as exc:
+            print(f"freshness_gate_reason: {exc}", file=sys.stderr)
+            return 2
+        return 0
     raise AssertionError(f"unhandled command: {args.command}")
