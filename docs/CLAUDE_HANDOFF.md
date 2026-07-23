@@ -31,6 +31,35 @@ construction to proceed, but zero D032 gaps remains mandatory before any
 performance claim, paper operation or live activation. Phase 2.4 freshness
 kill-switch code already exists in local commit `4ea3dd1`.
 
+### Why proceeding is acceptable, and where it is not
+
+The user and Codex explicitly reviewed the residual and concluded that it is
+not a major blocker for constructing the later engine:
+
+- Unresolved identity, sector or mandatory-evidence rows fail closed. They are
+  excluded from the investable universe; the pipeline never guesses an
+  identity or silently fills missing values.
+- The last fully supplemented local build had 1,646 included securities. The
+  unresolved identity set was 178 of 14,207 listing candidates (about 1.25%);
+  most residuals were stale/delisted Alpha rows, foreign issuers, SPACs,
+  non-common products or issuers that would fail other filters anyway.
+- Therefore Phase 3 hygiene/scoring contracts can be implemented and tested on
+  the already evidence-complete included universe. The practical effect during
+  construction is that some unresolved stocks simply cannot enter the
+  universe; it does not corrupt the identities or facts of stocks that do
+  enter.
+- The genuine watch item is the small domestic 10-K/10-Q cover-extraction
+  bucket. Those companies might eventually become eligible, so excluding them
+  could bias a measured backtest. This is why the deviation permits software
+  construction but does **not** permit performance claims, model selection,
+  paper operation or live activation before the residual and D032 gate are
+  closed.
+
+Do not misstate the decision as “D032 no longer matters” or “Phase 2.3
+passed.” The precise decision is: later components may be built against the
+fail-closed evidence-complete subset, while final empirical/operational use
+remains gated on full D032 acceptance.
+
 ### What `fff1529` did
 
 - Added exact PIT FSDS issuer-name corroboration for unique CIK candidates that
