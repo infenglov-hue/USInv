@@ -12,15 +12,25 @@ from decimal import Decimal
 import pytest
 
 from usinv.hygiene import (
+    ATMDilutionEvidence,
+    DataIntegrityEvidence,
+    EnforcementEvidence,
+    GoingConcernEvidence,
     HygieneAction,
     HygieneError,
     HygieneVerdict,
     ListingRiskEvidence,
     ShellEvidence,
+    VariablePriceEvidence,
     clear,
+    evaluate_atm_dilution,
+    evaluate_data_integrity,
+    evaluate_enforcement,
     evaluate_going_concern,
     evaluate_listing_risk,
     evaluate_shell,
+    evaluate_variable_price,
+    screen_hygiene,
     worst,
 )
 
@@ -136,3 +146,103 @@ def test_listing_reverse_split_24m_penalizes():
 def test_listing_low_price_without_reverse_split_is_clear():
     verdict = evaluate_listing_risk(ListingRiskEvidence(Decimal("1.10"), False, False, POINTER))
     assert verdict.action is HygieneAction.CLEAR
+
+
+# --------------------------------------------------------------------------- #
+# ATM dilution gate.
+# --------------------------------------------------------------------------- #
+def test_atm_corroborated_issuance_excludes():
+    verdict = evaluate_atm_dilution(ATMDilutionEvidence(True, True, True, POINTER))
+    assert verdict.action is HygieneAction.EXCLUDE
+
+
+def test_atm_capacity_without_issuance_penalizes():
+    verdict = evaluate_atm_dilution(ATMDilutionEvidence(True, True, False, POINTER))
+    assert verdict.action is HygieneAction.PENALIZE
+
+
+def test_atm_no_facility_is_clear():
+    verdict = evaluate_atm_dilution(ATMDilutionEvidence(True, False, False, POINTER))
+    assert verdict.action is HygieneAction.CLEAR
+
+
+# --------------------------------------------------------------------------- #
+# Variable-price financing gate.
+# --------------------------------------------------------------------------- #
+def test_variable_price_corroborated_outstanding_excludes():
+    verdict = evaluate_variable_price(VariablePriceEvidence(True, True, False, POINTER))
+    assert verdict.action is HygieneAction.EXCLUDE
+
+
+def test_variable_price_unknown_status_quarantines():
+    verdict = evaluate_variable_price(VariablePriceEvidence(True, False, True, POINTER))
+    assert verdict.action is HygieneAction.QUARANTINE
+
+
+def test_variable_price_clean_is_clear():
+    verdict = evaluate_variable_price(VariablePriceEvidence(False, False, False, POINTER))
+    assert verdict.action is HygieneAction.CLEAR
+
+
+# --------------------------------------------------------------------------- #
+# Enforcement / suspension gate.
+# --------------------------------------------------------------------------- #
+def test_enforcement_active_suspension_excludes():
+    verdict = evaluate_enforcement(EnforcementEvidence(True, 0, POINTER))
+    assert verdict.action is HygieneAction.EXCLUDE
+
+
+def test_enforcement_repeated_name_changes_penalize():
+    verdict = evaluate_enforcement(EnforcementEvidence(False, 2, POINTER))
+    assert verdict.action is HygieneAction.PENALIZE
+
+
+def test_enforcement_single_name_change_is_clear():
+    verdict = evaluate_enforcement(EnforcementEvidence(False, 1, POINTER))
+    assert verdict.action is HygieneAction.CLEAR
+
+
+# --------------------------------------------------------------------------- #
+# Data-integrity gate.
+# --------------------------------------------------------------------------- #
+def test_data_integrity_share_jump_quarantines():
+    verdict = evaluate_data_integrity(DataIntegrityEvidence(True, False, False, POINTER))
+    assert verdict.action is HygieneAction.QUARANTINE
+
+
+def test_data_integrity_clean_is_clear():
+    verdict = evaluate_data_integrity(DataIntegrityEvidence(False, False, False, POINTER))
+    assert verdict.action is HygieneAction.CLEAR
+
+
+# --------------------------------------------------------------------------- #
+# Aggregate screen.
+# --------------------------------------------------------------------------- #
+def test_screen_combines_to_most_restrictive():
+    result = screen_hygiene(
+        "SEC-1",
+        going_concern=GoingConcernEvidence(_AFFIRMATIVE, POINTER),
+        shell=ShellEvidence(frozenset({3826}), False, POINTER),
+        listing=ListingRiskEvidence(Decimal("8.00"), False, True, POINTER),
+    )
+    # going-concern EXCLUDE dominates the listing PENALIZE.
+    assert result.action is HygieneAction.EXCLUDE
+    assert result.blocks_selection is True
+    assert len(result.firing) == 2  # going-concern + listing fired; shell clear
+
+
+def test_screen_all_clear_does_not_block():
+    result = screen_hygiene(
+        "SEC-2",
+        shell=ShellEvidence(frozenset({3826}), False, POINTER),
+        listing=ListingRiskEvidence(Decimal("8.00"), False, False, POINTER),
+    )
+    assert result.action is HygieneAction.CLEAR
+    assert result.blocks_selection is False
+    assert result.firing == ()
+
+
+def test_screen_with_no_evidence_is_clear():
+    result = screen_hygiene("SEC-3")
+    assert result.action is HygieneAction.CLEAR
+    assert result.verdicts == ()
