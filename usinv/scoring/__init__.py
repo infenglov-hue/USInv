@@ -1,5 +1,12 @@
 """Point-in-time factor scoring."""
 
+from usinv.scoring.context import (
+    LookAheadError,
+    ScoringContext,
+    ScoringContextError,
+    ScoringInputs,
+    Vintage,
+)
 from usinv.scoring.sectors import (
     SECTOR_MAPPING_VERSION,
     SectorClassification,
@@ -11,9 +18,14 @@ from usinv.scoring.sectors import (
 
 __all__ = [
     "SECTOR_MAPPING_VERSION",
+    "LookAheadError",
+    "ScoringContext",
+    "ScoringContextError",
+    "ScoringInputs",
     "SectorClassification",
     "SectorGroup",
     "SectorMappingError",
+    "Vintage",
     "classify_sic",
     "sector_source_hashes",
 ]
