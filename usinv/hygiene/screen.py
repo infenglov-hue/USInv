@@ -1,8 +1,10 @@
 """Aggregate hygiene screen: run every MODEL_SPEC §3 gate and combine verdicts.
 
-The overall disposition is the most restrictive gate verdict. Only the gates for
-which evidence is supplied are evaluated; a security with no evidence is treated
-as clear (the caller is responsible for supplying the required inputs).
+The overall disposition is the most restrictive gate verdict. Missing evidence is
+NOT clean evidence: by default the screen fails closed, quarantining a security
+whose mandatory gates could not be evaluated (AGENTS.md — unmapped/ambiguous rows
+are quarantined, never guessed). Callers that deliberately screen a partial set
+of gates must opt out with ``require_evidence=False``.
 """
 
 from __future__ import annotations
@@ -17,6 +19,13 @@ from usinv.hygiene.listing import ListingRiskEvidence, evaluate_listing_risk
 from usinv.hygiene.shell import ShellEvidence, evaluate_shell
 from usinv.hygiene.variable_price import VariablePriceEvidence, evaluate_variable_price
 from usinv.hygiene.verdict import HygieneAction, HygieneVerdict, clear, worst
+
+# Gates that must be evaluable before a security can be called hygienically clean.
+MANDATORY_GATES = ("going_concern", "shell", "listing_risk", "data_integrity")
+
+# Synthetic pointer: the evidence for this verdict is precisely the absence of
+# evidence, so it cannot reference a filing.
+MISSING_EVIDENCE_POINTER = "usinv://hygiene/missing-evidence"
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,9 +67,31 @@ def screen_hygiene(
     variable_price: VariablePriceEvidence | None = None,
     enforcement: EnforcementEvidence | None = None,
     data_integrity: DataIntegrityEvidence | None = None,
+    require_evidence: bool = True,
 ) -> HygieneScreenResult:
-    """Evaluate every supplied gate and return the combined hygiene disposition."""
+    """Evaluate every supplied gate and return the combined hygiene disposition.
+
+    With ``require_evidence`` (the default) a security whose mandatory gates
+    cannot be evaluated is quarantined rather than treated as clean.
+    """
     verdicts: list[HygieneVerdict] = []
+    if require_evidence:
+        supplied = {
+            "going_concern": going_concern is not None,
+            "shell": shell is not None,
+            "listing_risk": listing is not None,
+            "data_integrity": data_integrity is not None,
+        }
+        missing = tuple(gate for gate in MANDATORY_GATES if not supplied[gate])
+        if missing:
+            verdicts.append(
+                HygieneVerdict(
+                    gate="evidence_completeness",
+                    action=HygieneAction.QUARANTINE,
+                    detail=f"no evidence supplied for mandatory gates: {', '.join(missing)}",
+                    evidence_pointer=MISSING_EVIDENCE_POINTER,
+                )
+            )
     if going_concern is not None:
         verdicts.append(
             evaluate_going_concern(

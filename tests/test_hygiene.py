@@ -218,31 +218,64 @@ def test_data_integrity_clean_is_clear():
 # --------------------------------------------------------------------------- #
 # Aggregate screen.
 # --------------------------------------------------------------------------- #
+def _all_mandatory(going_concern_text: str = _NEGATED, **overrides):
+    """Supply every mandatory gate so the completeness guard stays silent."""
+    evidence = {
+        "going_concern": GoingConcernEvidence(going_concern_text, POINTER),
+        "shell": ShellEvidence(frozenset({3826}), False, POINTER),
+        "listing": ListingRiskEvidence(Decimal("8.00"), False, False, POINTER),
+        "data_integrity": DataIntegrityEvidence(False, False, False, POINTER),
+    }
+    evidence.update(overrides)
+    return evidence
+
+
 def test_screen_combines_to_most_restrictive():
     result = screen_hygiene(
         "SEC-1",
-        going_concern=GoingConcernEvidence(_AFFIRMATIVE, POINTER),
-        shell=ShellEvidence(frozenset({3826}), False, POINTER),
-        listing=ListingRiskEvidence(Decimal("8.00"), False, True, POINTER),
+        **_all_mandatory(
+            _AFFIRMATIVE,
+            listing=ListingRiskEvidence(Decimal("8.00"), False, True, POINTER),
+        ),
     )
     # going-concern EXCLUDE dominates the listing PENALIZE.
     assert result.action is HygieneAction.EXCLUDE
     assert result.blocks_selection is True
-    assert len(result.firing) == 2  # going-concern + listing fired; shell clear
+    assert len(result.firing) == 2  # going-concern + listing fired; shell/integrity clear
 
 
 def test_screen_all_clear_does_not_block():
-    result = screen_hygiene(
-        "SEC-2",
-        shell=ShellEvidence(frozenset({3826}), False, POINTER),
-        listing=ListingRiskEvidence(Decimal("8.00"), False, False, POINTER),
-    )
+    result = screen_hygiene("SEC-2", **_all_mandatory())
     assert result.action is HygieneAction.CLEAR
     assert result.blocks_selection is False
     assert result.firing == ()
 
 
-def test_screen_with_no_evidence_is_clear():
+def test_screen_with_no_evidence_quarantines():
+    # Missing evidence is not clean evidence: the screen must fail closed.
     result = screen_hygiene("SEC-3")
+    assert result.action is HygieneAction.QUARANTINE
+    assert result.blocks_selection is True
+    assert "going_concern" in result.overall.detail
+
+
+def test_screen_partial_evidence_quarantines():
+    result = screen_hygiene("SEC-4", shell=ShellEvidence(frozenset({3826}), False, POINTER))
+    assert result.action is HygieneAction.QUARANTINE
+    assert "data_integrity" in result.overall.detail
+
+
+def test_screen_opt_out_skips_completeness_guard():
+    result = screen_hygiene(
+        "SEC-5",
+        shell=ShellEvidence(frozenset({3826}), False, POINTER),
+        require_evidence=False,
+    )
     assert result.action is HygieneAction.CLEAR
-    assert result.verdicts == ()
+    assert result.blocks_selection is False
+
+
+def test_screen_exclusion_still_wins_over_missing_evidence():
+    # A hard exclusion must not be masked by the completeness quarantine.
+    result = screen_hygiene("SEC-6", shell=ShellEvidence(frozenset({6770}), None, POINTER))
+    assert result.action is HygieneAction.EXCLUDE
