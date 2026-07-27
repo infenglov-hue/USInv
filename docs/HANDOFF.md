@@ -8,26 +8,26 @@
 
 | Item | Value |
 |---|---|
-| Branch / latest functional code | `agent/phase-2-3-universe-builder` / `af084e7` |
-| Remote relation | Local branch is 11 commits ahead including handoff docs; nothing was pushed |
-| Verification | Ruff passes; full suite **501 passed** |
-| Product construction | Phase 2.4, 3.1, 3.2 and 3.3 implemented locally |
+| Branch / latest functional code | `agent/phase-2-3-universe-builder` / `c331d95` |
+| Remote relation | All current Phase 2.4/3 commits are local; nothing was pushed |
+| Verification | Ruff passes; full suite **518 passed** |
+| Product construction | Phase 2.4 and all Phase 3 tasks implemented locally |
 | D032 | **Still not passed**; the documented 2026-07-23 deviation remains in force |
 | External work | No workflow or provider refresh running |
 
-Phase 3.3 is now complete in two commits: `fd014d0` adds PIT-safe factor
-metrics/sleeve ranks and `af084e7` adds the nine-signal Piotroski junk veto,
-weighted composite, core/large-cap peer separation, FF12 sector-relative mode
-and fail-closed missing-data behavior. Vetoed or incomplete Piotroski rows are
-removed before percentile fitting; missing sleeves are never reweighted.
+Phase 3 is complete as a software-construction milestone. `c331d95` adds
+vintage-aware macro evidence, immutable raw archives, strict FRED/ALFRED/Cboe
+parsers, O0-O3 overlays, slow regime directives and explicit defensive factor
+weights. The 2020-03 risk-off, 2022 bear and 2023 chop contract scenarios and
+future-vintage regressions pass. FRED's newly truncated HY-OAS history is
+recorded as a `BLUEPRINT-DEVIATION`; older history must use the explicitly
+registered HYG/LQD fallback and no missing OAS values are fabricated.
 
-Exact non-duplicating next product task: Phase 3.4 regime signals/overlay/
-weights. Read CODEX_TASKS 3.4, MODEL_SPEC section 4, DATA_SPEC section 7 and
-EXPERIMENT_PLAN section 3 first. Implement vintage-correct ALFRED NFCI,
-SAHMREALTIME, archived HY OAS plus the explicit HYG/LQD fallback, then prove
-2020-03 risk-off, 2022 bear and 2023 chop from as-of vintages. Do not begin
-Phase 4, make performance claims, or start paper/live operation while D032 is
-open.
+Exact non-duplicating next product task, only if continuing construction under
+the existing deviation: Phase 4.1 selector/bands/rotation/continuity/sizing.
+Read CODEX_TASKS 4.1 and MODEL_SPEC section 5 first. Do not make performance
+claims, run historical experiments, or start paper/live operation while D032
+and the frozen historical-data gates remain open.
 
 ## Historical checkpoint (2026-07-21)
 

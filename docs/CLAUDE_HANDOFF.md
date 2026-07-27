@@ -6,7 +6,7 @@ GitHub Actions refresh attempt.
 This is the authoritative continuation document. It is intentionally detailed
 enough that Claude should not need the Codex conversation transcript.
 
-## 0AA. Live Codex checkpoint — 2026-07-27, commit `af084e7`
+## 0AA. Live Codex checkpoint — 2026-07-27, commit `c331d95`
 
 This checkpoint supersedes every older continuation instruction below where it
 conflicts.
@@ -15,17 +15,18 @@ conflicts.
 
 | Item | Current state |
 |---|---|
-| Branch / latest functional code | `agent/phase-2-3-universe-builder` / `af084e7` |
-| Remote relation | Local branch is 11 commits ahead including handoff docs; no push was performed |
+| Branch / latest functional code | `agent/phase-2-3-universe-builder` / `c331d95` |
+| Remote relation | All current Phase 2.4/3 commits are local; no push was performed |
 | Working tree | Clean immediately after functional commit; this handoff edit follows |
-| Verification | `ruff check .` passed; full suite **501 passed** |
+| Verification | `ruff check .` passed; full suite **518 passed** |
 | Active external workflow/process | None |
 | D032 | Still not passed; the documented deviation permits construction only |
 
 Local construction has advanced beyond the 2026-07-23 checkpoint: Phase 2.4
-freshness, Phase 3.1 hygiene and Phase 3.2 PIT context are present. Phase 3.3 is
-now complete:
+freshness and all four Phase 3 tasks are now implemented:
 
+- Phase 3.1: fail-closed hygiene gates and evidence pointers.
+- Phase 3.2: the shared point-in-time scoring context.
 - `fd014d0` supplies value/quality/momentum metrics and cross-sectional sleeve
   ranks.
 - `af084e7` supplies the complete nine-signal Piotroski veto, weighted sleeve
@@ -35,20 +36,25 @@ now complete:
   Both are removed before peer percentiles are fitted. A missing sleeve is not
   replaced or reweighted, and a missing FF12 group fails closed when
   sector-relative mode is enabled.
+- `c331d95` supplies canonical macro vintages, immutable content-addressed
+  archive records, strict FRED/ALFRED/Cboe parsers, HY-OAS and HYG/LQD credit
+  signals, O0-O3 exposure overlays, slow NFCI/Sahm directives and explicit
+  regime-conditional weights.
+- Phase 3.4 acceptance covers 2020-03 risk-off, 2022 bear and 2023 chop plus a
+  +7-day availability perturbation and future NFCI revision regression.
+- `BLUEPRINT-DEVIATION`: FRED now exposes only roughly three years of HY-OAS
+  history and no earlier full archive exists locally. Older history must use a
+  frozen, explicitly thresholded HYG/LQD total-return fallback.
 
 ### Exact non-duplicating continuation
 
-1. Do not redo Phase 3.3 or the v1-v20 identity/cover work.
-2. The next product slice is Phase 3.4 only: `regime/*` plus vintage-aware macro
-   adapters per CODEX_TASKS 3.4, MODEL_SPEC section 4, DATA_SPEC section 7 and
-   EXPERIMENT_PLAN section 3.
-3. Preserve exact O0-O3 definitions. NFCI must use ALFRED vintages,
-   SAHMREALTIME must never be substituted with SAHMCURRENT, and HY OAS history
-   must be archived with an explicitly labelled HYG/LQD fallback.
-4. The acceptance test must reproduce 2020-03 risk-off, 2022 bear and 2023
-   chop using only observations whose `available_from` is at or before each
-   signal instant, including a future-vintage leakage regression.
-5. D032 remains mandatory before any performance claim, experiment, paper
+1. Do not redo Phase 3 or the v1-v20 identity/cover work.
+2. If continuing product construction under the approved deviation, the next
+   PR-sized slice is Phase 4.1 only: selector, bands, rotation, continuity,
+   sizing and turnover cap per CODEX_TASKS 4.1 / MODEL_SPEC section 5.
+3. The HYG/LQD fallback threshold and defensive factor vector must remain
+   explicit inputs until registered; do not create hidden defaults.
+4. D032 remains mandatory before any performance claim, experiment, paper
    operation or live activation. Do not describe it as passed.
 
 ## 0A. Live Codex checkpoint — 2026-07-23, commit `fff1529`

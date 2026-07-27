@@ -969,3 +969,59 @@ Phase 3.3 was completed in two local commits on
 - Exact next product task: Phase 3.4 vintage-correct regime signals and O0-O3
   overlays; acceptance requires 2020-03, 2022 and 2023 historical-state tests
   with future-vintage leakage protection.
+
+## 2026-07-27 — Phase 3.4 regime layer and Phase 3 construction complete
+
+Functional commit: `c331d95`.
+
+### Implemented
+
+- Canonical `VintagedObservation` with timezone-aware `available_from`,
+  as-of vintage resolution and equal-time conflict rejection.
+- Strict FRED/ALFRED parsers. Publication dates alone are insufficient: every
+  row requires an official timezone-aware publication instant. NFCI is
+  ALFRED-only and `SAHMCURRENT` is structurally forbidden.
+- Content-addressed immutable raw macro archive with SHA-256 verification and
+  API-key redaction.
+- Cboe VIX close parser, FRED HY-OAS basis-point contract and HYG/LQD
+  total-return ratio z-score fallback.
+- Exact registered overlays:
+  - O0: no overlay;
+  - O1: SPY-TR 200-session SMA, daily EOD, 2% hysteresis, risk-off to cash;
+  - O2: SPY-TR 10-month SMA, declared month-end evaluation only, 50% exposure;
+  - O3: O1 plus HY-OAS >500bp and above its 63-session average, with explicit
+    HYG/LQD fallback evidence.
+- Slow NFCI/Sahm directives and explicit regime-dependent factor-weight
+  selection. The code requires a caller-registered defensive vector whose
+  momentum weight is lower; it does not invent a hidden default.
+
+### Acceptance evidence
+
+- Compact PIT contract scenarios reproduce the registered 2020-03 risk-off,
+  2022 bear and 2023 chop states.
+- A +7-day availability perturbation removes the required trend history and
+  fails rather than reading future data.
+- Future NFCI revisions do not alter an earlier as-of result.
+- O3 fails closed when neither visible HY-OAS nor a visible HYG/LQD fallback is
+  available.
+- Targeted Phase 3.4 tests: **17 passed**.
+- Ruff and touched-file format checks pass.
+- Full suite: **518 passed**.
+
+### BLUEPRINT-DEVIATION — historical HY-OAS archive
+
+DATA_SPEC section 7 said to archive the full FRED HY-OAS history "now". By
+2026-07-27 the official FRED series states that, beginning April 2026, it
+retains only roughly three years. No earlier full-history archive or local FRED
+API key exists in this workspace. USInv therefore implements immutable
+acquisition for the history still obtainable and an explicitly labelled
+HYG/LQD total-return fallback; it does not fabricate the missing pre-window
+OAS history. Phase 5 historical acquisition must freeze the available OAS
+payload plus the registered fallback threshold before any experiment.
+
+### Remaining gates
+
+Phase 3 software construction is complete. Phase 2.3 D032 remains open under
+the construction-only deviation. No performance claim, historical experiment,
+paper operation or live activation is permitted until D032 and the frozen
+historical data gates genuinely pass.
