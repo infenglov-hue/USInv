@@ -933,3 +933,39 @@ historical identity evidence.
 - Look-ahead coverage remains explicit: FSDS issuer-name observations accepted
   after the cutoff are excluded, and the new corroboration cannot alter an
   existing candidate unless the exact unique filing-name CIK agrees.
+
+## 2026-07-27 — Phase 3.3 factor scoring completed
+
+Phase 3.3 was completed in two local commits on
+`agent/phase-2-3-universe-builder`:
+
+- `fd014d0`: value, quality and 12-1 total-return momentum metrics plus
+  cross-sectional sleeve ranks.
+- `af084e7`: nine-signal Piotroski F-score as a junk veto, declared-weight
+  composite, independent core/large-cap peer fitting, optional FF12-relative
+  fitting and within-bucket composite percentiles.
+
+### Correctness behavior
+
+- Every missing fundamental remains missing; no Piotroski input is converted
+  to zero.
+- An incomplete F-score is quarantined and a complete F-score <=4 is vetoed.
+  Both leave the fitted percentile population before ranks are calculated.
+- All three sleeve scores are required. Missing sleeves do not trigger silent
+  weight redistribution.
+- Core and large-cap candidates never share percentile fits. Sector-relative
+  mode further partitions peers by FF12 and fails closed when FF12 is missing.
+- Every output records its peer group, Piotroski component verdicts,
+  exclusion reason, sleeve scores, weighted composite and bucket percentile.
+
+### Verification and next gate
+
+- Targeted scoring/config tests: **38 passed**.
+- Ruff passes, including format verification of touched files.
+- Full suite: **501 passed**.
+- Phase 2.3 D032 is still open under the documented construction-only
+  deviation. No performance claim, experiment, paper operation or live
+  activation is permitted.
+- Exact next product task: Phase 3.4 vintage-correct regime signals and O0-O3
+  overlays; acceptance requires 2020-03, 2022 and 2023 historical-state tests
+  with future-vintage leakage protection.

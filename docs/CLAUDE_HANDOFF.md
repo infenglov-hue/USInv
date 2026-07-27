@@ -6,6 +6,51 @@ GitHub Actions refresh attempt.
 This is the authoritative continuation document. It is intentionally detailed
 enough that Claude should not need the Codex conversation transcript.
 
+## 0AA. Live Codex checkpoint — 2026-07-27, commit `af084e7`
+
+This checkpoint supersedes every older continuation instruction below where it
+conflicts.
+
+### Exact repository state
+
+| Item | Current state |
+|---|---|
+| Branch / latest functional code | `agent/phase-2-3-universe-builder` / `af084e7` |
+| Remote relation | Local branch is 11 commits ahead including handoff docs; no push was performed |
+| Working tree | Clean immediately after functional commit; this handoff edit follows |
+| Verification | `ruff check .` passed; full suite **501 passed** |
+| Active external workflow/process | None |
+| D032 | Still not passed; the documented deviation permits construction only |
+
+Local construction has advanced beyond the 2026-07-23 checkpoint: Phase 2.4
+freshness, Phase 3.1 hygiene and Phase 3.2 PIT context are present. Phase 3.3 is
+now complete:
+
+- `fd014d0` supplies value/quality/momentum metrics and cross-sectional sleeve
+  ranks.
+- `af084e7` supplies the complete nine-signal Piotroski veto, weighted sleeve
+  composite, core/large-cap independent ranking, optional FF12-relative
+  ranking and final within-bucket percentile.
+- Piotroski evidence that is missing is quarantined; F-score <=4 is vetoed.
+  Both are removed before peer percentiles are fitted. A missing sleeve is not
+  replaced or reweighted, and a missing FF12 group fails closed when
+  sector-relative mode is enabled.
+
+### Exact non-duplicating continuation
+
+1. Do not redo Phase 3.3 or the v1-v20 identity/cover work.
+2. The next product slice is Phase 3.4 only: `regime/*` plus vintage-aware macro
+   adapters per CODEX_TASKS 3.4, MODEL_SPEC section 4, DATA_SPEC section 7 and
+   EXPERIMENT_PLAN section 3.
+3. Preserve exact O0-O3 definitions. NFCI must use ALFRED vintages,
+   SAHMREALTIME must never be substituted with SAHMCURRENT, and HY OAS history
+   must be archived with an explicitly labelled HYG/LQD fallback.
+4. The acceptance test must reproduce 2020-03 risk-off, 2022 bear and 2023
+   chop using only observations whose `available_from` is at or before each
+   signal instant, including a future-vintage leakage regression.
+5. D032 remains mandatory before any performance claim, experiment, paper
+   operation or live activation. Do not describe it as passed.
+
 ## 0A. Live Codex checkpoint — 2026-07-23, commit `fff1529`
 
 This checkpoint supersedes the older `4337072` / 178-gap continuation details

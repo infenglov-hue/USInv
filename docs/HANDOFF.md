@@ -1,7 +1,35 @@
 # USInv compact handoff
 
-> Codex work is stopped. For Claude continuation, use
-> `docs/CLAUDE_HANDOFF.md` as the authoritative detailed handoff.
+> Active checkpoint: 2026-07-27. This section supersedes the older 2026-07-21
+> state below wherever they conflict. `docs/CLAUDE_HANDOFF.md` remains the
+> authoritative detailed handoff.
+
+## Active state (2026-07-27)
+
+| Item | Value |
+|---|---|
+| Branch / latest functional code | `agent/phase-2-3-universe-builder` / `af084e7` |
+| Remote relation | Local branch is 11 commits ahead including handoff docs; nothing was pushed |
+| Verification | Ruff passes; full suite **501 passed** |
+| Product construction | Phase 2.4, 3.1, 3.2 and 3.3 implemented locally |
+| D032 | **Still not passed**; the documented 2026-07-23 deviation remains in force |
+| External work | No workflow or provider refresh running |
+
+Phase 3.3 is now complete in two commits: `fd014d0` adds PIT-safe factor
+metrics/sleeve ranks and `af084e7` adds the nine-signal Piotroski junk veto,
+weighted composite, core/large-cap peer separation, FF12 sector-relative mode
+and fail-closed missing-data behavior. Vetoed or incomplete Piotroski rows are
+removed before percentile fitting; missing sleeves are never reweighted.
+
+Exact non-duplicating next product task: Phase 3.4 regime signals/overlay/
+weights. Read CODEX_TASKS 3.4, MODEL_SPEC section 4, DATA_SPEC section 7 and
+EXPERIMENT_PLAN section 3 first. Implement vintage-correct ALFRED NFCI,
+SAHMREALTIME, archived HY OAS plus the explicit HYG/LQD fallback, then prove
+2020-03 risk-off, 2022 bear and 2023 chop from as-of vintages. Do not begin
+Phase 4, make performance claims, or start paper/live operation while D032 is
+open.
+
+## Historical checkpoint (2026-07-21)
 
 Updated: 2026-07-21 (post-handoff Claude continuation). Read this file first;
 open `PROGRESS.md` only for history.
