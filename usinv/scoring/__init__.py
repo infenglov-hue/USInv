@@ -1,5 +1,11 @@
 """Point-in-time factor scoring."""
 
+from usinv.scoring.composite import (
+    CompositeError,
+    CompositeScore,
+    FactorCandidate,
+    score_composite,
+)
 from usinv.scoring.context import (
     LookAheadError,
     ScoringContext,
@@ -15,7 +21,14 @@ from usinv.scoring.momentum import (
     momentum_12_1,
     momentum_metrics,
 )
-from usinv.scoring.quality import QUALITY_METRICS, quality_metrics
+from usinv.scoring.quality import (
+    PIOTROSKI_SIGNALS,
+    QUALITY_METRICS,
+    PiotroskiInputs,
+    PiotroskiResult,
+    piotroski_score,
+    quality_metrics,
+)
 from usinv.scoring.ranking import (
     RankingError,
     percentile_ranks,
@@ -34,13 +47,19 @@ from usinv.scoring.value import VALUE_METRICS, value_metrics
 
 __all__ = [
     "MOMENTUM_METRICS",
+    "PIOTROSKI_SIGNALS",
     "QUALITY_METRICS",
     "SECTOR_MAPPING_VERSION",
     "VALUE_METRICS",
+    "CompositeError",
+    "CompositeScore",
+    "FactorCandidate",
     "FundamentalInputs",
     "LookAheadError",
     "MomentumError",
     "MomentumInputs",
+    "PiotroskiInputs",
+    "PiotroskiResult",
     "RankingError",
     "ScoringContext",
     "ScoringContextError",
@@ -53,9 +72,11 @@ __all__ = [
     "momentum_12_1",
     "momentum_metrics",
     "percentile_ranks",
+    "piotroski_score",
     "quality_metrics",
     "rank_sleeve",
     "safe_ratio",
+    "score_composite",
     "sector_source_hashes",
     "sleeve_score",
     "value_metrics",

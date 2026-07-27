@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
 
+from usinv.config.loader import FactorWeights
 from usinv.scoring import (
+    FactorCandidate,
     FundamentalInputs,
     MomentumInputs,
+    PiotroskiInputs,
     momentum_12_1,
     momentum_metrics,
     percentile_ranks,
+    piotroski_score,
     quality_metrics,
     rank_sleeve,
     safe_ratio,
+    score_composite,
     sleeve_score,
     value_metrics,
 )
@@ -170,3 +176,229 @@ def test_rank_sleeve_security_with_no_metrics_is_unscoreable():
     )
     assert scores["EMPTY"] is None
     assert scores["GOOD"] is not None
+
+
+# --------------------------------------------------------------------------- #
+# Piotroski junk veto.
+# --------------------------------------------------------------------------- #
+def _strong_piotroski() -> PiotroskiInputs:
+    return PiotroskiInputs(
+        net_income=D("12"),
+        cash_from_operations=D("18"),
+        total_assets=D("100"),
+        long_term_debt=D("15"),
+        current_assets=D("60"),
+        current_liabilities=D("30"),
+        shares_outstanding=D("10"),
+        gross_profit=D("45"),
+        revenue=D("90"),
+        prior_net_income=D("5"),
+        prior_total_assets=D("100"),
+        prior_long_term_debt=D("25"),
+        prior_current_assets=D("40"),
+        prior_current_liabilities=D("30"),
+        prior_shares_outstanding=D("10"),
+        prior_gross_profit=D("30"),
+        prior_revenue=D("80"),
+    )
+
+
+def test_piotroski_all_nine_signals_and_veto_boundary():
+    result = piotroski_score(_strong_piotroski())
+    assert result.complete is True
+    assert result.score == 9
+    assert result.vetoed(4) is False
+    assert all(value is True for _, value in result.signals)
+
+
+def test_piotroski_low_complete_score_is_junk_veto():
+    weak = PiotroskiInputs(
+        net_income=D("-10"),
+        cash_from_operations=D("-12"),
+        total_assets=D("120"),
+        long_term_debt=D("50"),
+        current_assets=D("20"),
+        current_liabilities=D("40"),
+        shares_outstanding=D("15"),
+        gross_profit=D("15"),
+        revenue=D("80"),
+        prior_net_income=D("5"),
+        prior_total_assets=D("100"),
+        prior_long_term_debt=D("20"),
+        prior_current_assets=D("40"),
+        prior_current_liabilities=D("30"),
+        prior_shares_outstanding=D("10"),
+        prior_gross_profit=D("30"),
+        prior_revenue=D("80"),
+    )
+    result = piotroski_score(weak)
+    assert result.complete is True
+    assert result.score <= 4
+    assert result.vetoed(4) is True
+
+
+def test_piotroski_missing_fact_is_unknown_not_a_synthetic_zero():
+    incomplete = replace(_strong_piotroski(), prior_revenue=None)
+    result = piotroski_score(incomplete)
+    assert result.complete is False
+    assert result.vetoed(4) is None
+    assert dict(result.signals)["improving_gross_margin"] is None
+
+
+# --------------------------------------------------------------------------- #
+# Composite, peer groups and sector-relative ranks.
+# --------------------------------------------------------------------------- #
+WEIGHTS = FactorWeights(quality=0.4, value=0.3, momentum=0.3)
+
+
+def _candidate(
+    security_id: str,
+    metric: float | None,
+    *,
+    bucket: str = "core",
+    sector: str | None = "manufacturing",
+    piotroski: PiotroskiInputs | None = None,
+) -> FactorCandidate:
+    return FactorCandidate(
+        security_id=security_id,
+        size_bucket=bucket,
+        ff12_group=sector,
+        value_metrics={"value": metric},
+        quality_metrics={"quality": metric},
+        momentum_metrics={"momentum": metric},
+        piotroski_inputs=piotroski or _strong_piotroski(),
+    )
+
+
+def test_composite_applies_weights_and_returns_bucket_percentile():
+    scores = score_composite(
+        [_candidate("LOW", 1.0), _candidate("HIGH", 3.0)],
+        weights=WEIGHTS,
+        piotroski_veto_max=4,
+        sector_relative=False,
+    )
+    assert scores["HIGH"].eligible is True
+    assert scores["HIGH"].composite == pytest.approx(0.75)
+    assert scores["HIGH"].bucket_percentile == pytest.approx(0.75)
+    assert scores["LOW"].composite == pytest.approx(0.25)
+
+
+def test_piotroski_veto_happens_before_peer_percentiles():
+    weak = PiotroskiInputs(
+        net_income=D("-1"),
+        cash_from_operations=D("-2"),
+        total_assets=D("100"),
+        long_term_debt=D("50"),
+        current_assets=D("10"),
+        current_liabilities=D("20"),
+        shares_outstanding=D("20"),
+        gross_profit=D("10"),
+        revenue=D("100"),
+        prior_net_income=D("1"),
+        prior_total_assets=D("100"),
+        prior_long_term_debt=D("10"),
+        prior_current_assets=D("20"),
+        prior_current_liabilities=D("20"),
+        prior_shares_outstanding=D("10"),
+        prior_gross_profit=D("20"),
+        prior_revenue=D("100"),
+    )
+    scores = score_composite(
+        [
+            _candidate("LOW", 1.0),
+            _candidate("HIGH", 2.0),
+            _candidate("JUNK", 999.0, piotroski=weak),
+        ],
+        weights=WEIGHTS,
+        piotroski_veto_max=4,
+        sector_relative=False,
+    )
+    assert scores["JUNK"].eligible is False
+    assert scores["JUNK"].exclusion_reason == "piotroski_veto"
+    # JUNK is absent from the fitted population: the two valid names are .25/.75.
+    assert scores["HIGH"].composite == pytest.approx(0.75)
+
+
+def test_incomplete_piotroski_fails_closed():
+    scores = score_composite(
+        [_candidate("UNKNOWN", 1.0, piotroski=PiotroskiInputs())],
+        weights=WEIGHTS,
+        piotroski_veto_max=4,
+        sector_relative=False,
+    )
+    assert scores["UNKNOWN"].eligible is False
+    assert scores["UNKNOWN"].exclusion_reason == "piotroski_incomplete"
+    assert scores["UNKNOWN"].composite is None
+
+
+def test_size_buckets_are_always_ranked_independently():
+    scores = score_composite(
+        [
+            _candidate("CORE_LOW", 1.0),
+            _candidate("CORE_HIGH", 2.0),
+            _candidate("LARGE_LOW", 100.0, bucket="large"),
+            _candidate("LARGE_HIGH", 200.0, bucket="large"),
+        ],
+        weights=WEIGHTS,
+        piotroski_veto_max=4,
+        sector_relative=False,
+    )
+    assert scores["CORE_LOW"].composite == pytest.approx(scores["LARGE_LOW"].composite)
+    assert scores["CORE_HIGH"].bucket_percentile == pytest.approx(
+        scores["LARGE_HIGH"].bucket_percentile
+    )
+
+
+def test_sector_relative_option_ranks_inside_ff12_within_bucket():
+    candidates = [
+        _candidate("TECH_HIGH", 10.0, sector="tech"),
+        _candidate("TECH_LOW", 5.0, sector="tech"),
+        _candidate("ENERGY_HIGH", 100.0, sector="energy"),
+        _candidate("ENERGY_LOW", 1.0, sector="energy"),
+    ]
+    global_scores = score_composite(
+        candidates,
+        weights=WEIGHTS,
+        piotroski_veto_max=4,
+        sector_relative=False,
+    )
+    sector_scores = score_composite(
+        candidates,
+        weights=WEIGHTS,
+        piotroski_veto_max=4,
+        sector_relative=True,
+    )
+    assert global_scores["TECH_HIGH"].composite == pytest.approx(0.625)
+    assert sector_scores["TECH_HIGH"].composite == pytest.approx(0.75)
+    assert sector_scores["TECH_HIGH"].peer_group == "core/tech"
+
+
+def test_sector_relative_missing_ff12_and_missing_sleeve_fail_closed():
+    scores = score_composite(
+        [
+            _candidate("NO_SECTOR", 1.0, sector=None),
+            _candidate("NO_MOMENTUM", 2.0),
+        ],
+        weights=WEIGHTS,
+        piotroski_veto_max=4,
+        sector_relative=True,
+    )
+    assert scores["NO_SECTOR"].exclusion_reason == "missing_ff12_group"
+
+    missing = FactorCandidate(
+        security_id="EMPTY_MOMENTUM",
+        size_bucket="core",
+        ff12_group="tech",
+        value_metrics={"value": 1.0},
+        quality_metrics={"quality": 1.0},
+        momentum_metrics={"momentum": None},
+        piotroski_inputs=_strong_piotroski(),
+    )
+    score = score_composite(
+        [missing],
+        weights=WEIGHTS,
+        piotroski_veto_max=4,
+        sector_relative=True,
+    )["EMPTY_MOMENTUM"]
+    assert score.exclusion_reason == "missing_factor_sleeve"
+    assert score.composite is None
