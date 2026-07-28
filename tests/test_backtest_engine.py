@@ -10,6 +10,7 @@ import pytest
 from usinv.backtest import (
     BacktestEngine,
     BacktestError,
+    BacktestMetrics,
     DividendEvent,
     FixedBpsCostModel,
     ManualExecutionRequired,
@@ -18,7 +19,9 @@ from usinv.backtest import (
     TerminationEvent,
     TerminationEvidenceError,
     TerminationKind,
+    assess_steady_returns,
     compute_metrics,
+    stationary_block_bootstrap,
 )
 from usinv.calendar import default_calendar
 from usinv.ledger import (
@@ -418,3 +421,67 @@ def test_metrics_use_canonical_net_nav_and_geometric_excess_definition():
     assert metrics.ulcer_index > 0
     assert metrics.one_way_turnover == pytest.approx(0.55)
     assert metrics.benchmark_relative_alpha > 0
+
+
+def test_stationary_block_bootstrap_is_seeded_and_reports_both_intervals():
+    strategy = tuple(0.02 if index % 2 == 0 else -0.005 for index in range(36))
+    benchmark = tuple(0.005 for _ in range(36))
+    first = stationary_block_bootstrap(
+        strategy,
+        benchmark,
+        samples=200,
+        expected_block_length=4,
+        seed=42,
+    )
+    second = stationary_block_bootstrap(
+        strategy,
+        benchmark,
+        samples=200,
+        expected_block_length=4,
+        seed=42,
+    )
+    assert first == second
+    assert (
+        first.annualized_active_return_95.lower
+        <= first.annualized_active_return_80.lower
+        <= first.annualized_active_return_80.upper
+        <= first.annualized_active_return_95.upper
+    )
+    assert first.sharpe_95.lower <= first.sharpe_80.lower
+    assert first.sharpe_80.upper <= first.sharpe_95.upper
+
+
+def test_steady_returns_assessment_checks_calendar_year_relative_floor():
+    nav = (
+        NavRecord(date(2024, 1, 2), D("0"), D("0"), D("100"), D("100"), D("0")),
+        NavRecord(date(2024, 12, 31), D("0"), D("0"), D("95"), D("95"), D("0")),
+        NavRecord(date(2025, 12, 31), D("0"), D("0"), D("90"), D("90"), D("0")),
+    )
+    metrics = BacktestMetrics(
+        cagr=-0.05,
+        sharpe=-0.1,
+        sortino=-0.1,
+        max_drawdown=-0.10,
+        ulcer_index=0.08,
+        rolling_12m_win_rate=0.60,
+        one_way_turnover=0.2,
+        benchmark_relative_alpha=0.0,
+        regression_alpha=0.0,
+    )
+    passing = assess_steady_returns(
+        nav,
+        (D("100"), D("100"), D("100")),
+        strategy_metrics=metrics,
+        benchmark_max_drawdown=-0.15,
+        benchmark_ulcer_index=0.10,
+    )
+    assert passing.passes
+
+    failing = assess_steady_returns(
+        nav,
+        (D("100"), D("110"), D("130")),
+        strategy_metrics=metrics,
+        benchmark_max_drawdown=-0.15,
+        benchmark_ulcer_index=0.10,
+    )
+    assert not failing.calendar_year_pass

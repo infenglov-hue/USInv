@@ -121,14 +121,11 @@ def test_wilder_atr_uses_exact_initial_mean_and_recursive_update():
         date(2026, 6, 5),
     )
     bars = tuple(_bar(day, "10", high="12", low="8") for day in sessions)
-    assert (
-        wilder_atr(
-            bars,
-            period=3,
-            as_of=datetime(2026, 6, 5, 16, 2, tzinfo=ET),
-        )
-        == D("4")
-    )
+    assert wilder_atr(
+        bars,
+        period=3,
+        as_of=datetime(2026, 6, 5, 16, 2, tzinfo=ET),
+    ) == D("4")
 
 
 def test_atr_stop_uses_close_high_water_and_only_visible_bars():

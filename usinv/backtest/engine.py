@@ -621,9 +621,7 @@ class BacktestEngine:
                 if mark is None:
                     raise BacktestError(f"held security {security_id} has no closing mark")
                 market_value += money(position.quantity * mark)
-            unsettled_cash = money(
-                sum((item.amount for item in settlements), start=Decimal(0))
-            )
+            unsettled_cash = money(sum((item.amount for item in settlements), start=Decimal(0)))
             nav_value = money(settled_cash + unsettled_cash + market_value)
             nav_records.append(
                 NavRecord(

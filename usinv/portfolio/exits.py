@@ -170,8 +170,7 @@ def evaluate_percent_trailing_stop(
             reference_close=bar.close,
             threshold=threshold,
             reason=(
-                f"official close {bar.close} below "
-                f"{stop_fraction} trailing threshold {threshold}"
+                f"official close {bar.close} below {stop_fraction} trailing threshold {threshold}"
             ),
             evidence_pointers=(bar.evidence_pointer,),
             updated_high_water_mark=high_water,
