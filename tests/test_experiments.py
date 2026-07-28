@@ -33,6 +33,7 @@ from usinv.backtest import (
 from usinv.config import load_config
 
 DATA_HASH = "d" * 64
+SPLIT_HASH = "e" * 64
 CODE_SHA = "a" * 40
 
 
@@ -55,9 +56,11 @@ def _metrics(
 def test_locked_splits_purge_full_horizon_and_keep_exact_test_dates():
     horizon = 126
     splits = build_locked_splits(maximum_holding_horizon_sessions=horizon)
+    alternative = build_locked_splits(maximum_holding_horizon_sessions=horizon + 1)
     assert splits.test[0] == date(2023, 1, 3)
     assert splits.test[-1] == date(2026, 6, 30)
     assert splits.raw_validation[0] == date(2019, 1, 2)
+    assert splits.protocol_hash != alternative.protocol_hash
     assert all(len(boundary.purged_sessions) == horizon for boundary in splits.boundaries)
 
     for usable, raw, boundary in (
@@ -191,6 +194,7 @@ def test_runner_resumes_after_failure_and_deduplicates_exact_cells(tmp_path: Pat
     runner = ExperimentRunner(
         ledger=ledger,
         data_manifest_hash=DATA_HASH,
+        split_protocol_hash=SPLIT_HASH,
         code_sha=CODE_SHA,
     )
     calls: list[str] = []
@@ -231,9 +235,27 @@ def test_runner_resumes_after_failure_and_deduplicates_exact_cells(tmp_path: Pat
     records = ledger.records()
     assert [item.status for item in records] == ["complete", "failed", "complete", "complete"]
     assert all(item.data_manifest_hash == DATA_HASH for item in records)
+    assert all(item.split_protocol_hash == SPLIT_HASH for item in records)
     assert all(item.code_sha == CODE_SHA for item in records)
     assert all(
         item.config_hash and item.output_hash for item in records if item.status == "complete"
+    )
+    different_split_runner = ExperimentRunner(
+        ledger=ledger,
+        data_manifest_hash=DATA_HASH,
+        split_protocol_hash="f" * 64,
+        code_sha=CODE_SHA,
+    )
+    assert (
+        len(
+            different_split_runner.run_cells(
+                stage="stage1",
+                split="validation",
+                cells=(cells[0],),
+                evaluator=interrupted,
+            )
+        )
+        == 1
     )
 
 
@@ -242,6 +264,7 @@ def test_ledger_detects_tampering(tmp_path: Path):
     runner = ExperimentRunner(
         ledger=ledger,
         data_manifest_hash=DATA_HASH,
+        split_protocol_hash=SPLIT_HASH,
         code_sha=CODE_SHA,
     )
     runner.run_cells(
@@ -274,10 +297,12 @@ def test_frozen_data_manifest_hashes_required_quality_and_range():
 def test_test_runner_requires_registration_seal_hashes_and_one_time_unlock(tmp_path: Path):
     grid = _grid()
     config = grid.default
+    splits = build_locked_splits(maximum_holding_horizon_sessions=126)
     ledger = ExperimentLedger(tmp_path / "runs.jsonl")
     runner = ExperimentRunner(
         ledger=ledger,
         data_manifest_hash=DATA_HASH,
+        split_protocol_hash=splits.protocol_hash,
         code_sha=CODE_SHA,
     )
     runner.run_cells(
@@ -295,7 +320,6 @@ def test_test_runner_requires_registration_seal_hashes_and_one_time_unlock(tmp_p
     seal = ledger.train_validation_seal()
     registry = TestUnlockRegistry(tmp_path / "test_registry.json")
     unregistered = TestUnlockRegistry(tmp_path / "unregistered.json")
-    splits = build_locked_splits(maximum_holding_horizon_sessions=126)
     with pytest.raises(TestUnlockError, match="not registered"):
         run_locked_test(
             splits=splits,
@@ -309,6 +333,7 @@ def test_test_runner_requires_registration_seal_hashes_and_one_time_unlock(tmp_p
         final_config_hash=config.config_hash,
         train_validation_seal=seal,
         data_manifest_hash=DATA_HASH,
+        split_protocol_hash=splits.protocol_hash,
         code_sha=CODE_SHA,
         unlock_token="user-secret-token",
     )
@@ -344,10 +369,12 @@ def test_test_runner_requires_registration_seal_hashes_and_one_time_unlock(tmp_p
 
 def test_unlock_is_burned_before_failed_test_evaluator_runs(tmp_path: Path):
     config = _grid().default
+    splits = build_locked_splits(maximum_holding_horizon_sessions=126)
     ledger = ExperimentLedger(tmp_path / "runs.jsonl")
     runner = ExperimentRunner(
         ledger=ledger,
         data_manifest_hash=DATA_HASH,
+        split_protocol_hash=splits.protocol_hash,
         code_sha=CODE_SHA,
     )
     for split in ("train", "validation"):
@@ -362,10 +389,10 @@ def test_unlock_is_burned_before_failed_test_evaluator_runs(tmp_path: Path):
         final_config_hash=config.config_hash,
         train_validation_seal=ledger.train_validation_seal(),
         data_manifest_hash=DATA_HASH,
+        split_protocol_hash=splits.protocol_hash,
         code_sha=CODE_SHA,
         unlock_token="burn",
     )
-    splits = build_locked_splits(maximum_holding_horizon_sessions=126)
 
     def fail(_cell):
         raise RuntimeError("test evaluator failed")

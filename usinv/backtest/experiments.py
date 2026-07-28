@@ -431,6 +431,7 @@ class ExperimentRunRecord:
     config: Mapping[str, object]
     config_hash: str
     data_manifest_hash: str
+    split_protocol_hash: str
     code_sha: str
     status: str
     metrics: Mapping[str, object] | None
@@ -490,12 +491,13 @@ class ExperimentLedger:
             handle.flush()
         return self.records()[-1]
 
-    def completed_keys(self) -> frozenset[tuple[str, str, str, str]]:
+    def completed_keys(self) -> frozenset[tuple[str, str, str, str, str]]:
         return frozenset(
             (
                 record.split,
                 record.config_hash,
                 record.data_manifest_hash,
+                record.split_protocol_hash,
                 record.code_sha,
             )
             for record in self.records()
@@ -506,6 +508,7 @@ class ExperimentLedger:
         self,
         *,
         data_manifest_hash: str | None = None,
+        split_protocol_hash: str | None = None,
         code_sha: str | None = None,
     ) -> str:
         records = tuple(
@@ -514,6 +517,7 @@ class ExperimentLedger:
             if record.status == "complete"
             and record.split in {"train", "validation"}
             and (data_manifest_hash is None or record.data_manifest_hash == data_manifest_hash)
+            and (split_protocol_hash is None or record.split_protocol_hash == split_protocol_hash)
             and (code_sha is None or record.code_sha == code_sha)
         )
         if not {record.split for record in records} >= {"train", "validation"}:
@@ -532,14 +536,18 @@ class ExperimentRunner:
         *,
         ledger: ExperimentLedger,
         data_manifest_hash: str,
+        split_protocol_hash: str,
         code_sha: str,
     ) -> None:
         if not _is_hash(data_manifest_hash, minimum=64):
             raise ExperimentProtocolError("data manifest hash must be a SHA-256")
+        if not _is_hash(split_protocol_hash, minimum=64):
+            raise ExperimentProtocolError("split protocol hash must be a SHA-256")
         if not _is_hash(code_sha):
             raise ExperimentProtocolError("code SHA is invalid")
         self.ledger = ledger
         self.data_manifest_hash = data_manifest_hash
+        self.split_protocol_hash = split_protocol_hash
         self.code_sha = code_sha
 
     def run_cells(
@@ -556,7 +564,13 @@ class ExperimentRunner:
         completed = self.ledger.completed_keys()
         produced: list[ExperimentRunRecord] = []
         for cell in unique:
-            key = (split, cell.config_hash, self.data_manifest_hash, self.code_sha)
+            key = (
+                split,
+                cell.config_hash,
+                self.data_manifest_hash,
+                self.split_protocol_hash,
+                self.code_sha,
+            )
             if key in completed:
                 continue
             attempted_at = datetime.now(UTC).isoformat()
@@ -567,6 +581,7 @@ class ExperimentRunner:
                 "config": asdict(cell),
                 "config_hash": cell.config_hash,
                 "data_manifest_hash": self.data_manifest_hash,
+                "split_protocol_hash": self.split_protocol_hash,
                 "code_sha": self.code_sha,
             }
             try:
@@ -610,6 +625,7 @@ class TestUnlockRegistry:
         final_config_hash: str,
         train_validation_seal: str,
         data_manifest_hash: str,
+        split_protocol_hash: str,
         code_sha: str,
         unlock_token: str,
     ) -> None:
@@ -620,14 +636,19 @@ class TestUnlockRegistry:
             minimum=64,
         ):
             raise TestUnlockError("final config or output seal hash is invalid")
-        if not _is_hash(data_manifest_hash, minimum=64) or not _is_hash(code_sha):
-            raise TestUnlockError("registered data manifest hash or code SHA is invalid")
+        if (
+            not _is_hash(data_manifest_hash, minimum=64)
+            or not _is_hash(split_protocol_hash, minimum=64)
+            or not _is_hash(code_sha)
+        ):
+            raise TestUnlockError("registered data, split or code hash is invalid")
         if not unlock_token:
             raise TestUnlockError("a user-provided TEST unlock token is required")
         payload = {
             "final_config_hash": final_config_hash,
             "train_validation_seal": train_validation_seal,
             "data_manifest_hash": data_manifest_hash,
+            "split_protocol_hash": split_protocol_hash,
             "code_sha": code_sha,
             "unlock_token_sha256": hashlib.sha256(unlock_token.encode()).hexdigest(),
             "registered_at": datetime.now(UTC).isoformat(),
@@ -642,6 +663,7 @@ class TestUnlockRegistry:
         config_hash: str,
         train_validation_seal: str,
         data_manifest_hash: str,
+        split_protocol_hash: str,
         code_sha: str,
         unlock_token: str,
     ) -> None:
@@ -659,6 +681,8 @@ class TestUnlockRegistry:
             raise TestUnlockError("TRAIN/VALIDATION outputs changed after sealing")
         if payload.get("data_manifest_hash") != data_manifest_hash:
             raise TestUnlockError("TEST data manifest differs from the registered hash")
+        if payload.get("split_protocol_hash") != split_protocol_hash:
+            raise TestUnlockError("TEST split protocol differs from the registered hash")
         if payload.get("code_sha") != code_sha:
             raise TestUnlockError("TEST code SHA differs from the registered SHA")
         token_hash = hashlib.sha256(unlock_token.encode()).hexdigest()
@@ -690,8 +714,11 @@ def run_locked_test(
     """Burn the exact static TEST once, before invoking the evaluator."""
     if not splits.test or splits.test[0] != TEST_START or splits.test[-1] != TEST_END:
         raise TestUnlockError("TEST dates differ from the locked 2023-01-03..2026-06-30 window")
+    if runner.split_protocol_hash != splits.protocol_hash:
+        raise TestUnlockError("runner split protocol hash differs from the locked partitions")
     seal = runner.ledger.train_validation_seal(
         data_manifest_hash=runner.data_manifest_hash,
+        split_protocol_hash=runner.split_protocol_hash,
         code_sha=runner.code_sha,
     )
     registered_validation = any(
@@ -699,6 +726,7 @@ def run_locked_test(
         and record.split == "validation"
         and record.config_hash == config.config_hash
         and record.data_manifest_hash == runner.data_manifest_hash
+        and record.split_protocol_hash == runner.split_protocol_hash
         and record.code_sha == runner.code_sha
         for record in runner.ledger.records()
     )
@@ -710,6 +738,7 @@ def run_locked_test(
         config_hash=config.config_hash,
         train_validation_seal=seal,
         data_manifest_hash=runner.data_manifest_hash,
+        split_protocol_hash=runner.split_protocol_hash,
         code_sha=runner.code_sha,
         unlock_token=unlock_token,
     )

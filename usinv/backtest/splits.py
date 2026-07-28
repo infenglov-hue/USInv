@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import date
 
@@ -41,6 +43,21 @@ class LockedSplits:
     raw_validation: tuple[date, ...]
     boundaries: tuple[PurgedBoundary, ...]
     maximum_holding_horizon_sessions: int
+
+    @property
+    def protocol_hash(self) -> str:
+        payload = {
+            "maximum_holding_horizon_sessions": self.maximum_holding_horizon_sessions,
+            "train": [session.isoformat() for session in self.train],
+            "validation": [session.isoformat() for session in self.validation],
+            "test": [session.isoformat() for session in self.test],
+            "purged": [
+                [session.isoformat() for session in boundary.purged_sessions]
+                for boundary in self.boundaries
+            ],
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(encoded).hexdigest()
 
     def sessions(self, split: str) -> tuple[date, ...]:
         if split == "train":
