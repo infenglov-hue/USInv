@@ -87,7 +87,13 @@ cells and is NOT run):**
   axis, the default and the best challenger (by VALIDATION net Sharpe subject
   to §2 constraints). Exception: factor weights retain equal, the best fixed
   tilt, and the attribution-derived candidate when distinct (≤3 values). The
-  arithmetic is `1 + Σ(cells_on_axis − 1) = 29`.
+  arithmetic is `1 + Σ(cells_on_axis − 1) = 29`. Protocol-priority
+  clarification: the mandatory Stage-2 redundant-layer cells below require
+  stop survivors `{20%, none}` and overlay survivors `{O0, O1}`. Those two
+  registered challengers are therefore retained regardless of which generic
+  challenger has the highest Stage-1 Sharpe; the best-challenger rule remains
+  unchanged for every other axis. This preserves both the mandatory
+  interactions and the 96-cell Stage-2 cap.
 - **Stage 2 — reduced factorial (≤ 96 runs):** full cross of the surviving 2
   values per axis on the five highest-impact axes {N, rotation, band, stop,
   overlay} × surviving values of {factor weights} (≤ 3), with the remaining
@@ -177,6 +183,18 @@ optimistic end. A Sharpe near 1.0 net over a decade is elite; demand less.
 
 ## 7. Amendment log
 
+- **2026-07-28 — pre-run executable-protocol clarification (no experiment
+  results existed):** resolved an internal conflict between generic Stage-1
+  best-challenger retention, the four mandatory O0/O1 × none/20% interaction
+  cells, and the 96-cell Stage-2 cap. Stage 2 reserves `{20%, none}` for stop
+  and `{O0, O1}` for overlay; other axes retain the original rule. Also made
+  the entire purged split definition, including the explicitly supplied
+  maximum holding horizon, a hash-bound run identity. The portfolio has no
+  documented finite hard maximum holding period yet, so a real Phase-5 run
+  remains prohibited until a dated amendment registers either that finite
+  horizon/rule or explicit boundary-liquidation semantics. The construction
+  code rejects a horizon no longer than the 13-week grid rotation. No TRAIN,
+  VALIDATION or TEST result motivated these clarifications.
 - **2026-07-18 — pre-run protocol repair (no results had been produced):**
   froze the moving TEST end date; corrected Stage-1/Stage-2 arithmetic;
   introduced an executable Stage-3 neighborhood audit; replaced ambiguous

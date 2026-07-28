@@ -1,17 +1,17 @@
 # USInv compact handoff
 
-> Active checkpoint: 2026-07-27. This section supersedes the older 2026-07-21
+> Active checkpoint: 2026-07-28. This section supersedes the older 2026-07-21
 > state below wherever they conflict. `docs/CLAUDE_HANDOFF.md` remains the
 > authoritative detailed handoff.
 
-## Active state (2026-07-27)
+## Active state (2026-07-28)
 
 | Item | Value |
 |---|---|
-| Branch / latest functional code | `agent/phase-2-3-universe-builder` / `ccdb9e2` |
-| Remote relation | All current Phase 2.4/3 commits are local; nothing was pushed |
-| Verification | Ruff passes; full suite **531 passed** |
-| Product construction | Phase 2.4, all Phase 3 tasks and Phase 4.1 implemented locally |
+| Branch / latest functional code | `agent/phase-2-3-universe-builder` / `1f4259d` |
+| Remote relation | Local branch is 19 commits ahead; nothing was pushed |
+| Verification | Ruff lint/format pass; full suite **568 passed** |
+| Product construction | Phase 2.4, Phase 3 and all Phase 4 tasks implemented locally |
 | D032 | **Still not passed**; the documented 2026-07-23 deviation remains in force |
 | External work | No workflow or provider refresh running |
 
@@ -23,16 +23,19 @@ future-vintage regressions pass. FRED's newly truncated HY-OAS history is
 recorded as a `BLUEPRINT-DEVIATION`; older history must use the explicitly
 registered HYG/LQD fallback and no missing OAS values are fabricated.
 
-Phase 4.1 is complete in `ccdb9e2`: deterministic stateful selection, entry/
-hold bands, core/large-cap and FF12 limits, fail-closed correlation checks,
-position/split continuity, settled-cash equal-weight sizing, XNYS rotation and
-rolling turnover enforcement.
+Phase 4 construction is complete through `1f4259d`: stateful portfolio
+selection; split-safe EOD percent/ATR stops and thesis exits; one settled-cash
+LOO execution/ledger engine with fill-time costs, retry/manual exceptions and
+evidenced terminations; complete metrics and bootstrap intervals; locked
+purged splits; staged/deduplicated/resumable grid generation; plateau/control
+fragility; and one-time hash-bound TEST authorization.
 
-Exact non-duplicating next product task, only if continuing construction under
-the existing deviation: Phase 4.2 exits. Read CODEX_TASKS 4.2 and MODEL_SPEC
-section 6 first. Do not make performance claims, run historical experiments,
-or start paper/live operation while D032 and frozen historical-data gates
-remain open.
+No performance experiment was run. Exact non-duplicating next work is not
+another product layer: close Phase 2.3 D032, approve and freeze a
+retention-permitted delisted-inclusive historical archive, and amend the
+pre-run protocol with a finite maximum holding horizon or explicit
+boundary-liquidation semantics. Until all three are done, Phase 5, TEST,
+paper-forward and live operation remain prohibited.
 
 ## Historical checkpoint (2026-07-21)
 

@@ -1058,3 +1058,94 @@ Functional commit: `ccdb9e2`.
   open; Phase 4.1 is construction under the documented deviation.
 
 Exact next PR-sized task: Phase 4.2 trailing-stop and thesis-break exits.
+
+## 2026-07-28 — Phase 4 portfolio/backtest construction complete
+
+Functional commits:
+
+- `ccdb9e2`: Phase 4.1 stateful selector, continuity, settled-cash sizing and
+  turnover.
+- `f3d07f2`: Phase 4.2 point-in-time EOD exits.
+- `af929b7`: Phase 4.3 execution-faithful backtest and canonical ledger.
+- `cb9e4b3`: Phase 4.4 locked staged experiment protocol and fragility tools.
+- `1f4259d`: bind every experiment attempt and TEST authorization to the exact
+  purged split-protocol hash.
+
+### Phase 4.2 exits
+
+- Percent trailing stops use the split-transformed stored high-water mark and
+  a strict official-close threshold. Wilder ATR(14) uses only as-of
+  split-continuous OHLC bars anchored to the evaluated session.
+- Intraday, future, unavailable and unresolved-adjustment bars fail closed.
+  Future actions cannot rewrite an earlier stop decision.
+- Registered held-name hygiene hard gates produce a separately evidenced 10%
+  thesis-break sell collar for the next XNYS open.
+
+### Phase 4.3 execution and ledger
+
+- One event loop owns LOO collar orders, daily-open/auction quality, fill-time
+  costs, positions, settled and T+1 unsettled cash, corporate actions,
+  terminations and daily NAV.
+- Entry collar misses cancel to cash. Routine/thesis/OTC exits use the latest
+  official close and raise a manual-execution exception after the initial open
+  plus three failed retries; no fill is invented.
+- Same-auction sale proceeds cannot fund buys in the default cash-account
+  model. The fixed 40 bp baseline and 0/20/40/75 bp sensitivities change cash
+  inside the loop.
+- Acquisition, exchange-to-OTC, bankruptcy and unknown termination paths carry
+  evidence. Unknown primary treatment is a total loss with final-close and
+  30%-haircut sensitivities; unvalued stock consideration is quarantined.
+- Metrics include CAGR, Sharpe, Sortino, MaxDD, Ulcer, month-end rolling-12m
+  win rate, one-way turnover, geometric benchmark-relative alpha and reported
+  regression alpha. Seeded stationary-block-bootstrap 80%/95% intervals and
+  the complete steady-return constraint are implemented.
+
+### Phase 4.4 locked experiment protocol
+
+- XNYS-only static TRAIN/VALIDATION/TEST construction preserves the exact TEST
+  window `2023-01-03..2026-06-30`, purges the explicitly registered maximum
+  holding horizon at both earlier boundaries, and confines optional
+  rolling-origin diagnostics to TRAIN.
+- The packaged grid is verified as exactly 331,776 full-cross cells without
+  running it. Generators enforce Stage 1 = 29, Stage 2 <=96, Stage 3 <=60 and
+  controls <=5, with exact config-hash deduplication and interruption resume.
+- Stage 3 uses original-grid neighbors and exact Sharpe/alpha/Ulcer/MaxDD
+  plateau tolerances. Simplicity controls, actual-trial deflated Sharpe, named
+  fragility scenarios and fixed PASS/PRESUMED-OVERFIT/FAIL rules are explicit.
+- The append-only attempt ledger is hash chained. Every attempt records config
+  hash, frozen data-manifest hash, split-protocol hash, code SHA and output
+  hash.
+- TEST refuses an unregistered final config, changed TRAIN/VALIDATION seal,
+  changed data/split/code identity or bad unlock token. Authorization is
+  consumed before evaluation, so even a failed TEST attempt burns the holdout.
+
+### Acceptance evidence
+
+- Phase 4 targeted tests: **50 passed**.
+- Ruff lint and format verification pass for every Phase 4 module/test.
+- Full repository suite: **568 passed**.
+- The hand-computable three-stock ledger ends at exactly `$942.24`, including
+  two fill-time 40 bp charges, a split, dividend, one collar cancellation,
+  acquisition consideration and conservative unknown termination.
+- No historical performance experiment or TEST run was executed and no return
+  claim was produced.
+
+### BLUEPRINT-DEVIATION / unresolved pre-run input
+
+The original Stage-1 “best challenger” rule could select arbitrary stop and
+overlay challengers, while the same protocol required all four
+`O0/O1 × none/20%` interactions inside a Stage-2 factorial capped at 96. The
+pre-run 2026-07-28 amendment reserves `none` and `O1` for those two challenger
+slots; all other axes retain the original rule.
+
+The portfolio blueprint has no finite hard maximum holding period even though
+the split protocol requires the maximum configured holding horizon. The
+software therefore does not invent one: it requires an explicit horizon longer
+than the longest 13-week rotation and hashes the resulting full session
+partition. Before any Phase-5 run, a dated protocol amendment must register a
+finite hard holding-horizon rule/value or explicit boundary-liquidation
+semantics.
+
+Phase 2.3 D032 and the retention-permitted frozen historical archive remain
+open. Phase 4 is complete as software construction only; Phase 5 experiments,
+performance claims, paper-forward and live operation remain prohibited.
