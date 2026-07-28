@@ -8,10 +8,10 @@
 
 | Item | Value |
 |---|---|
-| Branch / latest functional code | `agent/phase-2-3-universe-builder` / `c331d95` |
+| Branch / latest functional code | `agent/phase-2-3-universe-builder` / `ccdb9e2` |
 | Remote relation | All current Phase 2.4/3 commits are local; nothing was pushed |
-| Verification | Ruff passes; full suite **518 passed** |
-| Product construction | Phase 2.4 and all Phase 3 tasks implemented locally |
+| Verification | Ruff passes; full suite **531 passed** |
+| Product construction | Phase 2.4, all Phase 3 tasks and Phase 4.1 implemented locally |
 | D032 | **Still not passed**; the documented 2026-07-23 deviation remains in force |
 | External work | No workflow or provider refresh running |
 
@@ -23,11 +23,16 @@ future-vintage regressions pass. FRED's newly truncated HY-OAS history is
 recorded as a `BLUEPRINT-DEVIATION`; older history must use the explicitly
 registered HYG/LQD fallback and no missing OAS values are fabricated.
 
+Phase 4.1 is complete in `ccdb9e2`: deterministic stateful selection, entry/
+hold bands, core/large-cap and FF12 limits, fail-closed correlation checks,
+position/split continuity, settled-cash equal-weight sizing, XNYS rotation and
+rolling turnover enforcement.
+
 Exact non-duplicating next product task, only if continuing construction under
-the existing deviation: Phase 4.1 selector/bands/rotation/continuity/sizing.
-Read CODEX_TASKS 4.1 and MODEL_SPEC section 5 first. Do not make performance
-claims, run historical experiments, or start paper/live operation while D032
-and the frozen historical-data gates remain open.
+the existing deviation: Phase 4.2 exits. Read CODEX_TASKS 4.2 and MODEL_SPEC
+section 6 first. Do not make performance claims, run historical experiments,
+or start paper/live operation while D032 and frozen historical-data gates
+remain open.
 
 ## Historical checkpoint (2026-07-21)
 

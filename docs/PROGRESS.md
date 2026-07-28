@@ -1025,3 +1025,36 @@ Phase 3 software construction is complete. Phase 2.3 D032 remains open under
 the construction-only deviation. No performance claim, historical experiment,
 paper operation or live activation is permitted until D032 and the frozen
 historical data gates genuinely pass.
+
+## 2026-07-28 — Phase 4.1 stateful portfolio construction
+
+Functional commit: `ccdb9e2`.
+
+### Implemented
+
+- Entry top-decile / hold top-quartile band policy with missing ranks failing
+  closed.
+- Deterministic transition order: forced exits, held-name retention, then new
+  candidates sorted by bucket percentile, composite, 21-day dollar volume,
+  ticker and security id.
+- Independent large-cap ceiling, round-half-up FF12 sector cap and fail-closed
+  pairwise-correlation checks.
+- Stable `position_id`, entry session, cost basis and high-water continuity;
+  effective split transformation preserves position value and stop basis.
+- Equal-weight 1/N entry notionals funded only from settled cash. A slot that
+  cannot be fully funded remains cash.
+- Rolling eligible-session turnover accounting using
+  `0.5 * (buys + sells) / pre_trade_NAV`; forced exits may breach the cap and
+  later discretionary replacement buys are blocked.
+- Fixed-anchor XNYS rotation wrapper; holidays shift individual rotations
+  without rebasing later anchors.
+
+### Verification
+
+- Targeted Phase 4.1 tests: **13 passed**.
+- Ruff and touched-file format checks pass.
+- Full suite: **531 passed**.
+- No performance output was produced. D032 and historical-data gates remain
+  open; Phase 4.1 is construction under the documented deviation.
+
+Exact next PR-sized task: Phase 4.2 trailing-stop and thesis-break exits.

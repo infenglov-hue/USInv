@@ -6,7 +6,7 @@ GitHub Actions refresh attempt.
 This is the authoritative continuation document. It is intentionally detailed
 enough that Claude should not need the Codex conversation transcript.
 
-## 0AA. Live Codex checkpoint — 2026-07-27, commit `c331d95`
+## 0AA. Live Codex checkpoint — 2026-07-28, commit `ccdb9e2`
 
 This checkpoint supersedes every older continuation instruction below where it
 conflicts.
@@ -15,10 +15,10 @@ conflicts.
 
 | Item | Current state |
 |---|---|
-| Branch / latest functional code | `agent/phase-2-3-universe-builder` / `c331d95` |
+| Branch / latest functional code | `agent/phase-2-3-universe-builder` / `ccdb9e2` |
 | Remote relation | All current Phase 2.4/3 commits are local; no push was performed |
 | Working tree | Clean immediately after functional commit; this handoff edit follows |
-| Verification | `ruff check .` passed; full suite **518 passed** |
+| Verification | `ruff check .` passed; full suite **531 passed** |
 | Active external workflow/process | None |
 | D032 | Still not passed; the documented deviation permits construction only |
 
@@ -45,13 +45,18 @@ freshness and all four Phase 3 tasks are now implemented:
 - `BLUEPRINT-DEVIATION`: FRED now exposes only roughly three years of HY-OAS
   history and no earlier full archive exists locally. Older history must use a
   frozen, explicitly thresholded HYG/LQD total-return fallback.
+- `ccdb9e2` completes Phase 4.1: deterministic stateful selection, buy/hold
+  bands, large-cap/sector/correlation constraints, position and split
+  continuity, settled-cash equal-weight sizing, fixed XNYS rotations and the
+  rolling 21-session turnover hard cap. Forced exits may breach the cap and
+  then block replacement buys, as required.
 
 ### Exact non-duplicating continuation
 
 1. Do not redo Phase 3 or the v1-v20 identity/cover work.
 2. If continuing product construction under the approved deviation, the next
-   PR-sized slice is Phase 4.1 only: selector, bands, rotation, continuity,
-   sizing and turnover cap per CODEX_TASKS 4.1 / MODEL_SPEC section 5.
+   PR-sized slice is Phase 4.2 only: trailing-stop and thesis-break exits per
+   CODEX_TASKS 4.2 / MODEL_SPEC section 6.
 3. The HYG/LQD fallback threshold and defensive factor vector must remain
    explicit inputs until registered; do not create hidden defaults.
 4. D032 remains mandatory before any performance claim, experiment, paper
