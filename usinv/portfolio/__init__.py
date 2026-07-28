@@ -7,6 +7,17 @@ from usinv.portfolio.continuity import (
     apply_effective_split,
     retain_position,
 )
+from usinv.portfolio.exits import (
+    ExitError,
+    ExitKind,
+    ExitSignal,
+    SplitContinuousBar,
+    StopEvaluation,
+    evaluate_atr_trailing_stop,
+    evaluate_percent_trailing_stop,
+    evaluate_thesis_break,
+    wilder_atr,
+)
 from usinv.portfolio.rotation import rotation_schedule
 from usinv.portfolio.selector import (
     Candidate,
@@ -37,6 +48,9 @@ __all__ = [
     "Candidate",
     "ContinuityError",
     "EntryAllocation",
+    "ExitError",
+    "ExitKind",
+    "ExitSignal",
     "Holding",
     "PositionState",
     "ProposedTrade",
@@ -45,14 +59,20 @@ __all__ = [
     "SelectionProposal",
     "SizingError",
     "SizingPlan",
+    "SplitContinuousBar",
+    "StopEvaluation",
     "TradeSide",
     "TurnoverDecision",
     "TurnoverError",
     "TurnoverEvent",
     "apply_effective_split",
     "enforce_turnover_budget",
+    "evaluate_atr_trailing_stop",
+    "evaluate_percent_trailing_stop",
+    "evaluate_thesis_break",
     "retain_position",
     "rotation_schedule",
     "select_portfolio",
     "size_equal_weight_entries",
+    "wilder_atr",
 ]
