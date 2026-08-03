@@ -46,6 +46,7 @@ from usinv.data.edgar.cover_acquisition import (
     CoverFormHistoryProof,
     CoverFpiFormObservation,
     CoverShareObservation,
+    CoverTerminalFormObservation,
     acquire_cover_evidence,
     infer_domestic_flag,
 )
@@ -72,6 +73,7 @@ from usinv.data.edgar.filing_sic_snapshot import (
     FilingSicSnapshot,
     acquire_filing_sic_snapshot,
     read_filing_sic_snapshot,
+    rebase_filing_sic_snapshot,
 )
 from usinv.data.edgar.filing_xbrl import (
     FILING_XBRL_VERSION,
@@ -107,6 +109,7 @@ from usinv.data.edgar.name_discovery import (
     augment_discovery_plan_with_exact_names,
     fsds_company_name_observations,
     match_discovered_listing_names,
+    match_discovered_listing_stems,
     match_unmapped_listing_names,
     match_unmapped_listing_stems,
 )
@@ -146,6 +149,7 @@ from usinv.data.edgar.security_bootstrap import (
     SecTickerAssociationSnapshot,
     build_cover_security_master,
     build_filing_discovery_plan,
+    exact_filing_index_pair,
     materialize_filing_discovery_plan,
     parse_sec_ticker_associations,
     read_filing_discovery_plan,
@@ -180,6 +184,9 @@ from usinv.data.edgar.tag_chains import (
     standardize_pit_snapshot,
 )
 from usinv.data.edgar.ticker_history_discovery import (
+    augment_discovery_plan_with_ticker_evidence,
+    corroborate_historical_association_candidates,
+    corroborate_historical_ticker_candidates,
     discover_historical_ticker_candidates,
     parse_dominant_entity_candidate,
 )
@@ -217,6 +224,7 @@ __all__ = [
     "CoverIdentityReconciliation",
     "CoverSecurityBootstrap",
     "CoverShareObservation",
+    "CoverTerminalFormObservation",
     "CoverageInput",
     "CoverageReport",
     "EdgarCacheError",
@@ -277,6 +285,7 @@ __all__ = [
     "archive_filing",
     "augment_discovery_plan_with_exact_name_evidence",
     "augment_discovery_plan_with_exact_names",
+    "augment_discovery_plan_with_ticker_evidence",
     "build_applicability_coverage",
     "build_cover_security_master",
     "build_coverage_report",
@@ -284,6 +293,8 @@ __all__ = [
     "build_security_master",
     "compare_edge_to_fsds",
     "consolidated_filing_facts",
+    "corroborate_historical_association_candidates",
+    "corroborate_historical_ticker_candidates",
     "cover_plan_changed_ciks",
     "cover_share_evidence",
     "coverage_input",
@@ -292,6 +303,7 @@ __all__ = [
     "detect_new_periodic_filings",
     "discover_historical_ticker_candidates",
     "eligible_ciks_from_filings",
+    "exact_filing_index_pair",
     "extract_cover_security_classes",
     "filing_facts_to_raw",
     "fsds_company_name_observations",
@@ -300,6 +312,7 @@ __all__ = [
     "ingest_periodic_filing",
     "load_structural_identity_facts",
     "match_discovered_listing_names",
+    "match_discovered_listing_stems",
     "match_unmapped_listing_names",
     "match_unmapped_listing_stems",
     "materialize_cover_evidence_merge",
@@ -328,6 +341,7 @@ __all__ = [
     "read_pit_facts_as_of",
     "read_security_master_snapshot",
     "rebase_cover_evidence_plan",
+    "rebase_filing_sic_snapshot",
     "reconcile_cover_evidence_merge",
     "security_evidence_from_cover",
     "select_cover_filings",

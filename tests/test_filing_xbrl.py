@@ -15,6 +15,7 @@ from usinv.data.edgar.filing_xbrl import (
     extract_cover_security_classes,
     filing_facts_to_raw,
     parse_filing_xbrl,
+    parse_plain_html_cover_table,
     parse_presentation_linkbase,
     security_evidence_from_cover,
 )
@@ -159,6 +160,61 @@ def test_cover_facts_keep_share_class_dimension_together() -> None:
     assert master.resolve("AAPL", "NASDAQ", date(2025, 5, 2)).security_id == security.security_id
 
 
+def test_plain_html_section_12b_table_produces_provenanced_cover_class() -> None:
+    body = b"""
+    <html><body><table>
+      <tr>
+        <th>Title of each class</th>
+        <th>Trading Symbol(s)</th>
+        <th>Name of each exchange on which registered</th>
+      </tr>
+      <tr>
+        <td>Class A common stock, $0.001 par value</td>
+        <td>AAPL</td>
+        <td>The Nasdaq Stock Market LLC</td>
+      </tr>
+    </table></body></html>
+    """
+
+    result = parse_plain_html_cover_table(
+        body,
+        filing=_filing(),
+        source_document="plain-cover.htm",
+    )
+    classes = extract_cover_security_classes(result)
+
+    assert len(classes) == 1
+    assert (
+        classes[0].ticker,
+        classes[0].exchange,
+        classes[0].class_title,
+    ) == (
+        "AAPL",
+        "The Nasdaq Stock Market LLC",
+        "Class A common stock, $0.001 par value",
+    )
+    assert all(
+        "plain-cover.htm/plain-html-cover-row-1" in pointer
+        for pointer in classes[0].evidence_pointers
+    )
+
+
+def test_plain_html_cover_requires_explicit_headers_and_rejects_dtd() -> None:
+    result = parse_plain_html_cover_table(
+        b"<html><body><table><tr><td>AAPL</td><td>NASDAQ</td></tr></table></body></html>",
+        filing=_filing(),
+        source_document="unlabeled.htm",
+    )
+
+    assert not result.facts
+    with pytest.raises(EdgarPayloadError, match="prohibited DTD"):
+        parse_plain_html_cover_table(
+            b"<!DOCTYPE html><html><body></body></html>",
+            filing=_filing(),
+            source_document="unsafe.htm",
+        )
+
+
 def test_identical_duplicate_cover_facts_do_not_hide_the_security_class() -> None:
     exchange = b"""<ix:nonNumeric name="dei:SecurityExchangeName" contextRef="class-a">
       The Nasdaq Stock Market LLC
@@ -178,6 +234,142 @@ def test_identical_duplicate_cover_facts_do_not_hide_the_security_class() -> Non
     assert len(classes[0].evidence_pointers) == 4
 
 
+def test_single_class_cover_accepts_exchange_axis_context_split() -> None:
+    body = INLINE_XBRL.replace(
+        b"</ix:resources>",
+        b"""<xbrli:context id="exchange">
+          <xbrli:entity>
+            <xbrli:identifier scheme="http://www.sec.gov/CIK">0000320193</xbrli:identifier>
+            <xbrli:segment>
+              <xbrldi:explicitMember dimension="dei:EntityListingsExchangeAxis">
+                fixture:XNASMember
+              </xbrldi:explicitMember>
+            </xbrli:segment>
+          </xbrli:entity>
+          <xbrli:period><xbrli:instant>2025-03-29</xbrli:instant></xbrli:period>
+        </xbrli:context></ix:resources>""",
+    ).replace(
+        b'name="dei:SecurityExchangeName" contextRef="class-a"',
+        b'name="dei:SecurityExchangeName" contextRef="exchange"',
+    )
+
+    classes = extract_cover_security_classes(
+        parse_filing_xbrl(
+            body,
+            filing=_filing(),
+            source_document="exchange-axis-cover.htm",
+        )
+    )
+
+    assert len(classes) == 1
+    assert (classes[0].ticker, classes[0].exchange, classes[0].class_title) == (
+        "AAPL",
+        "The Nasdaq Stock Market LLC",
+        "Common Stock",
+    )
+    assert classes[0].dimensions == (("dei:StatementClassOfStockAxis", "fixture:ClassAMember"),)
+
+
+def test_exchange_axis_fallback_keeps_multiple_classes_unresolved() -> None:
+    body = (
+        INLINE_XBRL.replace(
+            b"</ix:resources>",
+            b"""<xbrli:context id="exchange">
+          <xbrli:entity>
+            <xbrli:identifier scheme="http://www.sec.gov/CIK">0000320193</xbrli:identifier>
+            <xbrli:segment>
+              <xbrldi:explicitMember dimension="dei:EntityListingsExchangeAxis">
+                fixture:XNASMember
+              </xbrldi:explicitMember>
+            </xbrli:segment>
+          </xbrli:entity>
+          <xbrli:period><xbrli:instant>2025-03-29</xbrli:instant></xbrli:period>
+        </xbrli:context></ix:resources>""",
+        )
+        .replace(
+            b'name="dei:SecurityExchangeName" contextRef="class-a"',
+            b'name="dei:SecurityExchangeName" contextRef="exchange"',
+        )
+        .replace(
+            b'<ix:nonNumeric name="dei:TradingSymbol" contextRef="class-a">AAPL</ix:nonNumeric>',
+            b"""<ix:nonNumeric name="dei:TradingSymbol" contextRef="class-a">AAPL</ix:nonNumeric>
+        <ix:nonNumeric name="dei:TradingSymbol" contextRef="class-a">AAPL.B</ix:nonNumeric>""",
+        )
+    )
+
+    classes = extract_cover_security_classes(
+        parse_filing_xbrl(
+            body,
+            filing=_filing(),
+            source_document="ambiguous-exchange-axis-cover.htm",
+        )
+    )
+
+    assert not classes
+
+
+def test_missing_exchange_requires_one_allowed_listing_pair() -> None:
+    body = INLINE_XBRL.replace(
+        b"""<ix:nonNumeric name="dei:SecurityExchangeName" contextRef="class-a">
+      The Nasdaq Stock Market LLC
+    </ix:nonNumeric>""",
+        b"",
+    )
+    result = parse_filing_xbrl(
+        body,
+        filing=_filing(),
+        source_document="missing-exchange.htm",
+    )
+
+    assert not extract_cover_security_classes(result)
+    assert not extract_cover_security_classes(
+        result,
+        allowed_pairs=frozenset({("AAPL", "NASDAQ"), ("AAPL", "NYSE")}),
+    )
+    classes = extract_cover_security_classes(
+        result,
+        allowed_pairs=frozenset({("AAPL", "NASDAQ")}),
+    )
+
+    assert len(classes) == 1
+    assert (classes[0].ticker, classes[0].exchange) == ("AAPL", "NASDAQ")
+    assert classes[0].exchange_from_allowed_pair
+
+
+def test_missing_title_requires_unique_pair_and_explicit_common_shares() -> None:
+    body = INLINE_XBRL.replace(
+        (
+            b'    <ix:nonNumeric name="dei:Security12bTitle" contextRef="class-a">'
+            b"Common Stock</ix:nonNumeric>\n"
+        ),
+        b"",
+    ).replace(
+        b"</ix:resources>",
+        b"""<xbrli:context id="entity-shares">
+          <xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0000320193</xbrli:identifier></xbrli:entity>
+          <xbrli:period><xbrli:instant>2025-04-25</xbrli:instant></xbrli:period>
+        </xbrli:context></ix:resources>""",
+    ).replace(
+        b'name="dei:EntityCommonStockSharesOutstanding" contextRef="class-a"',
+        b'name="dei:EntityCommonStockSharesOutstanding" contextRef="entity-shares"',
+    )
+    result = parse_filing_xbrl(
+        body,
+        filing=_filing(),
+        source_document="missing-title.htm",
+    )
+
+    assert not extract_cover_security_classes(result)
+    classes = extract_cover_security_classes(
+        result,
+        allowed_pairs=frozenset({("AAPL", "NASDAQ")}),
+    )
+
+    assert len(classes) == 1
+    assert classes[0].class_title == "Common Stock"
+    assert classes[0].shares_outstanding == Decimal("15000000000")
+
+
 def test_warrant_title_mentioning_common_stock_remains_non_common() -> None:
     cover = CoverSecurityClass(
         "warrant",
@@ -193,6 +385,32 @@ def test_warrant_title_mentioning_common_stock_remains_non_common() -> None:
     security, _symbol = security_evidence_from_cover(_filing(), cover)
 
     assert security.security_type == "other"
+
+
+@pytest.mark.parametrize(
+    "class_title",
+    (
+        "Class A ordinary shares, par value $0.0001 per share",
+        "Subordinate Voting Shares",
+    ),
+)
+def test_ordinary_and_subordinate_voting_shares_are_common_stock(
+    class_title: str,
+) -> None:
+    cover = CoverSecurityClass(
+        "class-a",
+        "ONE",
+        "The Nasdaq Stock Market LLC",
+        class_title,
+        (),
+        ("fixture://ordinary-share",),
+        None,
+        None,
+    )
+
+    security, _symbol = security_evidence_from_cover(_filing(), cover)
+
+    assert security.security_type == "common_stock"
 
 
 def test_one_day_duration_cover_context_is_valid_identity_evidence() -> None:
@@ -276,6 +494,63 @@ def test_inline_xbrl_accepts_fixed_html_named_entities_without_a_dtd() -> None:
     parsed = parse_filing_xbrl(body, filing=_filing(), source_document="named-entity.htm")
 
     assert extract_cover_security_classes(parsed)[0].class_title == "Common Stock"
+
+
+def test_plain_prospectus_listing_statement_requires_an_exact_expected_pair() -> None:
+    body = b"""<html><body><p>
+      We have applied to list our common shares on the Nasdaq Global Select
+      Market (&quot;Nasdaq&quot;) under the symbol &quot;INIO.&quot;
+    </p></body></html>"""
+
+    parsed = parse_plain_html_cover_table(
+        body,
+        filing=_filing(),
+        source_document="prospectus.htm",
+        expected_listing_pair=("INIO", "NASDAQ"),
+    )
+    classes = extract_cover_security_classes(parsed)
+
+    assert len(classes) == 1
+    assert (
+        classes[0].ticker,
+        classes[0].exchange,
+        classes[0].class_title,
+    ) == ("INIO", "NASDAQ", "Common Shares")
+
+
+def test_plain_prospectus_listing_accepts_replacement_quote_around_exact_ticker() -> None:
+    parsed = parse_plain_html_cover_table(
+        (
+            '<html><head><meta charset="utf-8"></head><body>'
+            "We have applied to list our common stock on the "
+            "New York Stock Exchange (the \ufffdNYSE\ufffd) under the symbol "
+            "\ufffdCSQR\ufffd.</body></html>"
+        ).encode("utf-8"),
+        filing=_filing(),
+        source_document="prospectus.htm",
+        expected_listing_pair=("CSQR", "NYSE"),
+    )
+
+    assert extract_cover_security_classes(parsed)[0].ticker == "CSQR"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    (
+        "We intend to apply to list our common stock on NYSE under the symbol CSQR.",
+        "We have applied to list our preferred stock on NYSE under the symbol CSQR.",
+        "We have applied to list our common stock on Nasdaq under the symbol WRONG.",
+    ),
+)
+def test_plain_prospectus_listing_statement_fails_closed(statement: str) -> None:
+    parsed = parse_plain_html_cover_table(
+        f"<html><body>{statement}</body></html>".encode(),
+        filing=_filing(),
+        source_document="prospectus.htm",
+        expected_listing_pair=("CSQR", "NYSE"),
+    )
+
+    assert not parsed.facts
 
 
 def test_context_entity_and_duplicate_identity_fail_closed() -> None:

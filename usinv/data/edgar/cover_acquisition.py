@@ -18,6 +18,7 @@ from usinv.data.edgar.filing_xbrl import (
     archive_filing,
     extract_cover_security_classes,
     parse_filing_xbrl,
+    parse_plain_html_cover_table,
     security_evidence_from_cover,
 )
 from usinv.data.edgar.securities import SecurityMasterError, normalize_exchange, normalize_ticker
@@ -26,6 +27,7 @@ from usinv.data.edgar.security_bootstrap import (
     FilingDiscoveryPlan,
     FilingDiscoveryRow,
     canonical_cover_pair,
+    exact_filing_index_pair,
     select_cover_filings,
 )
 from usinv.data.edgar.submissions import (
@@ -38,6 +40,21 @@ from usinv.data.edgar.submissions import (
 _DOMESTIC_FORMS = frozenset({"10-K", "10-Q", "S-1"})
 _FOREIGN_FORMS = frozenset({"20-F", "40-F", "F-1"})
 _FPI_CLASSIFICATION_FORMS = frozenset({"20-F", "40-F", "6-K", "F-1"})
+_TERMINAL_FORMS = frozenset({"15-12B", "15-12G", "15-15D", "25"})
+_REACTIVATION_FORMS = frozenset(
+    {
+        "8-A12B",
+        "8-A12G",
+        "10-12B",
+        "10-12G",
+        "10-K",
+        "10-Q",
+        "20-F",
+        "40-F",
+        "S-1",
+        "F-1",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,11 +113,31 @@ class CoverFpiFormObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class CoverTerminalFormObservation:
+    cik: int
+    accession: str
+    form: str
+    accepted: datetime
+    evidence_pointer: str
+
+    def __post_init__(self) -> None:
+        if (
+            self.cik <= 0
+            or not self.accession
+            or self.form.upper().removesuffix("/A") not in _TERMINAL_FORMS
+            or self.accepted.tzinfo is None
+            or not self.evidence_pointer
+        ):
+            raise EdgarPayloadError("terminal form observation provenance is incomplete")
+
+
+@dataclass(frozen=True, slots=True)
 class CoverFormHistoryProof:
     cik: int
     as_of: datetime
     source_documents: tuple[str, ...]
     evidence_pointer: str
+    terminal_form_observations: tuple[CoverTerminalFormObservation, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -109,6 +146,18 @@ class CoverFormHistoryProof:
             or not self.source_documents
             or tuple(sorted(set(self.source_documents))) != self.source_documents
             or not self.evidence_pointer
+            or tuple(
+                sorted(
+                    self.terminal_form_observations,
+                    key=lambda row: (row.accepted, row.accession),
+                )
+            )
+            != self.terminal_form_observations
+            or any(
+                row.cik != self.cik
+                or row.accepted.astimezone(UTC) > self.as_of.astimezone(UTC)
+                for row in self.terminal_form_observations
+            )
         ):
             raise EdgarPayloadError("form-history completion proof is invalid")
 
@@ -238,10 +287,7 @@ def _cover_expansion_ciks(plan: FilingDiscoveryPlan) -> frozenset[int]:
             row.status == "discovered"
             and row.candidate_ciks == (cik,)
             and bool(row.candidate_evidence_pointers)
-            and not any(
-                "confidence=weak" in pointer
-                for pointer in row.candidate_evidence_pointers
-            )
+            and not any("confidence=weak" in pointer for pointer in row.candidate_evidence_pointers)
             for row in rows
         )
     )
@@ -297,6 +343,7 @@ def acquire_cover_evidence(
     requested = eligible[:maximum_ciks] if maximum_ciks is not None else eligible
     deferred = eligible[len(requested) :]
     if parallel_ciks > 1 and len(requested) > 1:
+
         def acquire_one(cik: int) -> CoverAcquisitionResult:
             return acquire_cover_evidence(
                 client,
@@ -392,6 +439,7 @@ def acquire_cover_evidence(
             )
             source_documents.append(f"{history_document.url}#{history_document.content_sha256}")
         form_history = _merge_form_observations(tuple(form_rows))
+        bounded_form_history = tuple(row for row in form_history if row.accepted <= cutoff)
         for row in form_history:
             base_form = row.form.upper().removesuffix("/A")
             if row.accepted <= cutoff and base_form in _FPI_CLASSIFICATION_FORMS:
@@ -406,11 +454,46 @@ def acquire_cover_evidence(
                 )
         if form_history_complete:
             proof_sources = tuple(sorted(set(source_documents)))
+            terminal_forms: tuple[CoverTerminalFormObservation, ...] = ()
+            terminal_rows = tuple(
+                row
+                for row in bounded_form_history
+                if row.form.upper().removesuffix("/A") in _TERMINAL_FORMS
+            )
+            if terminal_rows:
+                latest_terminal = terminal_rows[-1]
+                reactivated = any(
+                    row.accepted > latest_terminal.accepted
+                    and row.form.upper().removesuffix("/A") in _REACTIVATION_FORMS
+                    for row in bounded_form_history
+                )
+                if not reactivated:
+                    terminal_forms = (
+                        CoverTerminalFormObservation(
+                            cik,
+                            latest_terminal.accession,
+                            latest_terminal.form,
+                            latest_terminal.accepted,
+                            (
+                                f"{latest_terminal.source_url}"
+                                f"#{latest_terminal.source_sha256}:"
+                                f"{latest_terminal.accession}"
+                            ),
+                        ),
+                    )
             proof_payload = {
                 "cik": cik,
                 "as_of": cutoff.isoformat(),
                 "declared_history_files": list(feed.history_files),
                 "source_documents": list(proof_sources),
+                "terminal_forms": [
+                    {
+                        "accession": row.accession,
+                        "form": row.form,
+                        "accepted": row.accepted.astimezone(UTC).isoformat(),
+                    }
+                    for row in terminal_forms
+                ],
             }
             digest = hashlib.sha256(
                 json.dumps(proof_payload, sort_keys=True, separators=(",", ":")).encode()
@@ -421,6 +504,7 @@ def acquire_cover_evidence(
                     cutoff,
                     proof_sources,
                     f"sec-submissions-complete://{cik}/{digest}",
+                    terminal_forms,
                 )
             )
         domestic_flag = infer_domestic_flag(form_history, as_of=cutoff)
@@ -452,6 +536,7 @@ def acquire_cover_evidence(
             continue
 
         allowed_pairs = pairs_by_cik[cik]
+
         def archive_selected(
             filing: SubmissionFiling,
         ) -> FilingArchiveResult | EdgarHttpError:
@@ -512,6 +597,10 @@ def acquire_cover_evidence(
             effective_allowed_pairs = allowed_pairs
             observed_pairs: set[tuple[str, str]] = set()
             parse_failures: list[str] = []
+            filing_index_pair = exact_filing_index_pair(
+                filing,
+                pair_evidence_by_cik[cik],
+            )
             for candidate_name in candidate_names:
                 try:
                     parsed = parse_filing_xbrl(
@@ -521,21 +610,62 @@ def acquire_cover_evidence(
                     )
                 except EdgarPayloadError as exc:
                     parse_failures.append(f"{candidate_name}: {exc}")
-                    continue
+                    if candidate_name != primary_name:
+                        continue
+                    try:
+                        parsed = parse_plain_html_cover_table(
+                            primary_path.read_bytes(),
+                            filing=filing,
+                            source_document=primary_name,
+                            expected_listing_pair=filing_index_pair,
+                        )
+                    except EdgarPayloadError as html_exc:
+                        parse_failures.append(f"{candidate_name}: {html_exc}")
+                        continue
+                    if not parsed.facts:
+                        continue
                 parsed_pairs = _parsed_pairs(parsed)
                 observed_pairs.update(parsed_pairs)
                 effective_allowed_pairs = (
-                    allowed_pairs | parsed_pairs
-                    if cik in cover_expansion_ciks
-                    else allowed_pairs
+                    allowed_pairs | parsed_pairs if cik in cover_expansion_ciks else allowed_pairs
                 )
                 candidate_admitted = tuple(
                     (cover, canonical_cover_pair(cover, effective_allowed_pairs))
-                    for cover in extract_cover_security_classes(parsed)
+                    for cover in extract_cover_security_classes(
+                        parsed,
+                        allowed_pairs=effective_allowed_pairs,
+                        exact_ticker_evidence_pair=filing_index_pair,
+                    )
                 )
                 admitted = tuple(
                     (cover, pair) for cover, pair in candidate_admitted if pair is not None
                 )
+                if (
+                    not admitted
+                    and candidate_name == primary_name
+                    and filing_index_pair is not None
+                ):
+                    parsed_statement = parse_plain_html_cover_table(
+                        primary_path.read_bytes(),
+                        filing=filing,
+                        source_document=primary_name,
+                        expected_listing_pair=filing_index_pair,
+                    )
+                    statement_admitted = tuple(
+                        (cover, canonical_cover_pair(cover, effective_allowed_pairs))
+                        for cover in extract_cover_security_classes(
+                            parsed_statement,
+                            allowed_pairs=effective_allowed_pairs,
+                            exact_ticker_evidence_pair=filing_index_pair,
+                        )
+                    )
+                    admitted = tuple(
+                        (cover, pair)
+                        for cover, pair in statement_admitted
+                        if pair is not None
+                    )
+                    if admitted:
+                        parsed = parsed_statement
                 if admitted:
                     break
             if not admitted and len(parse_failures) == len(candidate_names):

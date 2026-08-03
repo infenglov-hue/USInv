@@ -19,6 +19,7 @@ from usinv.data.edgar.cover_acquisition import (
     CoverFormHistoryProof,
     CoverFpiFormObservation,
     CoverShareObservation,
+    CoverTerminalFormObservation,
 )
 from usinv.data.edgar.cover_shards import (
     CoverEvidenceMerge,
@@ -251,6 +252,120 @@ def test_complete_gap_free_cover_history_marks_old_listing_superseded() -> None:
     pointers = regime.superseded_pointers_by_listing[row.listing_evidence_pointer]
     assert proof.evidence_pointer in pointers
     assert "sec://cover/symbol" in pointers
+
+
+def test_complete_terminal_form_history_marks_inactive_listing_superseded() -> None:
+    security_id, old_master = _master()
+    master = old_master
+    terminal = CoverTerminalFormObservation(
+        CIK,
+        "0000000001-20-000003",
+        "15-12B",
+        datetime(2020, 2, 1, 20, tzinfo=UTC),
+        "sec://submissions/15-12b",
+    )
+    proof = CoverFormHistoryProof(
+        CIK,
+        SIGNAL,
+        ("https://data.sec.gov/submissions/cik1#" + "e" * 64,),
+        "sec-submissions-complete://1/" + "f" * 64,
+        (terminal,),
+    )
+    merge = CoverEvidenceMerge(
+        plan_snapshot_id="1" * 64,
+        as_of=SIGNAL,
+        requested_ciks=(CIK,),
+        shard_snapshot_ids=("2" * 64,),
+        archives=(),
+        share_observations=(),
+        fpi_form_observations=(),
+        form_history_proofs=(proof,),
+        acquisition_gaps=(),
+        bootstrap_gaps=(),
+        master=master,
+    )
+    row = FilingDiscoveryRow(
+        "OLD",
+        "NASDAQ",
+        "NASDAQ",
+        "Stock",
+        "alpha-vantage://listing/old",
+        "discovered",
+        (CIK,),
+        ("sec-fsds://quarter/accession?cik=1#issuer-name",),
+    )
+    plan = FilingDiscoveryPlan(
+        date(2026, 7, 17),
+        "3" * 64,
+        "4" * 64,
+        datetime(2026, 7, 18, tzinfo=UTC),
+        (row,),
+    )
+
+    regime = _identity_regime_evidence(plan, SimpleNamespace(merge=merge), SIGNAL)
+
+    pointers = regime.superseded_pointers_by_listing[row.listing_evidence_pointer]
+    assert terminal.evidence_pointer in pointers
+    assert security_id in {security.security_id for security in master.securities}
+
+
+def test_common_stock_observed_after_terminal_form_is_not_superseded() -> None:
+    _security_id, old_master = _master()
+    recent_symbol = replace(
+        old_master.symbols[0],
+        ticker="NEW",
+        valid_from=date(2021, 1, 1),
+        known_at=datetime(2021, 1, 1, 20, tzinfo=UTC),
+    )
+    master = build_security_master(old_master.securities, (recent_symbol,))
+    terminal = CoverTerminalFormObservation(
+        CIK,
+        "0000000001-20-000003",
+        "15-12B",
+        datetime(2020, 2, 1, 20, tzinfo=UTC),
+        "sec://submissions/15-12b",
+    )
+    proof = CoverFormHistoryProof(
+        CIK,
+        SIGNAL,
+        ("https://data.sec.gov/submissions/cik1#" + "e" * 64,),
+        "sec-submissions-complete://1/" + "f" * 64,
+        (terminal,),
+    )
+    merge = CoverEvidenceMerge(
+        plan_snapshot_id="1" * 64,
+        as_of=SIGNAL,
+        requested_ciks=(CIK,),
+        shard_snapshot_ids=("2" * 64,),
+        archives=(),
+        share_observations=(),
+        fpi_form_observations=(),
+        form_history_proofs=(proof,),
+        acquisition_gaps=(),
+        bootstrap_gaps=(),
+        master=master,
+    )
+    row = FilingDiscoveryRow(
+        "OLD",
+        "NASDAQ",
+        "NASDAQ",
+        "Stock",
+        "alpha-vantage://listing/old",
+        "discovered",
+        (CIK,),
+        ("sec-fsds://quarter/accession?cik=1#issuer-name",),
+    )
+    plan = FilingDiscoveryPlan(
+        date(2026, 7, 17),
+        "3" * 64,
+        "4" * 64,
+        datetime(2026, 7, 18, tzinfo=UTC),
+        (row,),
+    )
+
+    regime = _identity_regime_evidence(plan, SimpleNamespace(merge=merge), SIGNAL)
+
+    assert row.listing_evidence_pointer not in regime.superseded_pointers_by_listing
 
 
 def _sessions() -> tuple[date, ...]:
@@ -803,6 +918,7 @@ def test_filing_sic_snapshot_requires_the_exact_cover_lineage() -> None:
         source_url="https://www.sec.gov/filing.txt",
         source_sha256="a" * 64,
         header_sha256="b" * 64,
+        source_kind="header_sic",
     )
     supplement = SimpleNamespace(
         cover_snapshot_id="c" * 64,

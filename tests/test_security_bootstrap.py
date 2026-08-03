@@ -346,6 +346,10 @@ def test_cover_bootstrap_keeps_latest_description_for_one_identity_anchor() -> N
     security = result.master.securities[0]
     assert security.class_title == "Common Stock, $0.001 par value per share"
     assert security.security_type == "common_stock"
+    assert tuple(row.known_at for row in result.master.symbols) == (
+        old.accepted,
+        new.accepted,
+    )
     assert result.master.resolve("ONE", "NASDAQ", date(2026, 6, 1)).status == "mapped"
 
 

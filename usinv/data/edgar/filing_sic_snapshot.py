@@ -19,7 +19,11 @@ from usinv.data.edgar.client import EdgarClient, EdgarHttpError, EdgarPayloadErr
 from usinv.data.edgar.cover_shards import CoverEvidenceSnapshot, read_cover_evidence_snapshot
 from usinv.data.edgar.filing_header import parse_filing_header_metadata
 
-FILING_SIC_SNAPSHOT_VERSION: Final = "usinv-filing-sic-snapshot-v1"
+FILING_SIC_SNAPSHOT_VERSION: Final = "usinv-filing-sic-snapshot-v2"
+_SUPPORTED_SNAPSHOT_VERSIONS: Final = {
+    "usinv-filing-sic-snapshot-v1",
+    FILING_SIC_SNAPSHOT_VERSION,
+}
 
 
 def _publish_directory(temporary: Path, target: Path) -> None:
@@ -44,6 +48,7 @@ class FilingSicRecord:
     source_url: str
     source_sha256: str
     header_sha256: str
+    source_kind: str = "header_sic"
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +84,7 @@ def _record_payload(record: FilingSicRecord, header: bytes) -> dict[str, object]
         "source_url": record.source_url,
         "source_sha256": record.source_sha256,
         "header_sha256": record.header_sha256,
+        "source_kind": record.source_kind,
         "header_base64": base64.b64encode(header).decode("ascii"),
     }
 
@@ -89,10 +95,7 @@ def _read_payload(path: Path) -> tuple[dict[str, object], str]:
     except (OSError, json.JSONDecodeError) as exc:
         raise EdgarPayloadError("filing-SIC snapshot is unreadable") from exc
     snapshot_id = hashlib.sha256(_canonical(payload)).hexdigest()
-    if (
-        path.name != snapshot_id
-        or payload.get("version") != FILING_SIC_SNAPSHOT_VERSION
-    ):
+    if path.name != snapshot_id or payload.get("version") not in _SUPPORTED_SNAPSHOT_VERSIONS:
         raise EdgarPayloadError("filing-SIC snapshot identity is invalid")
     return payload, snapshot_id
 
@@ -111,12 +114,18 @@ def read_filing_sic_snapshot(path: str | Path) -> FilingSicSnapshot:
             header = base64.b64decode(row["header_base64"], validate=True)
             if hashlib.sha256(header).hexdigest() != row["header_sha256"]:
                 raise ValueError("header hash")
-            parsed = parse_filing_header_metadata(header)
+            source_kind = row.get("source_kind", "header_sic")
+            parsed = parse_filing_header_metadata(
+                header,
+                cik=row["cik"],
+                allow_814_industry_fallback=source_kind == "sec_file_number_814",
+            )
             accepted = datetime.fromisoformat(row["accepted"])
             if (
                 parsed is None
                 or parsed.accepted != accepted.astimezone(UTC)
                 or parsed.sic != row["sic"]
+                or parsed.source_kind != source_kind
             ):
                 raise ValueError("header parse")
             records.append(
@@ -128,6 +137,7 @@ def read_filing_sic_snapshot(path: str | Path) -> FilingSicSnapshot:
                     row["source_url"],
                     row["source_sha256"],
                     row["header_sha256"],
+                    source_kind,
                 )
             )
         cover_snapshot_id = payload["cover_snapshot_id"]
@@ -153,6 +163,73 @@ def read_filing_sic_snapshot(path: str | Path) -> FilingSicSnapshot:
         tuple(sorted(records, key=lambda row: row.cik)),
         gaps,
         True,
+    )
+
+
+def rebase_filing_sic_snapshot(
+    source: FilingSicSnapshot,
+    old_cover: CoverEvidenceSnapshot,
+    new_cover: CoverEvidenceSnapshot,
+    output_root: str | Path,
+) -> FilingSicSnapshot:
+    """Rebind unchanged archived SIC evidence to a parser-only cover replacement."""
+
+    verified_source = read_filing_sic_snapshot(source.output_dir)
+    verified_old = read_cover_evidence_snapshot(old_cover.output_dir)
+    verified_new = read_cover_evidence_snapshot(new_cover.output_dir)
+    targets = set(verified_source.target_ciks)
+
+    def target_archives(cover: CoverEvidenceSnapshot) -> tuple[tuple[int, str], ...]:
+        return tuple(
+            sorted((row.cik, row.accession) for row in cover.merge.archives if row.cik in targets)
+        )
+
+    if (
+        verified_source.snapshot_id != source.snapshot_id
+        or verified_old.snapshot_id != old_cover.snapshot_id
+        or verified_new.snapshot_id != new_cover.snapshot_id
+        or verified_source.cover_snapshot_id != verified_old.snapshot_id
+        or verified_old.merge.as_of.astimezone(UTC) != verified_new.merge.as_of.astimezone(UTC)
+        or verified_source.as_of.astimezone(UTC) != verified_new.merge.as_of.astimezone(UTC)
+        or not targets <= set(verified_old.merge.requested_ciks)
+        or not targets <= set(verified_new.merge.requested_ciks)
+        or target_archives(verified_old) != target_archives(verified_new)
+    ):
+        raise EdgarPayloadError("filing-SIC rebase inputs do not preserve exact provenance")
+
+    source_payload, source_snapshot_id = _read_payload(verified_source.output_dir)
+    if source_snapshot_id != verified_source.snapshot_id:
+        raise EdgarPayloadError("filing-SIC rebase source identity changed")
+    payload = {**source_payload, "cover_snapshot_id": verified_new.snapshot_id}
+    snapshot_id = hashlib.sha256(_canonical(payload)).hexdigest()
+    root = (
+        Path(output_root) / "filing-sic" / verified_source.as_of.astimezone(UTC).date().isoformat()
+    )
+    target = root / snapshot_id
+    if target.exists():
+        return read_filing_sic_snapshot(target)
+    temporary = root / f".{snapshot_id}.{uuid.uuid4().hex}.tmp"
+    temporary.mkdir(parents=True, exist_ok=False)
+    try:
+        (temporary / "filing-sic.json").write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        root.mkdir(parents=True, exist_ok=True)
+        _publish_directory(temporary, target)
+    except Exception:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+    created = read_filing_sic_snapshot(target)
+    return FilingSicSnapshot(
+        created.snapshot_id,
+        created.output_dir,
+        created.cover_snapshot_id,
+        created.as_of,
+        created.target_ciks,
+        created.records,
+        created.gaps,
+        False,
     )
 
 
@@ -197,7 +274,11 @@ def acquire_filing_sic_snapshot(
                     continue
                 raise
             header = _header_slice(resource.body)
-            metadata = parse_filing_header_metadata(header)
+            metadata = parse_filing_header_metadata(
+                header,
+                cik=cik,
+                allow_814_industry_fallback=True,
+            )
             if metadata is None or metadata.accepted > cutoff:
                 continue
             candidates.append(
@@ -210,6 +291,7 @@ def acquire_filing_sic_snapshot(
                         resource.url,
                         resource.content_sha256,
                         hashlib.sha256(header).hexdigest(),
+                        metadata.source_kind,
                     ),
                     header,
                 )

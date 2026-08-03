@@ -23,6 +23,7 @@ from usinv.data.edgar.client import EdgarClient, EdgarPayloadError, EdgarResourc
 from usinv.data.edgar.periods import fsds_period
 from usinv.data.edgar.securities import (
     Security,
+    SecurityMasterError,
     SymbolInterval,
     is_explicit_non_common_security_title,
     mint_security_id,
@@ -131,6 +132,7 @@ class CoverSecurityClass:
     evidence_pointers: tuple[str, ...]
     shares_outstanding: Decimal | None
     shares_evidence_pointer: str | None
+    exchange_from_allowed_pair: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -521,6 +523,194 @@ def parse_filing_xbrl(
     )
 
 
+def parse_plain_html_cover_table(
+    body: bytes,
+    *,
+    filing: SubmissionFiling,
+    source_document: str,
+    expected_listing_pair: tuple[str, str] | None = None,
+) -> FilingParseResult:
+    """Parse an explicit cover table or an exact-pair prospectus listing statement."""
+
+    if b"<!DOCTYPE" in body.upper() or b"<!ENTITY" in body.upper():
+        raise EdgarPayloadError("plain filing HTML contains prohibited DTD markup")
+    try:
+        root = etree.fromstring(
+            body,
+            parser=etree.HTMLParser(no_network=True, recover=True),
+        )
+    except etree.XMLSyntaxError as exc:
+        raise EdgarPayloadError("plain filing HTML is not parseable") from exc
+    if root is None:
+        raise EdgarPayloadError("plain filing HTML is empty")
+
+    def cell_text(node: etree._Element) -> str:
+        return " ".join("".join(node.itertext()).replace("\xa0", " ").split())
+
+    def header_key(value: str) -> str:
+        return "".join(character for character in value.casefold() if character.isalnum())
+
+    rows: set[tuple[str, str, str]] = set()
+    for table in root.xpath(".//table"):
+        table_rows: list[tuple[str, ...]] = []
+        for table_row in table.xpath(".//tr"):
+            cells = tuple(cell_text(cell) for cell in table_row.xpath("./th|./td"))
+            if cells:
+                table_rows.append(cells)
+        for index, header in enumerate(table_rows):
+            keys = tuple(header_key(value) for value in header)
+            title_index = next(
+                (
+                    position
+                    for position, value in enumerate(keys)
+                    if "titleofeachclass" in value
+                ),
+                None,
+            )
+            ticker_index = next(
+                (
+                    position
+                    for position, value in enumerate(keys)
+                    if "tradingsymbol" in value
+                ),
+                None,
+            )
+            exchange_index = next(
+                (
+                    position
+                    for position, value in enumerate(keys)
+                    if "nameofeachexchange" in value
+                    or "exchangeonwhichregistered" in value
+                ),
+                None,
+            )
+            if None in (title_index, ticker_index, exchange_index):
+                continue
+            assert title_index is not None
+            assert ticker_index is not None
+            assert exchange_index is not None
+            maximum_index = max(title_index, ticker_index, exchange_index)
+            for data_row in table_rows[index + 1 : index + 13]:
+                if len(data_row) <= maximum_index:
+                    continue
+                title = data_row[title_index].strip()
+                ticker = data_row[ticker_index].strip()
+                exchange = data_row[exchange_index].strip()
+                if title and ticker and exchange:
+                    try:
+                        normalize_ticker(ticker)
+                        normalize_exchange(exchange)
+                    except SecurityMasterError:
+                        continue
+                    rows.add((title, ticker, exchange))
+
+    if expected_listing_pair is not None and not rows:
+        expected_ticker, expected_exchange = expected_listing_pair
+        try:
+            expected_ticker = normalize_ticker(expected_ticker)
+            expected_exchange = normalize_exchange(expected_exchange)
+        except SecurityMasterError as exc:
+            raise EdgarPayloadError("plain filing expected listing pair is invalid") from exc
+        visible_text = " ".join(
+            "".join(root.itertext()).replace("\xa0", " ").split()
+        )
+        ticker_pattern = re.escape(expected_ticker).replace(r"\-", r"[- ]")
+        statement_pattern = re.compile(
+            r"\b(?:have\s+(?:been\s+)?(?:applied|approved)|(?:have\s+)?applied)"
+            r"\s+to\s+list\s+(?:our\s+)?"
+            r"(?P<title>.{1,100}?)\s+on\s+"
+            r"(?P<exchange>"
+            r"(?:the\s+)?New\s+York\s+Stock\s+Exchange|NYSE|"
+            r"(?:the\s+)?NYSE\s+American(?:\s+LLC)?|"
+            r"(?:the\s+)?Nasdaq(?:\s+Global\s+Select\s+Market|"
+            r"\s+Global\s+Market|\s+Capital\s+Market|\s+Stock\s+Market)?)"
+            r"(?:\s*\([^)]{1,40}\))?\s+under\s+(?:the\s+)?symbol\s+"
+            rf"[\"'“”\u2018\u2019\ufffd]?(?P<ticker>{ticker_pattern})\b",
+            re.IGNORECASE,
+        )
+        statement_rows: set[tuple[str, str, str]] = set()
+        for match in statement_pattern.finditer(visible_text):
+            title_text = " ".join(match.group("title").split())
+            lowered = title_text.casefold()
+            if (
+                is_explicit_non_common_security_title(title_text)
+                or not any(
+                    value in lowered
+                    for value in (
+                        "common stock",
+                        "common shares",
+                        "ordinary shares",
+                        "subordinate voting shares",
+                    )
+                )
+            ):
+                continue
+            try:
+                observed_exchange = normalize_exchange(match.group("exchange"))
+            except SecurityMasterError:
+                continue
+            if observed_exchange != expected_exchange:
+                continue
+            if "ordinary shares" in lowered:
+                class_title = "Ordinary Shares"
+            elif "subordinate voting shares" in lowered:
+                class_title = "Subordinate Voting Shares"
+            elif "common shares" in lowered:
+                class_title = "Common Shares"
+            else:
+                class_title = "Common Stock"
+            statement_rows.add((class_title, expected_ticker, expected_exchange))
+        if len(statement_rows) == 1:
+            rows.update(statement_rows)
+
+    period_end = filing.report_date or filing.filing_date
+    facts: list[FilingFact] = []
+    for row_number, (title, ticker, exchange) in enumerate(sorted(rows), start=1):
+        context_id = f"plain-html-cover-row-{row_number}"
+        for tag, value in (
+            ("Security12bTitle", title),
+            ("TradingSymbol", ticker),
+            ("SecurityExchangeName", exchange),
+        ):
+            facts.append(
+                FilingFact(
+                    cik=filing.cik,
+                    accession=filing.accession,
+                    tag=tag,
+                    taxonomy="dei",
+                    custom=False,
+                    context_id=context_id,
+                    period_start=None,
+                    period_end=period_end,
+                    ddate=period_end,
+                    qtrs=0,
+                    unit=None,
+                    decimals=None,
+                    value=None,
+                    text_value=value,
+                    dimensions=(),
+                    accepted=filing.accepted,
+                    form=filing.form,
+                    filed=filing.filing_date,
+                    filing_period=filing.report_date,
+                    source_document=source_document,
+                    evidence_pointer=(
+                        f"{filing.source_url}#{filing.accession}/{source_document}/"
+                        f"{context_id}/{tag}"
+                    ),
+                )
+            )
+    return FilingParseResult(
+        tuple(
+            sorted(
+                facts,
+                key=lambda item: (item.tag, item.context_id),
+            )
+        ),
+        (),
+    )
+
+
 def _precision(fact: FilingFact) -> int:
     if fact.decimals == "INF":
         return 1_000
@@ -600,15 +790,25 @@ def filing_facts_to_raw(result: FilingParseResult) -> tuple[RawFact, ...]:
     )
 
 
-def extract_cover_security_classes(result: FilingParseResult) -> tuple[CoverSecurityClass, ...]:
+def extract_cover_security_classes(
+    result: FilingParseResult,
+    *,
+    allowed_pairs: frozenset[tuple[str, str]] | None = None,
+    exact_ticker_evidence_pair: tuple[str, str] | None = None,
+) -> tuple[CoverSecurityClass, ...]:
     """Extract filing-time ticker/exchange/class tuples without collapsing dimensions."""
+
+    if exact_ticker_evidence_pair is not None and (
+        allowed_pairs is None or exact_ticker_evidence_pair not in allowed_pairs
+    ):
+        raise EdgarPayloadError(
+            "exact filing-index ticker evidence is outside the allowed listing pairs"
+        )
 
     def one_semantic_fact(facts: list[FilingFact]) -> FilingFact | None:
         if not facts:
             return None
-        identities = {
-            (" ".join(fact.text_value.split()), fact.dimensions) for fact in facts
-        }
+        identities = {(" ".join(fact.text_value.split()), fact.dimensions) for fact in facts}
         if len(identities) != 1:
             return None
         return min(facts, key=lambda fact: fact.evidence_pointer)
@@ -647,16 +847,243 @@ def extract_cover_security_classes(result: FilingParseResult) -> tuple[CoverSecu
                 exchange.text_value,
                 title.text_value,
                 ticker.dimensions,
-                tuple(
-                    sorted(
-                        fact.evidence_pointer
-                        for fact in (*tickers, *exchanges, *titles)
-                    )
-                ),
+                tuple(sorted(fact.evidence_pointer for fact in (*tickers, *exchanges, *titles))),
                 share_fact.value if share_fact else None,
                 share_fact.evidence_pointer if share_fact else None,
             )
         )
+    if not output:
+        # Some SEC filings keep ticker/title in the entity context but put
+        # exchanges in EntityListingsExchangeAxis contexts. Admit only the
+        # unambiguous single-class case; multiple ticker/title identities stay
+        # unresolved.
+        all_concepts: dict[str, list[FilingFact]] = defaultdict(list)
+        for concepts in by_context.values():
+            for tag, facts in concepts.items():
+                all_concepts[tag].extend(facts)
+        tickers = all_concepts.get("TradingSymbol", []) + all_concepts.get(
+            "EntityTradingSymbol", []
+        )
+        exchanges = all_concepts.get("SecurityExchangeName", [])
+        titles = all_concepts.get("Security12bTitle", []) + all_concepts.get(
+            "TitleOf12bSecurity", []
+        )
+        common_shares = all_concepts.get(
+            "EntityCommonStockSharesOutstanding",
+            [],
+        ) + all_concepts.get("CommonStockSharesOutstanding", [])
+
+        def class_dimensions(fact: FilingFact) -> tuple[tuple[str, str], ...]:
+            return tuple(
+                dimension
+                for dimension in fact.dimensions
+                if dimension[0].split(":")[-1] != "EntityListingsExchangeAxis"
+            )
+
+        def one_class_fact(facts: list[FilingFact]) -> FilingFact | None:
+            if not facts:
+                return None
+            identities = {
+                (" ".join(fact.text_value.split()), class_dimensions(fact)) for fact in facts
+            }
+            if len(identities) != 1:
+                return None
+            return min(facts, key=lambda fact: fact.evidence_pointer)
+
+        ticker = one_class_fact(tickers)
+        title = one_class_fact(titles)
+        exchange_groups: dict[str, list[FilingFact]] = defaultdict(list)
+        for exchange in exchanges:
+            exchange_groups[" ".join(exchange.text_value.split())].append(exchange)
+        selected_exchanges = tuple(
+            one_class_fact(exchange_groups[value]) for value in sorted(exchange_groups)
+        )
+        undimensioned_shares = [
+            fact
+            for fact in common_shares
+            if not fact.dimensions and fact.value is not None and fact.value > 0
+        ]
+        latest_share = None
+        if undimensioned_shares:
+            latest_period = max(fact.period_end for fact in undimensioned_shares)
+            latest_share = min(
+                (
+                    fact
+                    for fact in undimensioned_shares
+                    if fact.period_end == latest_period
+                ),
+                key=lambda fact: fact.evidence_pointer,
+            )
+        if (
+            ticker is not None
+            and title is not None
+            and selected_exchanges
+            and all(exchange is not None for exchange in selected_exchanges)
+            and class_dimensions(ticker) == class_dimensions(title)
+            and all(
+                class_dimensions(exchange) in {(), class_dimensions(ticker)}
+                for exchange in selected_exchanges
+                if exchange is not None
+            )
+        ):
+            for exchange in selected_exchanges:
+                assert exchange is not None
+                exchange_facts = exchange_groups[" ".join(exchange.text_value.split())]
+                output.append(
+                    CoverSecurityClass(
+                        ticker.context_id,
+                        ticker.text_value,
+                        exchange.text_value,
+                        title.text_value,
+                        class_dimensions(ticker),
+                        tuple(
+                            sorted(
+                                fact.evidence_pointer
+                                for fact in (*tickers, *titles, *exchange_facts)
+                            )
+                        ),
+                        None,
+                        None,
+                    )
+                )
+        elif (
+            ticker is not None
+            and title is not None
+            and not selected_exchanges
+            and allowed_pairs
+            and class_dimensions(ticker) == class_dimensions(title)
+        ):
+            try:
+                normalized_ticker = normalize_ticker(ticker.text_value)
+            except SecurityMasterError:
+                normalized_ticker = ""
+            inferred_pairs = tuple(
+                sorted(pair for pair in allowed_pairs if pair[0] == normalized_ticker)
+            )
+            if len(inferred_pairs) == 1:
+                output.append(
+                    CoverSecurityClass(
+                        ticker.context_id,
+                        ticker.text_value,
+                        inferred_pairs[0][1],
+                        title.text_value,
+                        class_dimensions(ticker),
+                        tuple(sorted(fact.evidence_pointer for fact in (*tickers, *titles))),
+                        None,
+                        None,
+                        True,
+                    )
+                )
+        elif (
+            ticker is not None
+            and title is None
+            and latest_share is not None
+            and allowed_pairs
+        ):
+            try:
+                normalized_ticker = normalize_ticker(ticker.text_value)
+            except SecurityMasterError:
+                normalized_ticker = ""
+            inferred_pairs = tuple(
+                sorted(pair for pair in allowed_pairs if pair[0] == normalized_ticker)
+            )
+            exact_exchange = (
+                selected_exchanges[0]
+                if len(selected_exchanges) == 1
+                and selected_exchanges[0] is not None
+                and class_dimensions(selected_exchanges[0]) in {(), class_dimensions(ticker)}
+                else None
+            )
+            exchange_text = (
+                exact_exchange.text_value
+                if exact_exchange is not None
+                else inferred_pairs[0][1]
+                if not selected_exchanges and len(inferred_pairs) == 1
+                else None
+            )
+            if exchange_text is not None:
+                output.append(
+                    CoverSecurityClass(
+                        ticker.context_id,
+                        ticker.text_value,
+                        exchange_text,
+                        "Common Stock",
+                        class_dimensions(ticker),
+                        tuple(
+                            sorted(
+                                {
+                                    *(fact.evidence_pointer for fact in tickers),
+                                    *(
+                                        fact.evidence_pointer
+                                        for fact in exchange_groups.get(
+                                            " ".join(exchange_text.split()),
+                                            (),
+                                        )
+                                    ),
+                                    latest_share.evidence_pointer,
+                                }
+                            )
+                        ),
+                        latest_share.value,
+                        latest_share.evidence_pointer,
+                        exact_exchange is None,
+                    )
+                )
+        elif ticker is None and exact_ticker_evidence_pair is not None:
+            inferred_ticker, inferred_exchange = exact_ticker_evidence_pair
+            normalized_exchanges: set[str] = set()
+            for selected_exchange in selected_exchanges:
+                if selected_exchange is None:
+                    continue
+                try:
+                    normalized_exchanges.add(
+                        normalize_exchange(selected_exchange.text_value)
+                    )
+                except SecurityMasterError:
+                    normalized_exchanges.add("")
+            exchange_consistent = not normalized_exchanges or normalized_exchanges == {
+                inferred_exchange
+            }
+            title_text = title.text_value if title is not None else ""
+            lowered_title = title_text.casefold()
+            explicit_common_title = bool(title_text) and (
+                not is_explicit_non_common_security_title(title_text)
+                and (
+                    "common" in lowered_title
+                    or "ordinary share" in lowered_title
+                    or "subordinate voting share" in lowered_title
+                )
+            )
+            if exchange_consistent and (
+                explicit_common_title or (title is None and latest_share)
+            ):
+                anchor = title or latest_share
+                assert anchor is not None
+                output.append(
+                    CoverSecurityClass(
+                        anchor.context_id,
+                        inferred_ticker,
+                        inferred_exchange,
+                        title_text or "Common Stock",
+                        class_dimensions(title) if title is not None else (),
+                        tuple(
+                            sorted(
+                                {
+                                    *(fact.evidence_pointer for fact in titles),
+                                    *(fact.evidence_pointer for fact in exchanges),
+                                    *(
+                                        (latest_share.evidence_pointer,)
+                                        if latest_share is not None
+                                        else ()
+                                    ),
+                                }
+                            )
+                        ),
+                        latest_share.value if latest_share is not None else None,
+                        latest_share.evidence_pointer if latest_share is not None else None,
+                        True,
+                    )
+                )
     common_indexes = [
         index for index, cover in enumerate(output) if "common" in cover.class_title.casefold()
     ]
@@ -697,7 +1124,11 @@ def security_evidence_from_cover(
         security_type = "preferred_stock"
     elif is_explicit_non_common_security_title(title):
         security_type = "other"
-    elif "common" in lowered:
+    elif (
+        "common" in lowered
+        or "ordinary share" in lowered
+        or "subordinate voting share" in lowered
+    ):
         security_type = "common_stock"
     else:
         security_type = "other"
@@ -930,9 +1361,7 @@ def archive_filing(
             key=lambda path: path.name,
         ):
             try:
-                manifest = json.loads(
-                    (target / "manifest.json").read_text(encoding="utf-8")
-                )
+                manifest = json.loads((target / "manifest.json").read_text(encoding="utf-8"))
                 resources = _verify_archive(target, target.name)
             except (OSError, ValueError, json.JSONDecodeError):
                 continue
@@ -940,8 +1369,7 @@ def archive_filing(
             if (
                 manifest.get("cik") == filing.cik
                 and manifest.get("accession") == filing.accession
-                and manifest.get("accepted")
-                == filing.accepted.astimezone(UTC).isoformat()
+                and manifest.get("accepted") == filing.accepted.astimezone(UTC).isoformat()
                 and PurePosixPath(filing.primary_document).name in names
                 and "index.json" in names
             ):
@@ -958,9 +1386,7 @@ def archive_filing(
     selected = {name for name in names if name == primary or _is_instance_candidate(name)}
     if include_presentation:
         selected.update(
-            name
-            for name in names
-            if name.casefold().endswith(("_pre.xml", "_lab.xml"))
+            name for name in names if name.casefold().endswith(("_pre.xml", "_lab.xml"))
         )
     if include_filing_header:
         selected.update(name for name in names if _is_complete_submission(name, filing.accession))

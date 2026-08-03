@@ -76,6 +76,23 @@ def _inline_xbrl(ticker: str = "ONE", exchange: str = "NASDAQ") -> bytes:
 """.encode()
 
 
+def _inline_xbrl_without_listing_tags(title: str = "Common Stock") -> bytes:
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<xbrli:xbrl xmlns:xbrli="http://www.xbrl.org/2003/instance"
+ xmlns:dei="http://xbrl.sec.gov/dei/2025">
+ <xbrli:unit id="shares"><xbrli:measure>xbrli:shares</xbrli:measure></xbrli:unit>
+ <xbrli:context id="cover">
+  <xbrli:entity><xbrli:identifier scheme="https://www.sec.gov/CIK">1</xbrli:identifier></xbrli:entity>
+  <xbrli:period><xbrli:instant>2026-03-31</xbrli:instant></xbrli:period>
+ </xbrli:context>
+ <dei:Security12bTitle contextRef="cover">{title}</dei:Security12bTitle>
+ <dei:EntityCommonStockSharesOutstanding contextRef="cover" unitRef="shares" decimals="0">
+  125000000
+ </dei:EntityCommonStockSharesOutstanding>
+</xbrli:xbrl>
+""".encode()
+
+
 class FakeClient:
     def __init__(self, ticker: str = "ONE", exchange: str = "NASDAQ") -> None:
         self.primary = _inline_xbrl(ticker, exchange)
@@ -214,6 +231,96 @@ def test_strong_entity_candidate_admits_sec_cover_ticker_expansion(tmp_path: Pat
     assert not result.gaps
     assert master.resolve("NEW", "NASDAQ", date(2026, 6, 1)).status == "mapped"
     assert master.resolve("OLD", "NASDAQ", date(2026, 6, 1)).status == "unmapped"
+
+
+def test_exact_same_filing_index_can_supply_missing_cover_listing_tags(
+    tmp_path: Path,
+) -> None:
+    client = FakeClient()
+    client.primary = _inline_xbrl_without_listing_tags()
+    filing_index_pointer = (
+        "https://efts.sec.gov/LATEST/search-index?q=ONE"
+        f"#filing-index-{ACCESSION}-cik-1;sha256={'c' * 64};ticker=ONE"
+    )
+    row = FilingDiscoveryRow(
+        "ONE",
+        "NASDAQ",
+        "NASDAQ",
+        "Stock",
+        "alpha-vantage://one/1",
+        "discovered",
+        (1,),
+        (filing_index_pointer,),
+    )
+    plan = FilingDiscoveryPlan(
+        date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,)
+    )
+
+    result = acquire_cover_evidence(client, plan, tmp_path, as_of=CUTOFF)
+    bootstrap = build_cover_security_master(result.evidence, as_of=CUTOFF)
+
+    assert not result.gaps and not bootstrap.gaps
+    assert (
+        bootstrap.master.resolve("ONE", "NASDAQ", date(2026, 6, 1)).status
+        == "mapped"
+    )
+    assert filing_index_pointer in bootstrap.master.symbols[0].evidence_pointer
+
+
+def test_stale_filing_index_pointer_cannot_supply_missing_cover_listing_tags(
+    tmp_path: Path,
+) -> None:
+    client = FakeClient()
+    client.primary = _inline_xbrl_without_listing_tags()
+    row = FilingDiscoveryRow(
+        "ONE",
+        "NASDAQ",
+        "NASDAQ",
+        "Stock",
+        "alpha-vantage://one/1",
+        "discovered",
+        (1,),
+        (
+            "https://efts.sec.gov/LATEST/search-index?q=ONE"
+            f"#filing-index-0000000001-25-999999-cik-1;sha256={'c' * 64};ticker=ONE",
+        ),
+    )
+    plan = FilingDiscoveryPlan(
+        date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,)
+    )
+
+    result = acquire_cover_evidence(client, plan, tmp_path, as_of=CUTOFF)
+
+    assert not result.evidence
+    assert result.gaps[0].kind == "cover_not_in_discovery_plan"
+
+
+def test_same_filing_ticker_evidence_does_not_promote_a_preferred_class(
+    tmp_path: Path,
+) -> None:
+    client = FakeClient()
+    client.primary = _inline_xbrl_without_listing_tags("Series A Preferred Stock")
+    row = FilingDiscoveryRow(
+        "ONE",
+        "NASDAQ",
+        "NASDAQ",
+        "Stock",
+        "alpha-vantage://one/1",
+        "discovered",
+        (1,),
+        (
+            "https://efts.sec.gov/LATEST/search-index?q=ONE"
+            f"#filing-index-{ACCESSION}-cik-1;sha256={'c' * 64};ticker=ONE",
+        ),
+    )
+    plan = FilingDiscoveryPlan(
+        date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,)
+    )
+
+    result = acquire_cover_evidence(client, plan, tmp_path, as_of=CUTOFF)
+
+    assert not result.evidence
+    assert result.gaps[0].kind == "cover_not_in_discovery_plan"
 
 
 def test_cover_acquisition_rejects_a_cover_pair_that_does_not_match_discovery(
@@ -424,6 +531,36 @@ def test_cover_acquisition_archives_complete_fpi_form_history_proof(tmp_path: Pa
     assert [row.form for row in result.fpi_form_observations] == ["20-F"]
     assert len(result.form_history_proofs) == 1
     assert len(result.form_history_proofs[0].source_documents) == 2
+
+
+def test_complete_form_history_records_effective_terminal_form(tmp_path: Path) -> None:
+    class TerminalClient(FakeClient):
+        def submissions(self, cik: int, *, refresh: bool) -> EdgarDocument:
+            payload = _filing_payload()
+            recent = payload["filings"]["recent"]  # type: ignore[index]
+            recent["accessionNumber"][1] = "0000000001-26-000003"  # type: ignore[index]
+            recent["filingDate"][1] = "2026-06-01"  # type: ignore[index]
+            recent["acceptanceDateTime"][1] = "2026-06-01T20:00:00Z"  # type: ignore[index]
+            recent["form"][1] = "15-12B"  # type: ignore[index]
+            recent["primaryDocument"][1] = ""  # type: ignore[index]
+            recent["reportDate"][1] = ""  # type: ignore[index]
+            return _document(
+                payload,
+                "https://data.sec.gov/submissions/CIK0000000001.json",
+            )
+
+    result = acquire_cover_evidence(
+        TerminalClient(),
+        _plan(),
+        tmp_path,
+        as_of=CUTOFF,
+        maximum_ciks=1,
+    )
+
+    terminal = result.form_history_proofs[0].terminal_form_observations
+    assert len(terminal) == 1
+    assert terminal[0].form == "15-12B"
+    assert terminal[0].accepted == datetime(2026, 6, 1, 20, tzinfo=UTC)
 
 
 def test_filer_regime_uses_only_forms_accepted_by_the_cutoff() -> None:

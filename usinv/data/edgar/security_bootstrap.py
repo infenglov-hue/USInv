@@ -493,9 +493,7 @@ def read_filing_discovery_plan(path: str | Path) -> FilingDiscoveryPlan:
                 listing_evidence_pointer=row["listing_evidence_pointer"],
                 status=row["status"],
                 candidate_ciks=tuple(row["candidate_ciks"]),
-                candidate_evidence_pointers=tuple(
-                    row.get("candidate_evidence_pointers", ())
-                ),
+                candidate_evidence_pointers=tuple(row.get("candidate_evidence_pointers", ())),
             )
             for row in payload["rows"]
         )
@@ -549,6 +547,21 @@ class CoverFilingEvidence:
     allowed_pair_evidence: tuple[tuple[str, str, str], ...] = ()
 
 
+def exact_filing_index_pair(
+    filing: SubmissionFiling,
+    allowed_pair_evidence: tuple[tuple[str, str, str], ...],
+) -> tuple[str, str] | None:
+    """Return the one pair tied to this exact accession by SEC's filing index."""
+
+    marker = f"#filing-index-{filing.accession}-cik-{filing.cik};"
+    matches = {
+        (ticker, exchange)
+        for ticker, exchange, pointer in allowed_pair_evidence
+        if marker in pointer and f";ticker={ticker}" in pointer
+    }
+    return next(iter(matches)) if len(matches) == 1 else None
+
+
 def canonical_cover_pair(
     cover: CoverSecurityClass,
     allowed_pairs: frozenset[tuple[str, str]],
@@ -581,8 +594,7 @@ def canonical_cover_pair(
             sorted(
                 pair
                 for pair in allowed_pairs
-                if pair[1] == exchange
-                and pair[0].replace("-", "") == ticker.replace("-", "")
+                if pair[1] == exchange and pair[0].replace("-", "") == ticker.replace("-", "")
             )
         )
         if len(compact_matches) == 1:
@@ -635,21 +647,24 @@ def _collapse_symbol_observations(
             by_security[security_id],
             key=lambda row: (row.valid_from, row.known_at, row.exchange, row.ticker),
         )
-        active: SymbolInterval | None = None
+        active: list[SymbolInterval] = []
         for item in rows:
-            if active is None:
-                active = item
+            if not active:
+                active.append(item)
                 continue
-            if (active.ticker, active.exchange) == (item.ticker, item.exchange):
+            if (active[-1].ticker, active[-1].exchange) == (
+                item.ticker,
+                item.exchange,
+            ):
+                active.append(item)
                 continue
-            if item.valid_from <= active.valid_from:
-                output.extend((active, item))
-                active = None
+            if item.valid_from <= active[0].valid_from:
+                output.extend((*active, item))
+                active.clear()
                 continue
-            output.append(replace(active, valid_to=item.valid_from))
-            active = item
-        if active is not None:
-            output.append(active)
+            output.extend(replace(row, valid_to=item.valid_from) for row in active)
+            active = [item]
+        output.extend(active)
     return tuple(output)
 
 
@@ -671,7 +686,14 @@ def build_cover_security_master(
         filings += 1
         if item.filing.accepted > cutoff:
             raise EdgarPayloadError("future filing reached the cover security bootstrap")
-        covers = extract_cover_security_classes(item.parsed)
+        covers = extract_cover_security_classes(
+            item.parsed,
+            allowed_pairs=item.allowed_pairs,
+            exact_ticker_evidence_pair=exact_filing_index_pair(
+                item.filing,
+                item.allowed_pair_evidence,
+            ),
+        )
         if item.allowed_pairs is not None:
             admitted: list[tuple[CoverSecurityClass, tuple[str, str]]] = []
             for cover in covers:
@@ -705,6 +727,22 @@ def build_cover_security_master(
             )
             continue
         for cover, canonical_pair in admitted:
+            if cover.exchange_from_allowed_pair:
+                discovery_pointer = _pair_evidence_pointer(item, canonical_pair)
+                if discovery_pointer is None:
+                    gaps.append(
+                        CoverBootstrapGap(
+                            item.filing.cik,
+                            item.filing.accession,
+                            "missing_pair_reconciliation_evidence",
+                            "listing-inferred exchange lacks discovery provenance",
+                        )
+                    )
+                    continue
+                cover = replace(
+                    cover,
+                    evidence_pointers=tuple(sorted({*cover.evidence_pointers, discovery_pointer})),
+                )
             try:
                 security, symbol = security_evidence_from_cover(
                     item.filing,
@@ -740,6 +778,11 @@ def build_cover_security_master(
                     exchange=canonical_pair[1],
                     source="sec_xbrl_cover+listing_discovery",
                     evidence_pointer=f"{symbol.evidence_pointer};{discovery_pointer}",
+                )
+            elif cover.exchange_from_allowed_pair:
+                symbol = replace(
+                    symbol,
+                    source="sec_xbrl_cover+listing_discovery",
                 )
             cover_count += 1
             prior = securities.get(security.security_id)

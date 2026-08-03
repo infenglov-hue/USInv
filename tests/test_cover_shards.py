@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -17,6 +18,7 @@ from usinv.data.edgar.cover_acquisition import (
     CoverFormHistoryProof,
     CoverFpiFormObservation,
     CoverShareObservation,
+    CoverTerminalFormObservation,
 )
 from usinv.data.edgar.cover_shards import (
     CoverEvidenceMerge,
@@ -26,6 +28,7 @@ from usinv.data.edgar.cover_shards import (
     merge_cover_evidence_shards,
     read_cover_evidence_shard,
     read_cover_evidence_snapshot,
+    rebase_cover_evidence_plan,
     reconcile_cover_evidence_merge,
 )
 from usinv.data.edgar.securities import (
@@ -112,6 +115,15 @@ def _inputs(cik: int, ticker: str):
                 CUTOFF,
                 (f"https://data.sec.gov/submissions/{cik}#" + "d" * 64,),
                 f"sec-submissions-complete://{cik}/" + "e" * 64,
+                (
+                    CoverTerminalFormObservation(
+                        cik,
+                        f"{cik:010d}-26-000003",
+                        "15-12B",
+                        datetime(2026, 6, 1, 20, tzinfo=UTC),
+                        f"sec://{cik}/history#15-12b",
+                    ),
+                ),
             ),
         ),
     )
@@ -137,6 +149,49 @@ def test_cover_plan_change_targets_only_changed_cik_pairs() -> None:
     )
 
     assert cover_plan_changed_ciks(plan((stable,)), plan((stable, added))) == (2,)
+
+
+def test_cover_plan_rebase_can_update_name_evidence_without_reacquisition(
+    tmp_path: Path,
+) -> None:
+    pointer = "alpha-vantage://listing/1"
+    old_row = FilingDiscoveryRow(
+        "ONE",
+        "NASDAQ",
+        "NASDAQ",
+        "Stock",
+        pointer,
+        "discovered",
+        (1,),
+    )
+    old_plan = FilingDiscoveryPlan(
+        date(2026, 7, 17),
+        "b" * 64,
+        "c" * 64,
+        CUTOFF,
+        (old_row,),
+    )
+    new_plan = replace(
+        old_plan,
+        rows=(
+            replace(
+                old_row,
+                candidate_evidence_pointers=("sec-fsds://quarter/accession",),
+            ),
+        ),
+    )
+    shard = materialize_cover_evidence_shard(*_inputs(1, "ONE"), tmp_path / "shard")
+    merged = merge_cover_evidence_shards((shard,), expected_ciks=(1,))
+    source = materialize_cover_evidence_merge(
+        replace(merged, plan_snapshot_id=old_plan.snapshot_id),
+        tmp_path / "source",
+    )
+
+    rebased = rebase_cover_evidence_plan(source, old_plan, new_plan, None)
+
+    assert rebased.plan_snapshot_id == new_plan.snapshot_id
+    assert rebased.master == source.merge.master
+    assert rebased.archives == source.merge.archives
 
 
 def test_cover_evidence_shard_is_immutable_compact_and_verified(tmp_path: Path) -> None:
@@ -377,6 +432,58 @@ def test_cover_reconciliation_keeps_concurrent_generic_classes_ambiguous() -> No
     assert result.ambiguous_groups == 1
     assert result.rewritten_security_ids == 0
     assert result.merge.master.securities == merged.master.securities
+
+
+def test_cover_reconciliation_preserves_ordinary_share_as_common_stock() -> None:
+    cik = 44
+    anchor = 'sec-cover-class:"ordinary shares"'
+    security_id = mint_security_id(cik, anchor)
+    security = Security(
+        security_id,
+        cik,
+        "Class A ordinary shares, par value $0.0001 per share",
+        "common_stock",
+        True,
+        anchor,
+        "sec_xbrl_cover",
+        "sec://44/ordinary",
+    )
+    symbol = SymbolInterval(
+        security_id,
+        "ORD",
+        "NASDAQ",
+        date(2026, 5, 1),
+        None,
+        "sec_xbrl_cover",
+        "high",
+        "sec://44/ordinary",
+        datetime(2026, 5, 1, 20, tzinfo=UTC),
+        "historical_interval",
+    )
+    merged = CoverEvidenceMerge(
+        PLAN,
+        CUTOFF,
+        (cik,),
+        ("b" * 64,),
+        (),
+        (),
+        (),
+        (),
+        (),
+        (),
+        build_security_master((security,), (symbol,)),
+    )
+
+    master = reconcile_cover_evidence_merge(merged).merge.master
+
+    assert len(master.securities) == 1
+    assert master.securities[0].security_type == "common_stock"
+    assert master.resolve(
+        "ORD",
+        "NASDAQ",
+        date(2026, 6, 1),
+        required_security_type="common_stock",
+    ).status == "mapped"
 
 
 def test_cover_reconciliation_collapses_exact_overlapping_symbol_identity() -> None:

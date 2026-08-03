@@ -107,7 +107,7 @@ def _filing_sic_snapshot_observations(
                 record.sic,
                 record.accepted,
                 (
-                    f"{record.source_url}#standard-industrial-classification"
+                    f"{record.source_url}#{record.source_kind}"
                     f";sha256={record.source_sha256}"
                     f";header_sha256={record.header_sha256}"
                 ),
@@ -146,9 +146,7 @@ def _identity_regime_evidence(
     for observation in merge.fpi_form_observations:
         foreign_accessions.setdefault(observation.cik, set()).add(observation.accession)
         if observation.accepted.astimezone(UTC) <= cutoff:
-            foreign_pointers.setdefault(observation.cik, set()).add(
-                observation.evidence_pointer
-            )
+            foreign_pointers.setdefault(observation.cik, set()).add(observation.evidence_pointer)
     foreign_regime = {
         cik: tuple(sorted(pointers))
         for cik, pointers in foreign_pointers.items()
@@ -164,13 +162,45 @@ def _identity_regime_evidence(
         and proof.cik not in archives_by_cik
         and proof.cik not in foreign_accessions
     }
-    proofs_by_cik = {
-        proof.cik: proof.evidence_pointer for proof in merge.form_history_proofs
+    proofs_by_cik = {proof.cik: proof.evidence_pointer for proof in merge.form_history_proofs}
+    terminal_pointers_by_cik = {
+        proof.cik: tuple(
+            sorted(
+                {
+                    proof.evidence_pointer,
+                    *(
+                        observation.evidence_pointer
+                        for observation in proof.terminal_form_observations
+                    ),
+                }
+            )
+        )
+        for proof in merge.form_history_proofs
+        if proof.terminal_form_observations
+    }
+    latest_terminal_by_cik = {
+        proof.cik: max(
+            observation.accepted.astimezone(UTC)
+            for observation in proof.terminal_form_observations
+        )
+        for proof in merge.form_history_proofs
+        if proof.terminal_form_observations
     }
     securities = {security.security_id: security for security in merge.master.securities}
+    post_terminal_common_ciks: set[int] = set()
     current_common_pointers: dict[int, set[str]] = {}
     for symbol in merge.master.symbols:
         security = securities[symbol.security_id]
+        if (
+            security.security_type == "common_stock"
+            and symbol.contains(cutoff.date())
+            and symbol.known_at.astimezone(UTC) <= cutoff
+            and symbol.confidence == "high"
+            and symbol.scope == "historical_interval"
+            and security.cik in latest_terminal_by_cik
+            and symbol.known_at.astimezone(UTC) > latest_terminal_by_cik[security.cik]
+        ):
+            post_terminal_common_ciks.add(security.cik)
         if (
             security.security_type == "common_stock"
             and symbol.contains(cutoff.date())
@@ -179,27 +209,18 @@ def _identity_regime_evidence(
             and symbol.confidence == "high"
             and symbol.scope == "historical_interval"
         ):
-            current_common_pointers.setdefault(security.cik, set()).add(
-                symbol.evidence_pointer
-            )
+            current_common_pointers.setdefault(security.cik, set()).add(symbol.evidence_pointer)
     superseded_by_listing: dict[str, tuple[str, ...]] = {}
     for row in discovery.rows:
         if (
             len(row.candidate_ciks) != 1
             or row.normalized_exchange is None
             or not row.candidate_evidence_pointers
-            or any(
-                "confidence=weak" in pointer
-                for pointer in row.candidate_evidence_pointers
-            )
+            or any("confidence=weak" in pointer for pointer in row.candidate_evidence_pointers)
         ):
             continue
         cik = row.candidate_ciks[0]
-        if (
-            cik not in proofs_by_cik
-            or len(archives_by_cik.get(cik, ())) < 2
-            or cik not in current_common_pointers
-        ):
+        if cik not in proofs_by_cik:
             continue
         mapping = merge.master.resolve(
             row.ticker,
@@ -208,6 +229,25 @@ def _identity_regime_evidence(
             minimum_confidence="high",
             required_security_type="common_stock",
         )
+        if (
+            mapping.status == "unmapped"
+            and cik in terminal_pointers_by_cik
+            and cik not in post_terminal_common_ciks
+        ):
+            superseded_by_listing[row.listing_evidence_pointer] = tuple(
+                sorted(
+                    {
+                        *row.candidate_evidence_pointers,
+                        *terminal_pointers_by_cik[cik],
+                    }
+                )
+            )
+            continue
+        if (
+            len(archives_by_cik.get(cik, ())) < 2
+            or cik not in current_common_pointers
+        ):
+            continue
         if mapping.status == "unmapped":
             superseded_by_listing[row.listing_evidence_pointer] = tuple(
                 sorted(
@@ -223,10 +263,7 @@ def _identity_regime_evidence(
             row.listing_evidence_pointer: row.candidate_ciks
             for row in discovery.rows
             if row.candidate_ciks
-            and not any(
-                "confidence=weak" in pointer
-                for pointer in row.candidate_evidence_pointers
-            )
+            and not any("confidence=weak" in pointer for pointer in row.candidate_evidence_pointers)
         },
         foreign_regime_pointers=foreign_regime,
         no_periodic_pointers=no_periodic,

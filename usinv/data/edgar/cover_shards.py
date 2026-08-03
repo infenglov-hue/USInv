@@ -24,6 +24,7 @@ from usinv.data.edgar.cover_acquisition import (
     CoverFormHistoryProof,
     CoverFpiFormObservation,
     CoverShareObservation,
+    CoverTerminalFormObservation,
 )
 from usinv.data.edgar.securities import (
     Security,
@@ -43,12 +44,13 @@ from usinv.data.edgar.security_bootstrap import (
 )
 
 COVER_IDENTITY_RECONCILIATION_VERSION: Final = "usinv-cover-semantic-equity-v2"
-COVER_MERGE_VERSION: Final = "usinv-cover-evidence-merge-v4"
-COVER_SHARD_VERSION: Final = "usinv-cover-evidence-shard-v4"
+COVER_MERGE_VERSION: Final = "usinv-cover-evidence-merge-v5"
+COVER_SHARD_VERSION: Final = "usinv-cover-evidence-shard-v5"
 _SUPPORTED_COVER_MERGE_VERSIONS: Final = frozenset(
     {
         "usinv-cover-evidence-merge-v2",
         "usinv-cover-evidence-merge-v3",
+        "usinv-cover-evidence-merge-v4",
         COVER_MERGE_VERSION,
     }
 )
@@ -201,7 +203,7 @@ def rebase_cover_evidence_plan(
     source: CoverEvidenceSnapshot,
     old_plan: FilingDiscoveryPlan,
     new_plan: FilingDiscoveryPlan,
-    shard: CoverEvidenceShard,
+    shard: CoverEvidenceShard | None,
 ) -> CoverEvidenceMerge:
     """Carry unchanged cover evidence into a conservative discovery-plan extension."""
 
@@ -210,14 +212,22 @@ def rebase_cover_evidence_plan(
     changed = frozenset(cover_plan_changed_ciks(old_plan, new_plan))
     if (
         source.merge.plan_snapshot_id != old_plan.snapshot_id
-        or shard.plan_snapshot_id != new_plan.snapshot_id
-        or frozenset(shard.requested_ciks) != changed
         or tuple(sorted(old_pairs)) != source.merge.requested_ciks
         or tuple(sorted(new_pairs)) != tuple(sorted(set(source.merge.requested_ciks) | changed))
         or old_plan.listing_snapshot_id != new_plan.listing_snapshot_id
         or old_plan.listing_as_of != new_plan.listing_as_of
         or old_plan.association_source_sha256 != new_plan.association_source_sha256
         or old_plan.association_observed_at != new_plan.association_observed_at
+    ):
+        raise EdgarPayloadError("cover evidence plan rebase is not an exact conservative extension")
+    if not changed:
+        if shard is not None:
+            raise EdgarPayloadError("metadata-only cover rebase must not provide a shard")
+        return replace(source.merge, plan_snapshot_id=new_plan.snapshot_id)
+    if (
+        shard is None
+        or shard.plan_snapshot_id != new_plan.snapshot_id
+        or frozenset(shard.requested_ciks) != changed
         or shard.as_of.astimezone(UTC) != source.merge.as_of.astimezone(UTC)
         or shard.deferred_ciks != 0
     ):
@@ -443,7 +453,11 @@ def reconcile_cover_evidence_merge(merged: CoverEvidenceMerge) -> CoverIdentityR
             replace(
                 latest,
                 security_id=security_id,
-                security_type="common_stock" if key.startswith("common-stock") else "other",
+                security_type=(
+                    "common_stock"
+                    if key.startswith(("common-stock", "ordinary-share"))
+                    else "other"
+                ),
                 identity_anchor=identity_anchor,
             )
         )
@@ -476,6 +490,36 @@ def reconcile_cover_evidence_merge(merged: CoverEvidenceMerge) -> CoverIdentityR
 
 def _canonical(payload: dict[str, object]) -> bytes:
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+
+
+def _terminal_form_payload(
+    observations: tuple[CoverTerminalFormObservation, ...],
+) -> list[dict[str, object]]:
+    return [
+        {
+            "cik": row.cik,
+            "accession": row.accession,
+            "form": row.form,
+            "accepted": row.accepted.astimezone(UTC).isoformat(),
+            "evidence_pointer": row.evidence_pointer,
+        }
+        for row in observations
+    ]
+
+
+def _read_terminal_forms(
+    payload: dict[str, object],
+) -> tuple[CoverTerminalFormObservation, ...]:
+    return tuple(
+        CoverTerminalFormObservation(
+            row["cik"],
+            row["accession"],
+            row["form"],
+            datetime.fromisoformat(row["accepted"]),
+            row["evidence_pointer"],
+        )
+        for row in payload.get("terminal_form_observations", [])
+    )
 
 
 def _payload(
@@ -520,6 +564,9 @@ def _payload(
                 "as_of": row.as_of.astimezone(UTC).isoformat(),
                 "source_documents": list(row.source_documents),
                 "evidence_pointer": row.evidence_pointer,
+                "terminal_form_observations": _terminal_form_payload(
+                    row.terminal_form_observations
+                ),
             }
             for row in acquisition.form_history_proofs
         ],
@@ -578,6 +625,7 @@ def read_cover_evidence_shard(path: str | Path) -> CoverEvidenceShard:
                 datetime.fromisoformat(row["as_of"]),
                 tuple(row["source_documents"]),
                 row["evidence_pointer"],
+                _read_terminal_forms(row),
             )
             for row in payload["form_history_proofs"]
         )
@@ -777,6 +825,9 @@ def _merge_payload(
                 "as_of": row.as_of.astimezone(UTC).isoformat(),
                 "source_documents": list(row.source_documents),
                 "evidence_pointer": row.evidence_pointer,
+                "terminal_form_observations": _terminal_form_payload(
+                    row.terminal_form_observations
+                ),
             }
             for row in merged.form_history_proofs
         ],
@@ -838,6 +889,7 @@ def read_cover_evidence_snapshot(path: str | Path) -> CoverEvidenceSnapshot:
                 datetime.fromisoformat(row["as_of"]),
                 tuple(row["source_documents"]),
                 row["evidence_pointer"],
+                _read_terminal_forms(row),
             )
             for row in payload["form_history_proofs"]
         )

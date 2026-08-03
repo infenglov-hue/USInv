@@ -24,9 +24,12 @@ from usinv.data.edgar import (
     acquire_filing_sic_snapshot,
     augment_discovery_plan_with_exact_name_evidence,
     augment_discovery_plan_with_exact_names,
+    augment_discovery_plan_with_ticker_evidence,
     build_cover_security_master,
     build_coverage_report,
     build_filing_discovery_plan,
+    corroborate_historical_association_candidates,
+    corroborate_historical_ticker_candidates,
     cover_plan_changed_ciks,
     coverage_input,
     discover_historical_ticker_candidates,
@@ -34,6 +37,7 @@ from usinv.data.edgar import (
     fsds_company_name_observations,
     fsds_quarter_range,
     match_discovered_listing_names,
+    match_discovered_listing_stems,
     match_unmapped_listing_names,
     match_unmapped_listing_stems,
     materialize_cover_evidence_merge,
@@ -49,6 +53,7 @@ from usinv.data.edgar import (
     read_filing_sic_snapshot,
     read_live_edge_snapshot,
     rebase_cover_evidence_plan,
+    rebase_filing_sic_snapshot,
     reconcile_cover_evidence_merge,
     standardize_pit_snapshot,
 )
@@ -202,6 +207,7 @@ def _parser() -> argparse.ArgumentParser:
     ticker_history.add_argument("--cache-dir", type=Path, required=True)
     ticker_history.add_argument("--output-dir", type=Path, required=True)
     ticker_history.add_argument("--target-ticker", action="append", default=[])
+    ticker_history.add_argument("--parallel-queries", type=int, default=4)
     ticker_history.add_argument("--refresh", action="store_true")
     cover = subcommands.add_parser(
         "sec-cover-bootstrap",
@@ -330,6 +336,14 @@ def _parser() -> argparse.ArgumentParser:
     filing_sic.add_argument("--cache-dir", type=Path, required=True)
     filing_sic.add_argument("--output-dir", type=Path, required=True)
     filing_sic.add_argument("--refresh", action="store_true")
+    filing_sic_rebase = subcommands.add_parser(
+        "edgar-filing-sic-rebase",
+        help="rebind unchanged filing-header SIC evidence to a replacement cover snapshot",
+    )
+    filing_sic_rebase.add_argument("--source", type=Path, required=True)
+    filing_sic_rebase.add_argument("--old-cover-evidence", type=Path, required=True)
+    filing_sic_rebase.add_argument("--new-cover-evidence", type=Path, required=True)
+    filing_sic_rebase.add_argument("--output-dir", type=Path, required=True)
     live = subcommands.add_parser(
         "edgar-live-sync",
         help="archive and normalize newly accepted 10-K/10-Q filings for one CIK",
@@ -514,11 +528,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 archive_as_of=args.archive_as_of,
             )
             observations = fsds_company_name_observations(ingested, as_of=args.as_of)
-            corroborations = match_discovered_listing_names(
-                listing, discovery, observations
+            corroborations = match_discovered_listing_names(listing, discovery, observations)
+            plan = augment_discovery_plan_with_exact_name_evidence(discovery, corroborations)
+            stem_corroborations = match_discovered_listing_stems(
+                listing,
+                plan,
+                observations,
             )
             plan = augment_discovery_plan_with_exact_name_evidence(
-                discovery, corroborations
+                plan,
+                stem_corroborations,
             )
             matches = match_unmapped_listing_names(listing, plan, observations)
             plan = augment_discovery_plan_with_exact_names(plan, matches)
@@ -532,14 +551,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         unique_matches = sum(match.status == "unique" for match in matches.values())
         ambiguous_matches = sum(match.status == "ambiguous" for match in matches.values())
-        discovery_by_pointer = {
-            row.listing_evidence_pointer: row for row in discovery.rows
-        }
+        discovery_by_pointer = {row.listing_evidence_pointer: row for row in discovery.rows}
         corroborated_matches = sum(
             match.status == "unique"
-            and match.candidate_ciks
-            == discovery_by_pointer[pointer].candidate_ciks
+            and match.candidate_ciks == discovery_by_pointer[pointer].candidate_ciks
             for pointer, match in corroborations.items()
+        )
+        corroborated_stem_matches = sum(
+            match.status == "unique"
+            for match in stem_corroborations.values()
         )
         stem_unique_matches = sum(match.status == "unique" for match in stem_matches.values())
         state = "cache" if artifact.from_cache else "created"
@@ -551,6 +571,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"snapshot_id={artifact.snapshot_id}",
                     f"observations={len(observations)}",
                     f"corroborated_matches={corroborated_matches}",
+                    f"corroborated_stem_matches={corroborated_stem_matches}",
                     f"unique_matches={unique_matches}",
                     f"ambiguous_matches={ambiguous_matches}",
                     f"stem_unique_matches={stem_unique_matches}",
@@ -578,12 +599,43 @@ def main(argv: Sequence[str] | None = None) -> int:
                 cache_dir=args.cache_dir,
                 cache_ttl_seconds=10 * 365 * 24 * 60 * 60,
             )
+            if listing_names_by_pointer is not None:
+                corroborations = corroborate_historical_association_candidates(
+                    client,
+                    discovery,
+                    as_of=args.as_of,
+                    listing_names_by_pointer=listing_names_by_pointer,
+                    target_tickers=(
+                        frozenset(args.target_ticker) if args.target_ticker else None
+                    ),
+                    parallel_queries=args.parallel_queries,
+                    refresh=args.refresh,
+                )
+                discovery = augment_discovery_plan_with_exact_name_evidence(
+                    discovery,
+                    corroborations,
+                )
+            ticker_corroborations = {}
+            if args.target_ticker:
+                ticker_corroborations = corroborate_historical_ticker_candidates(
+                    client,
+                    discovery,
+                    as_of=args.as_of,
+                    target_tickers=frozenset(args.target_ticker),
+                    parallel_queries=args.parallel_queries,
+                    refresh=args.refresh,
+                )
+                discovery = augment_discovery_plan_with_ticker_evidence(
+                    discovery,
+                    ticker_corroborations,
+                )
             matches = discover_historical_ticker_candidates(
                 client,
                 discovery,
                 as_of=args.as_of,
                 target_tickers=(frozenset(args.target_ticker) if args.target_ticker else None),
                 listing_names_by_pointer=listing_names_by_pointer,
+                parallel_queries=args.parallel_queries,
                 refresh=args.refresh,
             )
             plan = augment_discovery_plan_with_exact_names(discovery, matches)
@@ -592,6 +644,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"sec_ticker_history_discovery_failed: {exc}", file=sys.stderr)
             return 2
         unique_matches = sum(match.status == "unique" for match in matches.values())
+        ticker_corroborated_matches = sum(
+            match.status == "unique" for match in ticker_corroborations.values()
+        )
         query_count = len(set(args.target_ticker)) if args.target_ticker else len(matches)
         print(
             " ".join(
@@ -600,6 +655,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"snapshot_id={artifact.snapshot_id}",
                     f"queries={query_count}",
                     f"unique_matches={unique_matches}",
+                    f"ticker_corroborated_matches={ticker_corroborated_matches}",
                     f"identity_gaps={artifact.identity_gaps}",
                 )
             )
@@ -681,31 +737,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             old_plan = read_filing_discovery_plan(args.old_discovery_plan)
             new_plan = read_filing_discovery_plan(args.new_discovery_plan)
             targets = cover_plan_changed_ciks(old_plan, new_plan)
-            client = EdgarClient.from_config(
-                config,
-                cache_dir=args.cache_dir,
-                cache_ttl_seconds=10 * 365 * 24 * 60 * 60,
-            )
-            acquisition = acquire_cover_evidence(
-                client,
-                new_plan,
-                args.archive_dir,
-                as_of=source.merge.as_of,
-                maximum_filings_per_cik=args.max_filings_per_cik,
-                target_ciks=targets,
-                reuse_existing_archives=True,
-                parallel_ciks=4,
-                refresh=args.refresh,
-            )
-            bootstrap = build_cover_security_master(
-                acquisition.evidence,
-                as_of=source.merge.as_of,
-            )
-            shard = materialize_cover_evidence_shard(
-                acquisition,
-                bootstrap,
-                args.output_dir,
-            )
+            shard = None
+            if targets:
+                client = EdgarClient.from_config(
+                    config,
+                    cache_dir=args.cache_dir,
+                    cache_ttl_seconds=10 * 365 * 24 * 60 * 60,
+                )
+                acquisition = acquire_cover_evidence(
+                    client,
+                    new_plan,
+                    args.archive_dir,
+                    as_of=source.merge.as_of,
+                    maximum_filings_per_cik=args.max_filings_per_cik,
+                    target_ciks=targets,
+                    reuse_existing_archives=True,
+                    parallel_ciks=4,
+                    refresh=args.refresh,
+                )
+                bootstrap = build_cover_security_master(
+                    acquisition.evidence,
+                    as_of=source.merge.as_of,
+                )
+                shard = materialize_cover_evidence_shard(
+                    acquisition,
+                    bootstrap,
+                    args.output_dir,
+                )
             rebased = rebase_cover_evidence_plan(
                 source,
                 old_plan,
@@ -722,7 +780,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "sec_cover_rebase_plan_ok",
                     f"source={source.snapshot_id}",
                     f"targets={len(targets)}",
-                    f"evidence_ciks={len({row.cik for row in shard.master.securities})}",
+                    (
+                        f"evidence_ciks={len({row.cik for row in shard.master.securities})}"
+                        if shard is not None
+                        else "evidence_ciks=0"
+                    ),
                     f"snapshot={snapshot.snapshot_id}",
                     f"master={snapshot.master_snapshot_id}",
                 )
@@ -1053,6 +1115,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             " ".join(
                 (
                     "edgar_filing_sic_sync_ok",
+                    f"targets={len(snapshot.target_ciks)}",
+                    f"records={len(snapshot.records)}",
+                    f"gaps={len(snapshot.gaps)}",
+                    f"snapshot={snapshot.snapshot_id}",
+                    f"path={snapshot.output_dir}",
+                )
+            )
+        )
+        return 0
+    if args.command == "edgar-filing-sic-rebase":
+        try:
+            source = read_filing_sic_snapshot(args.source)
+            old_cover = read_cover_evidence_snapshot(args.old_cover_evidence)
+            new_cover = read_cover_evidence_snapshot(args.new_cover_evidence)
+            snapshot = rebase_filing_sic_snapshot(
+                source,
+                old_cover,
+                new_cover,
+                args.output_dir,
+            )
+        except EdgarError as exc:
+            print(f"edgar_filing_sic_rebase_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "edgar_filing_sic_rebase_ok",
+                    f"source={source.snapshot_id}",
+                    f"cover={new_cover.snapshot_id}",
                     f"targets={len(snapshot.target_ciks)}",
                     f"records={len(snapshot.records)}",
                     f"gaps={len(snapshot.gaps)}",

@@ -36,3 +36,30 @@ def test_filing_header_metadata_keeps_the_acceptance_instant() -> None:
     assert metadata is not None
     assert metadata.accepted == datetime(2026, 7, 17, 15, 59, 59, tzinfo=UTC)
     assert metadata.sic == 4941
+
+
+def test_814_industry_fallback_is_explicit_and_bound_to_the_target_cik() -> None:
+    body = (
+        b"<ACCEPTANCE-DATETIME>20260717155959\n"
+        b"CENTRAL INDEX KEY: 0001287750\n"
+        b"SEC FILE NUMBER: 814-00663\n"
+    )
+
+    assert parse_filing_header_metadata(body) is None
+    assert (
+        parse_filing_header_metadata(
+            body,
+            cik=999,
+            allow_814_industry_fallback=True,
+        )
+        is None
+    )
+    metadata = parse_filing_header_metadata(
+        body,
+        cik=1287750,
+        allow_814_industry_fallback=True,
+    )
+
+    assert metadata is not None
+    assert metadata.sic == 6726
+    assert metadata.source_kind == "sec_file_number_814"

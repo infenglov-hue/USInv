@@ -13,6 +13,7 @@ from usinv.data.edgar.name_discovery import (
     augment_discovery_plan_with_exact_names,
     fsds_company_name_observations,
     match_discovered_listing_names,
+    match_discovered_listing_stems,
     match_exact_company_name,
     match_unmapped_listing_names,
     match_unmapped_listing_stems,
@@ -182,6 +183,64 @@ def test_association_only_candidate_receives_exact_pit_name_provenance() -> None
     augmented = augment_discovery_plan_with_exact_name_evidence(discovery, matches)
 
     assert augmented.rows[0].candidate_ciks == (123,)
+    assert augmented.rows[0].candidate_evidence_pointers == (
+        "sec-fsds://source/accession",
+    )
+
+
+def test_association_only_candidate_receives_unique_pit_stem_provenance() -> None:
+    pointer = f"alpha-vantage://{'a' * 64}/2"
+    listing = type(
+        "Listing",
+        (),
+        {
+            "as_of": date(2026, 7, 17),
+            "snapshot_id": "b" * 64,
+            "rows": (
+                type(
+                    "Row",
+                    (),
+                    {
+                        "state": "active",
+                        "source_sha256": "a" * 64,
+                        "row_number": 2,
+                        "name": "Collective Acquisition Corp - Class A",
+                    },
+                )(),
+            ),
+        },
+    )
+    discovery = FilingDiscoveryPlan(
+        date(2026, 7, 17),
+        "b" * 64,
+        "c" * 64,
+        datetime(2026, 7, 18, tzinfo=UTC),
+        (
+            FilingDiscoveryRow(
+                "CCAQ",
+                "NASDAQ",
+                "NASDAQ",
+                "Stock",
+                pointer,
+                "discovered",
+                (123,),
+            ),
+        ),
+    )
+
+    matches = match_discovered_listing_stems(
+        listing,
+        discovery,
+        (
+            EdgarCompanyName(
+                123,
+                "Collective Acquisition Corporation",
+                "sec-fsds://source/accession",
+            ),
+        ),
+    )
+    augmented = augment_discovery_plan_with_exact_name_evidence(discovery, matches)
+
     assert augmented.rows[0].candidate_evidence_pointers == (
         "sec-fsds://source/accession",
     )

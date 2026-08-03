@@ -41,6 +41,20 @@ def test_exchange_normalization_accepts_filing_cover_nasdaq_labels(
 
 
 @pytest.mark.parametrize(
+    ("raw_exchange", "expected"),
+    [
+        ("The NYSE American LLC", "NYSEAMERICAN"),
+        ("The New York Stock Exchange", "NYSE"),
+    ],
+)
+def test_exchange_normalization_accepts_official_nyse_names(
+    raw_exchange: str,
+    expected: str,
+) -> None:
+    assert normalize_exchange(raw_exchange) == expected
+
+
+@pytest.mark.parametrize(
     "title",
     [
         "Warrants to purchase Common Stock",

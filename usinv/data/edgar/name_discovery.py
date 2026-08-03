@@ -261,6 +261,43 @@ def match_discovered_listing_names(
     return output
 
 
+def match_discovered_listing_stems(
+    listing: AlphaListingSnapshot,
+    discovery: FilingDiscoveryPlan,
+    observations: Iterable[EdgarCompanyName],
+) -> dict[str, ExactNameMatch]:
+    """Corroborate association-only candidates by a unique PIT legal-name stem."""
+
+    listing_names = {
+        f"alpha-vantage://{row.source_sha256}/{row.row_number}": row.name
+        for row in listing.rows
+        if row.state == "active"
+    }
+    planned_pointers = {row.listing_evidence_pointer for row in discovery.rows}
+    if listing.as_of != discovery.listing_as_of or not planned_pointers <= set(listing_names):
+        raise EdgarPayloadError("name discovery inputs do not share the listing lineage")
+    index: dict[str, dict[int, set[str]]] = defaultdict(lambda: defaultdict(set))
+    for observation in observations:
+        index[normalize_company_stem(observation.name)][observation.cik].add(
+            observation.evidence_pointer
+        )
+    output: dict[str, ExactNameMatch] = {}
+    for row in discovery.rows:
+        if (
+            row.status != "discovered"
+            or len(row.candidate_ciks) != 1
+            or row.candidate_evidence_pointers
+        ):
+            continue
+        name = listing_names.get(row.listing_evidence_pointer)
+        if name is None:
+            raise EdgarPayloadError("discovered row has no active listing evidence")
+        output[row.listing_evidence_pointer] = _match_indexed(
+            normalize_company_stem(name), index
+        )
+    return output
+
+
 def match_unmapped_listing_stems(
     listing: AlphaListingSnapshot,
     discovery: FilingDiscoveryPlan,
