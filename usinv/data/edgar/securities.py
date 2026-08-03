@@ -55,6 +55,21 @@ _EXCHANGE_ALIASES: Final = {
     "NYSE MKT": "NYSEAMERICAN",
     "AMEX": "NYSEAMERICAN",
     "NYSEAMERICAN": "NYSEAMERICAN",
+    "NYSE ARCA": "NYSEARCA",
+    "NYSE ARCA EQUITIES": "NYSEARCA",
+    "NYSE ARCA, INC.": "NYSEARCA",
+    "NASDAQ BX": "NASDAQBX",
+    "NASDAQ OMX BX": "NASDAQBX",
+    "BATS": "BATS",
+    "BATS BZX": "BATS",
+    "BATS BYX": "BATS",
+    "BATS EDGA": "BATS",
+    "BATS EDGX": "BATS",
+    "CBOE": "CBOE",
+    "CBOE BZX": "BATS",
+    "CBOE BYX": "BATS",
+    "CBOE EDGA": "BATS",
+    "CBOE EDGX": "BATS",
 }
 
 

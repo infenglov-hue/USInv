@@ -18,7 +18,7 @@ import pyarrow.parquet as pq
 
 from usinv.data.edgar.client import EdgarError
 
-CHAIN_VERSION: Final = "usinv-sec-concepts-v3"
+CHAIN_VERSION: Final = "usinv-sec-concepts-v4"
 STRICT_COVERAGE_MEASUREMENT: Final = "strict_observed_presence"
 COVERAGE_ENFORCEMENT: Final = "phase_2_3_final_universe_applicability"
 MISSING_VALUE_POLICY: Final = "missing_is_not_zero"
@@ -76,6 +76,8 @@ CONCEPT_CHAINS: Final = (
             "RevenuesNetOfInterestExpense",
             "RegulatedOperatingRevenue",
             "RegulatedOperatingRevenueWater",
+            "InterestAndDividendIncomeOperating",
+            "InterestIncomeOperating",
         ),
         nonnegative=True,
     ),
