@@ -1,0 +1,204 @@
+name: Real Phase 2.3 universe gate
+
+on:
+  workflow_call:
+    inputs:
+      cover_run_id:
+        required: true
+        type: string
+      listing_run_id:
+        required: false
+        type: string
+        default: ""
+      lifecycle_run_id:
+        required: false
+        type: string
+        default: ""
+      listing_date:
+        required: false
+        type: string
+        default: "2026-07-17"
+      signal_cutoff:
+        required: false
+        type: string
+        default: "2026-07-17T16:00:00-04:00"
+      fsds_start:
+        required: false
+        type: string
+        default: "2025q1"
+      fsds_end:
+        required: false
+        type: string
+        default: "2026q1"
+  workflow_dispatch:
+    inputs:
+      cover_run_id:
+        description: Successful security-evidence workflow run ID
+        required: true
+      listing_run_id:
+        description: Prior immutable Phase 2.3 listing artifact run ID
+        required: false
+        default: ""
+      lifecycle_run_id:
+        description: Prior immutable Phase 2.3 Tiingo lifecycle artifact run ID
+        required: false
+        default: ""
+      listing_date:
+        description: Alpha Vantage historical listing date
+        required: true
+        default: "2026-07-17"
+      signal_cutoff:
+        description: Official XNYS signal close
+        required: true
+        default: "2026-07-17T16:00:00-04:00"
+      fsds_start:
+        description: First FSDS quarter needed for TTM evidence
+        required: true
+        default: "2025q1"
+      fsds_end:
+        description: Last available FSDS quarter at the cutoff
+        required: true
+        default: "2026q1"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  universe-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+      ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
+      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+      USINV_EDGAR_EMAIL: ${{ secrets.USINV_EDGAR_EMAIL }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install .
+      - name: Require private credentials
+        shell: bash
+        run: |
+          test -n "$ALPACA_KEY_ID"
+          test -n "$ALPACA_SECRET_KEY"
+          test -n "$USINV_EDGAR_EMAIL"
+          if [[ -z "${{ inputs.listing_run_id }}" ]]; then
+            test -n "$ALPHA_VANTAGE_API_KEY"
+          fi
+      - name: Download immutable security discovery
+        uses: actions/download-artifact@v4
+        with:
+          name: security-discovery-plan
+          path: ${{ runner.temp }}/security-inputs/security-discovery-plan
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.cover_run_id }}
+      - name: Download immutable security evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: filing-backed-security-evidence
+          path: ${{ runner.temp }}/security-inputs/filing-backed-security-evidence
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.cover_run_id }}
+      - name: Download immutable dated listing snapshot
+        if: inputs.listing_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: phase-2-3-universe-evidence
+          path: ${{ runner.temp }}/listing-input
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.listing_run_id }}
+      - name: Fetch exact dated listing membership
+        if: inputs.listing_run_id == ''
+        run: >-
+          python -m usinv alpha-listing-sync
+          --as-of "${{ inputs.listing_date }}"
+          --output-dir "${{ runner.temp }}/private-listing"
+      - name: Download immutable Tiingo lifecycle snapshot
+        if: inputs.lifecycle_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: phase-2-3-universe-evidence
+          path: ${{ runner.temp }}/lifecycle-input
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.lifecycle_run_id }}
+      - name: Stage immutable Tiingo lifecycle snapshot
+        if: inputs.lifecycle_run_id != ''
+        shell: bash
+        run: |
+          mkdir -p "${{ runner.temp }}/private-lifecycle"
+          cp "${{ runner.temp }}/lifecycle-input/private-lifecycle/supported_tickers.zip" \
+            "${{ runner.temp }}/private-lifecycle/supported_tickers.zip"
+      - name: Fetch Tiingo bulk lifecycle snapshot
+        if: inputs.lifecycle_run_id == ''
+        shell: bash
+        run: |
+          mkdir -p "${{ runner.temp }}/private-lifecycle"
+          curl --fail --silent --show-error --location \
+            https://apimedia.tiingo.com/docs/tiingo/daily/supported_tickers.zip \
+            --output "${{ runner.temp }}/private-lifecycle/supported_tickers.zip"
+      - name: Fetch exact security-keyed raw and adjusted price batches
+        shell: bash
+        run: |
+          discovery_plan="$(find "${{ runner.temp }}/security-inputs/security-discovery-plan" -name discovery.json -type f -print -quit | xargs dirname)"
+          cover_evidence="$(find "${{ runner.temp }}/security-inputs/filing-backed-security-evidence" -name complete-evidence.json -type f -print -quit | xargs dirname)"
+          python -m usinv universe-price-sync \
+            --discovery-plan "$discovery_plan" \
+            --cover-evidence "$cover_evidence" \
+            --signal-at "${{ inputs.signal_cutoff }}" \
+            --batch-size 100 \
+            --output-dir "${{ runner.temp }}/universe-prices"
+      - name: Archive required public FSDS quarters
+        run: >-
+          python -m usinv fsds-sync
+          --start "${{ inputs.fsds_start }}"
+          --end "${{ inputs.fsds_end }}"
+          --archive-dir "${{ runner.temp }}/fsds-archive"
+      - name: Build and enforce D032
+        id: gate
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [[ -n "${{ inputs.listing_run_id }}" ]]; then
+            listing_root="${{ runner.temp }}/listing-input/private-listing"
+          else
+            listing_root="${{ runner.temp }}/private-listing"
+          fi
+          lifecycle_zip="${{ runner.temp }}/private-lifecycle/supported_tickers.zip"
+          listing_snapshot="$(find "$listing_root/alpha-vantage/listing-status/${{ inputs.listing_date }}" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+          test -n "$listing_snapshot"
+          test -s "$lifecycle_zip"
+          discovery_plan="$(find "${{ runner.temp }}/security-inputs/security-discovery-plan" -name discovery.json -type f -print -quit | xargs dirname)"
+          cover_evidence="$(find "${{ runner.temp }}/security-inputs/filing-backed-security-evidence" -name complete-evidence.json -type f -print -quit | xargs dirname)"
+          price_universe="$(find "${{ runner.temp }}/universe-prices/universe-runs" -name price-universe.json -type f -print -quit | xargs dirname)"
+          python -m usinv phase-2-3-build \
+            --listing-snapshot "$listing_snapshot" \
+            --discovery-plan "$discovery_plan" \
+            --cover-evidence "$cover_evidence" \
+            --price-universe "$price_universe" \
+            --tiingo-lifecycle-zip "$lifecycle_zip" \
+            --signal-at "${{ inputs.signal_cutoff }}" \
+            --fsds-start "${{ inputs.fsds_start }}" \
+            --fsds-end "${{ inputs.fsds_end }}" \
+            --archive-dir "${{ runner.temp }}/fsds-archive" \
+            --parquet-dir "${{ runner.temp }}/fsds-parquet" \
+            --store-dir "${{ runner.temp }}/pit-store" \
+            --output-dir "${{ runner.temp }}/phase-2-3"
+      - name: Upload auditable universe and gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: phase-2-3-universe-evidence
+          path: |
+            ${{ runner.temp }}/phase-2-3
+            ${{ runner.temp }}/universe-prices
+            ${{ runner.temp }}/private-lifecycle
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Require the real gate to pass
+        if: steps.gate.outcome != 'success'
+        run: exit 1

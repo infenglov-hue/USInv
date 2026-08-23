@@ -41,3 +41,28 @@ def test_tiingo_smoke_is_explicitly_gated_and_uses_only_its_secret() -> None:
     assert "schedule:" not in workflow
     assert "secrets.TIINGO_TOKEN" in workflow
     assert "Require Tiingo credential" in workflow
+
+
+def test_alpha_listing_smoke_is_gated_and_never_publishes_raw_payloads() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "alpha-listing-smoke.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "workflow_dispatch:" in workflow
+    assert "pull_request:" in workflow and "types: [labeled]" in workflow
+    assert "github.event.label.name == 'alpha-listing-live-smoke'" in workflow
+    assert "schedule:" not in workflow
+    assert "secrets.ALPHA_VANTAGE_API_KEY" in workflow
+    assert "Require Alpha Vantage credential" in workflow
+    assert "upload-artifact" not in workflow
+
+
+def test_phase_2_3_reuses_immutable_listing_without_reuploading_private_csv() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "phase-2-3-universe.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "listing_run_id" in workflow
+    assert "Download immutable dated listing snapshot" in workflow
+    upload = workflow.split("- name: Upload auditable universe and gate evidence", 1)[1]
+    assert "runner.temp }}/private-listing" not in upload

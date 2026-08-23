@@ -15,6 +15,7 @@ from usinv.data.edgar.pit_store import (
     PitTableArtifact,
 )
 from usinv.data.edgar.tag_chains import CHAIN_VERSION, CoverageReport
+from usinv.data.listings import AlphaVantageListingClient
 from usinv.data.prices import AlpacaPriceProvider, TiingoSpotCheckClient
 
 
@@ -182,6 +183,482 @@ def test_tiingo_smoke_reports_hash_count_and_action_types(
     assert "tiingo_smoke_ok symbol=AAPL rows=3" in output
     assert f"source_sha256={'c' * 64}" in output
     assert "corporate_action_rows=1 corporate_action_types=split" in output
+
+
+def test_alpha_listing_sync_writes_private_snapshot_and_reports_only_counts(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    snapshot = SimpleNamespace(as_of=date(2026, 7, 17))
+    artifact = SimpleNamespace(
+        from_cache=False,
+        snapshot_id="d" * 64,
+        active_rows=10,
+        delisted_rows=20,
+    )
+
+    class FakeClient:
+        def fetch_snapshot(self, *, as_of: date) -> object:
+            assert as_of == date(2026, 7, 17)
+            return snapshot
+
+    monkeypatch.setattr(
+        AlphaVantageListingClient,
+        "from_config",
+        staticmethod(lambda config: FakeClient()),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "materialize_alpha_listing_snapshot",
+        lambda value, output: artifact,
+    )
+
+    assert (
+        main(
+            [
+                "alpha-listing-sync",
+                "--as-of",
+                "2026-07-17",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "alpha_listing_sync_ok as_of=2026-07-17 state=created" in output
+    assert "active_rows=10 delisted_rows=20" in output
+    assert "Apple" not in output
+
+
+def test_sec_filing_discovery_reports_only_plan_counts(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    listings = SimpleNamespace(as_of=date(2026, 7, 17))
+    plan = SimpleNamespace(listing_as_of=date(2026, 7, 17))
+    artifact = SimpleNamespace(
+        from_cache=False,
+        snapshot_id="e" * 64,
+        rows=100,
+        discovered_ciks=80,
+        identity_gaps=5,
+        association_unusable_rows=3,
+    )
+
+    class FakeClient:
+        def company_tickers_exchange(self, *, refresh: bool) -> object:
+            assert refresh
+            return object()
+
+    monkeypatch.setattr(cli_module, "read_alpha_listing_snapshot", lambda path: listings)
+    monkeypatch.setattr(
+        EdgarClient,
+        "from_config",
+        staticmethod(lambda config: FakeClient()),
+    )
+    monkeypatch.setattr(cli_module, "parse_sec_ticker_associations", lambda value: object())
+    monkeypatch.setattr(
+        cli_module,
+        "build_filing_discovery_plan",
+        lambda listing_value, association_value: plan,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "materialize_filing_discovery_plan",
+        lambda value, output: artifact,
+    )
+
+    assert (
+        main(
+            [
+                "sec-filing-discovery",
+                "--listing-snapshot",
+                str(tmp_path / "listing"),
+                "--output-dir",
+                str(tmp_path),
+                "--refresh",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "sec_filing_discovery_ok listing_as_of=2026-07-17 state=created" in output
+    assert "rows=100 discovered_ciks=80 identity_gaps=5" in output
+    assert "association_unusable_rows=3" in output
+
+
+def test_sec_cover_bootstrap_reports_partial_progress_without_publishing_a_partial_master(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    plan = SimpleNamespace(snapshot_id="a" * 64)
+    acquisition = SimpleNamespace(
+        complete=False,
+        requested_ciks=(1,),
+        deferred_ciks=(2, 3),
+        archived_filings=2,
+        share_observations=(),
+        fpi_form_observations=(),
+        form_history_proofs=(),
+        evidence=(object(),),
+        gaps=(object(),),
+    )
+    bootstrap = SimpleNamespace(master=SimpleNamespace(securities=()), gaps=())
+    evidence_shard = SimpleNamespace(snapshot_id="f" * 64)
+
+    class FakeClient:
+        pass
+
+    monkeypatch.setattr(cli_module, "read_filing_discovery_plan", lambda path: plan)
+    monkeypatch.setattr(
+        EdgarClient,
+        "from_config",
+        staticmethod(lambda config, *, cache_dir=None: FakeClient()),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "acquire_cover_evidence",
+        lambda client, plan_value, archive_root, **kwargs: acquisition,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "build_cover_security_master",
+        lambda evidence, *, as_of: bootstrap,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "materialize_cover_evidence_shard",
+        lambda acquisition_value, bootstrap_value, output: evidence_shard,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "materialize_security_master",
+        lambda master, output: pytest.fail("partial acquisition must not publish a master"),
+    )
+
+    assert (
+        main(
+            [
+                "sec-cover-bootstrap",
+                "--discovery-plan",
+                str(tmp_path / "plan"),
+                "--as-of",
+                "2026-07-17T16:00:00-04:00",
+                "--max-ciks",
+                "1",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "sec_cover_bootstrap_ok" in output and "state=partial" in output
+    assert "requested_ciks=1 last_requested_cik=1 deferred_ciks=2" in output
+    assert "archived_filings=2" in output
+    assert "evidence_ciks=0" in output
+    assert "master_snapshot=deferred" in output
+    assert f"evidence_shard={'f' * 64}" in output
+
+
+def test_sec_cover_merge_requires_exact_shards_before_publishing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    plan = SimpleNamespace(snapshot_id="a" * 64, ciks=(1, 2))
+    shard_dir = tmp_path / "download" / "shard-one"
+    shard_dir.mkdir(parents=True)
+    shard_dir.joinpath("shard.json").write_text("{}", encoding="utf-8")
+    shard = object()
+    master = SimpleNamespace(securities=(object(),), symbols=(object(),), issues=())
+    merged = SimpleNamespace(
+        plan_snapshot_id=plan.snapshot_id,
+        requested_ciks=(1, 2),
+        master=master,
+        share_observations=(),
+        fpi_form_observations=(),
+        form_history_proofs=(),
+        acquisition_gaps=(),
+        bootstrap_gaps=(),
+    )
+    snapshot = SimpleNamespace(snapshot_id="e" * 64, master_snapshot_id="f" * 64)
+
+    monkeypatch.setattr(cli_module, "read_filing_discovery_plan", lambda path: plan)
+    monkeypatch.setattr(cli_module, "read_cover_evidence_shard", lambda path: shard)
+    monkeypatch.setattr(
+        cli_module,
+        "merge_cover_evidence_shards",
+        lambda shards, *, expected_ciks: merged,
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "materialize_cover_evidence_merge",
+        lambda merged_value, output: snapshot,
+    )
+
+    assert (
+        main(
+            [
+                "sec-cover-merge",
+                "--discovery-plan",
+                str(tmp_path / "plan"),
+                "--evidence-root",
+                str(tmp_path / "download"),
+                "--output-dir",
+                str(tmp_path / "output"),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "sec_cover_merge_ok" in output
+    assert "shards=1 covered_ciks=2 securities=1 symbols=1" in output
+    assert f"evidence_snapshot={'e' * 64}" in output
+    assert f"master_snapshot={'f' * 64}" in output
+
+
+def test_sec_cover_reconcile_reports_identity_rewrite(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    master = SimpleNamespace(securities=(object(),), symbols=(object(),), issues=())
+    source = SimpleNamespace(snapshot_id="a" * 64, merge=object())
+    merge = SimpleNamespace(master=master)
+    result = SimpleNamespace(
+        merge=merge,
+        collapsed_groups=7,
+        rewritten_security_ids=14,
+        ambiguous_groups=2,
+    )
+    snapshot = SimpleNamespace(snapshot_id="e" * 64, master_snapshot_id="f" * 64)
+    monkeypatch.setattr(cli_module, "read_cover_evidence_snapshot", lambda path: source)
+    monkeypatch.setattr(cli_module, "reconcile_cover_evidence_merge", lambda value: result)
+    monkeypatch.setattr(
+        cli_module,
+        "materialize_cover_evidence_merge",
+        lambda merged_value, output: snapshot,
+    )
+
+    assert (
+        main(
+            [
+                "sec-cover-reconcile",
+                "--cover-evidence",
+                str(tmp_path / "cover"),
+                "--output-dir",
+                str(tmp_path / "output"),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "sec_cover_reconcile_ok" in output
+    assert "collapsed_groups=7 rewritten_security_ids=14 ambiguous_groups=2" in output
+    assert f"evidence_snapshot={'e' * 64}" in output
+
+
+def test_universe_price_sync_reports_exact_batch_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    discovery = object()
+    cover = object()
+    provider = object()
+    plan = SimpleNamespace(
+        snapshot_id="a" * 64,
+        targets=(object(), object()),
+        batches=((object(),), (object(),)),
+    )
+    snapshot = SimpleNamespace(
+        snapshot_id="b" * 64,
+        price_snapshots=(
+            SimpleNamespace(raw_rows=21, issues=()),
+            SimpleNamespace(raw_rows=20, issues=(object(),)),
+        ),
+    )
+    monkeypatch.setattr(cli_module, "read_filing_discovery_plan", lambda path: discovery)
+    monkeypatch.setattr(cli_module, "read_cover_evidence_snapshot", lambda path: cover)
+    monkeypatch.setattr(
+        cli_module,
+        "build_price_universe_plan",
+        lambda *args, **kwargs: plan,
+    )
+    monkeypatch.setattr(
+        AlpacaPriceProvider,
+        "from_config",
+        staticmethod(lambda config: provider),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "acquire_price_universe",
+        lambda provider_value, plan_value, cover_value, output: snapshot,
+    )
+
+    assert (
+        main(
+            [
+                "universe-price-sync",
+                "--discovery-plan",
+                str(tmp_path / "plan"),
+                "--cover-evidence",
+                str(tmp_path / "cover"),
+                "--signal-at",
+                "2026-07-17T16:00:00-04:00",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "targets=2 batches=2 raw_rows=41 mapping_issues=1" in output
+    assert f"snapshot={'b' * 64}" in output
+
+
+def test_phase_2_3_build_materializes_and_enforces_real_gate_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    inputs = [object() for _ in range(4)]
+    ingested = (SimpleNamespace(),)
+    pit = object()
+    universe = SimpleNamespace(
+        rows=(object(), object()),
+        included=(object(),),
+        identity_mapping_gaps=(),
+        sector_mapping_gaps=(),
+    )
+    coverage = SimpleNamespace(core_rate=0.95, secondary_rate=0.80, to_json=lambda: "{}\n")
+    result = SimpleNamespace(
+        universe=universe,
+        coverage=coverage,
+        evidence=SimpleNamespace(gaps=()),
+    )
+    artifact = SimpleNamespace(snapshot_id="f" * 64)
+    monkeypatch.setattr(cli_module, "read_alpha_listing_snapshot", lambda path: inputs[0])
+    monkeypatch.setattr(cli_module, "read_filing_discovery_plan", lambda path: inputs[1])
+    monkeypatch.setattr(cli_module, "read_cover_evidence_snapshot", lambda path: inputs[2])
+    monkeypatch.setattr(cli_module, "read_price_universe_snapshot", lambda path: inputs[3])
+    monkeypatch.setattr(cli_module, "read_tiingo_lifecycle_zip", lambda path: object())
+
+    fake_ingestor = SimpleNamespace(ingest_range=lambda *args, **kwargs: ingested)
+    monkeypatch.setattr(
+        FsdsIngestor,
+        "from_config",
+        staticmethod(lambda *args, **kwargs: fake_ingestor),
+    )
+    fake_builder = SimpleNamespace(build=lambda batches: pit)
+    monkeypatch.setattr(
+        PitStoreBuilder,
+        "from_config",
+        staticmethod(lambda *args, **kwargs: fake_builder),
+    )
+    monkeypatch.setattr(
+        PitInputBatch,
+        "from_fsds_result",
+        staticmethod(lambda row: object()),
+    )
+    monkeypatch.setattr(cli_module, "build_phase_2_3", lambda *args, **kwargs: result)
+    monkeypatch.setattr(
+        cli_module,
+        "materialize_universe_snapshot",
+        lambda snapshot, output: artifact,
+    )
+    monkeypatch.setattr(cli_module, "enforce_phase_2_3_gate", lambda *args: None)
+
+    assert (
+        main(
+            [
+                "phase-2-3-build",
+                "--listing-snapshot",
+                str(tmp_path / "listing"),
+                "--discovery-plan",
+                str(tmp_path / "discovery"),
+                "--cover-evidence",
+                str(tmp_path / "cover"),
+                "--price-universe",
+                str(tmp_path / "prices"),
+                "--tiingo-lifecycle-zip",
+                str(tmp_path / "supported_tickers.zip"),
+                "--signal-at",
+                "2026-07-17T16:00:00-04:00",
+                "--fsds-start",
+                "2025q1",
+                "--fsds-end",
+                "2026q2",
+                "--output-dir",
+                str(tmp_path / "output"),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "phase_2_3_build_ok" in output and "gate=passed" in output
+    gate = tmp_path / "output" / "gate-evidence" / ("f" * 64)
+    assert gate.joinpath("coverage.json").is_file()
+    assert gate.joinpath("evidence-gaps.json").is_file()
+
+
+def test_sec_cover_bootstrap_can_require_a_matched_filing(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    import usinv.cli as cli_module
+
+    plan = SimpleNamespace(snapshot_id="a" * 64)
+    acquisition = SimpleNamespace(
+        complete=False,
+        requested_ciks=(1,),
+        deferred_ciks=(),
+        archived_filings=1,
+        evidence=(),
+        gaps=(object(),),
+    )
+
+    monkeypatch.setattr(cli_module, "read_filing_discovery_plan", lambda path: plan)
+    monkeypatch.setattr(
+        EdgarClient,
+        "from_config",
+        staticmethod(lambda config, *, cache_dir=None: object()),
+    )
+    monkeypatch.setattr(
+        cli_module,
+        "acquire_cover_evidence",
+        lambda client, plan_value, archive_root, **kwargs: acquisition,
+    )
+
+    result = main(
+        [
+            "sec-cover-bootstrap",
+            "--discovery-plan",
+            str(tmp_path / "plan"),
+            "--as-of",
+            "2026-07-17T16:00:00-04:00",
+            "--require-evidence",
+        ]
+    )
+
+    assert result == 2
+    assert "produced no matched filing evidence" in capsys.readouterr().err
 
 
 def test_edgar_smoke_reports_both_documents_without_dumping_payload(

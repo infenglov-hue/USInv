@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
@@ -10,6 +11,7 @@ from pathlib import Path
 
 from usinv.config import load_config
 from usinv.data.edgar import (
+    ApplicabilityError,
     EdgarClient,
     EdgarConfigurationError,
     EdgarError,
@@ -18,10 +20,41 @@ from usinv.data.edgar import (
     FsdsQuarter,
     PitInputBatch,
     PitStoreBuilder,
+    acquire_cover_evidence,
+    acquire_filing_sic_snapshot,
+    augment_discovery_plan_with_exact_name_evidence,
+    augment_discovery_plan_with_exact_names,
+    augment_discovery_plan_with_ticker_evidence,
+    build_cover_security_master,
     build_coverage_report,
+    build_filing_discovery_plan,
+    corroborate_historical_association_candidates,
+    corroborate_historical_ticker_candidates,
+    cover_plan_changed_ciks,
     coverage_input,
+    discover_historical_ticker_candidates,
     eligible_ciks_from_filings,
+    fsds_company_name_observations,
     fsds_quarter_range,
+    match_discovered_listing_names,
+    match_discovered_listing_stems,
+    match_unmapped_listing_names,
+    match_unmapped_listing_stems,
+    materialize_cover_evidence_merge,
+    materialize_cover_evidence_shard,
+    materialize_filing_discovery_plan,
+    materialize_security_master,
+    merge_cover_evidence_shards,
+    parse_sec_ticker_associations,
+    patch_cover_evidence_merge,
+    read_cover_evidence_shard,
+    read_cover_evidence_snapshot,
+    read_filing_discovery_plan,
+    read_filing_sic_snapshot,
+    read_live_edge_snapshot,
+    rebase_cover_evidence_plan,
+    rebase_filing_sic_snapshot,
+    reconcile_cover_evidence_merge,
     standardize_pit_snapshot,
 )
 from usinv.data.edgar.companyfacts import parse_companyfacts_document
@@ -31,7 +64,38 @@ from usinv.data.edgar.submissions import (
     parse_submission_history,
     parse_submissions_document,
 )
-from usinv.data.prices import AlpacaPriceProvider, PriceDataError, TiingoSpotCheckClient
+from usinv.data.listings import (
+    AlphaVantageListingClient,
+    ListingDataError,
+    materialize_alpha_listing_snapshot,
+    read_alpha_listing_snapshot,
+)
+from usinv.data.prices import (
+    AlpacaPriceProvider,
+    PriceDataError,
+    TiingoSpotCheckClient,
+    acquire_price_universe,
+    build_price_universe_plan,
+    read_price_universe_snapshot,
+    rebase_price_universe_snapshot,
+)
+from usinv.data.tiingo_lifecycle import read_tiingo_lifecycle_zip
+from usinv.freshness import (
+    DelistedAuditInput,
+    FreshnessGateError,
+    FundamentalsFreshnessInput,
+    MacroFreshnessInput,
+    PriceFreshnessInput,
+    build_freshness_report,
+    enforce_freshness_gate,
+)
+from usinv.phase_2_3 import Phase23BuildError, build_phase_2_3
+from usinv.universe import (
+    UniverseError,
+    UniverseGateError,
+    enforce_phase_2_3_gate,
+    materialize_universe_snapshot,
+)
 
 
 def _fsds_quarter(value: str) -> FsdsQuarter:
@@ -98,12 +162,199 @@ def _parser() -> argparse.ArgumentParser:
     tiingo.add_argument("--symbol", default="AAPL")
     tiingo.add_argument("--start", type=_iso_date, default=date(2020, 8, 28))
     tiingo.add_argument("--end", type=_iso_date, default=date(2020, 9, 1))
+    listings = subcommands.add_parser(
+        "alpha-listing-sync",
+        help="archive one dated active+delisted Alpha Vantage listing snapshot",
+    )
+    listings.add_argument("--as-of", type=_iso_date, required=True)
+    listings.add_argument("--output-dir", type=Path, help="override the private data root")
+    discovery = subcommands.add_parser(
+        "sec-filing-discovery",
+        help="build a discovery-only SEC filing plan from one private listing snapshot",
+    )
+    discovery.add_argument("--listing-snapshot", type=Path, required=True)
+    discovery.add_argument("--output-dir", type=Path, help="override the private data root")
+    discovery.add_argument("--refresh", action="store_true")
+    name_discovery = subcommands.add_parser(
+        "sec-name-discovery",
+        help="add conservative FSDS exact-name CIK candidates to an immutable plan",
+    )
+    name_discovery.add_argument("--listing-snapshot", type=Path, required=True)
+    name_discovery.add_argument("--discovery-plan", type=Path, required=True)
+    name_discovery.add_argument("--fsds-start", type=_fsds_quarter, required=True)
+    name_discovery.add_argument("--fsds-end", type=_fsds_quarter, required=True)
+    name_discovery.add_argument("--as-of", type=_aware_datetime, required=True)
+    name_discovery.add_argument("--archive-as-of", type=_aware_datetime)
+    name_discovery.add_argument("--archive-dir", type=Path)
+    name_discovery.add_argument("--parquet-dir", type=Path)
+    name_discovery.add_argument("--output-dir", type=Path)
+    name_discovery.add_argument(
+        "--legal-stem",
+        action="store_true",
+        help="add suffix-insensitive candidates that still require filing corroboration",
+    )
+    ticker_history = subcommands.add_parser(
+        "sec-ticker-history-discovery",
+        help="add dominant SEC full-text historical-ticker candidates to a plan",
+    )
+    ticker_history.add_argument("--discovery-plan", type=Path, required=True)
+    ticker_history.add_argument(
+        "--listing-snapshot",
+        type=Path,
+        help="verified Alpha snapshot used for exact EFTS entity-name matching",
+    )
+    ticker_history.add_argument("--as-of", type=_aware_datetime, required=True)
+    ticker_history.add_argument("--cache-dir", type=Path, required=True)
+    ticker_history.add_argument("--output-dir", type=Path, required=True)
+    ticker_history.add_argument("--target-ticker", action="append", default=[])
+    ticker_history.add_argument("--parallel-queries", type=int, default=4)
+    ticker_history.add_argument("--refresh", action="store_true")
+    cover = subcommands.add_parser(
+        "sec-cover-bootstrap",
+        help="archive filing-time cover evidence for one immutable SEC discovery plan",
+    )
+    cover.add_argument("--discovery-plan", type=Path, required=True)
+    cover.add_argument("--as-of", type=_aware_datetime, required=True)
+    cover.add_argument("--cache-dir", type=Path, help="override the EDGAR cache directory")
+    cover.add_argument(
+        "--avoid-duplicate-binary-cache",
+        action="store_true",
+        help="archive filing resources once without also retaining response-cache copies",
+    )
+    cover.add_argument(
+        "--reuse-verified-cache",
+        action="store_true",
+        help="reuse hash-verified cached SEC JSON without TTL revalidation; fetch cache misses",
+    )
+    cover.add_argument("--archive-dir", type=Path, help="override the as-filed archive root")
+    cover.add_argument("--output-dir", type=Path, help="override the private data root")
+    cover.add_argument("--max-ciks", type=int, help="process a bounded resumable CIK shard")
+    cover.add_argument("--start-after-cik", type=int, help="resume after this numeric CIK")
+    cover.add_argument("--max-filings-per-cik", type=int, default=4)
+    cover.add_argument(
+        "--require-evidence",
+        action="store_true",
+        help="fail unless this shard yields at least one matched cover filing",
+    )
+    cover.add_argument("--refresh", action="store_true")
+    cover_merge = subcommands.add_parser(
+        "sec-cover-merge",
+        help="merge an exact non-overlapping cover-evidence shard partition",
+    )
+    cover_merge.add_argument("--discovery-plan", type=Path, required=True)
+    cover_merge.add_argument("--evidence-root", type=Path, required=True)
+    cover_merge.add_argument("--output-dir", type=Path, help="override the private data root")
+    cover_upgrade = subcommands.add_parser(
+        "sec-cover-upgrade-40f",
+        help="upgrade complete v3 cover evidence with cached PIT-bounded 40-F observations",
+    )
+    cover_upgrade.add_argument("--cover-evidence", type=Path, required=True)
+    cover_upgrade.add_argument("--discovery-plan", type=Path, required=True)
+    cover_upgrade.add_argument("--cache-dir", type=Path, required=True)
+    cover_upgrade.add_argument("--archive-dir", type=Path, required=True)
+    cover_upgrade.add_argument("--output-dir", type=Path, required=True)
+    cover_upgrade.add_argument("--max-filings-per-cik", type=int, default=4)
+    cover_upgrade.add_argument("--target-cik", type=int, action="append", default=[])
+    cover_upgrade.add_argument("--refresh", action="store_true")
+    cover_rebase = subcommands.add_parser(
+        "sec-cover-rebase-plan",
+        help="carry unchanged complete cover evidence into a conservative discovery extension",
+    )
+    cover_rebase.add_argument("--cover-evidence", type=Path, required=True)
+    cover_rebase.add_argument("--old-discovery-plan", type=Path, required=True)
+    cover_rebase.add_argument("--new-discovery-plan", type=Path, required=True)
+    cover_rebase.add_argument("--cache-dir", type=Path, required=True)
+    cover_rebase.add_argument("--archive-dir", type=Path, required=True)
+    cover_rebase.add_argument("--output-dir", type=Path, required=True)
+    cover_rebase.add_argument("--max-filings-per-cik", type=int, default=4)
+    cover_rebase.add_argument("--refresh", action="store_true")
+    cover_reconcile = subcommands.add_parser(
+        "sec-cover-reconcile",
+        help="reconcile filing wording drift in one immutable complete cover package",
+    )
+    cover_reconcile.add_argument("--cover-evidence", type=Path, required=True)
+    cover_reconcile.add_argument("--output-dir", type=Path, help="override the private data root")
+    universe_prices = subcommands.add_parser(
+        "universe-price-sync",
+        help="fetch exact raw/all Alpaca batches for a complete filing-backed security master",
+    )
+    universe_prices.add_argument("--discovery-plan", type=Path, required=True)
+    universe_prices.add_argument("--cover-evidence", type=Path, required=True)
+    universe_prices.add_argument("--signal-at", type=_aware_datetime, required=True)
+    universe_prices.add_argument("--window-sessions", type=int, default=21)
+    universe_prices.add_argument("--batch-size", type=int, default=100)
+    universe_prices.add_argument("--output-dir", type=Path, help="override price evidence root")
+    price_rebase = subcommands.add_parser(
+        "universe-price-rebase",
+        help="reuse immutable price batches when two cover snapshots share one exact master",
+    )
+    price_rebase.add_argument("--discovery-plan", type=Path, required=True)
+    price_rebase.add_argument("--source-price-universe", type=Path, required=True)
+    price_rebase.add_argument("--old-cover-evidence", type=Path, required=True)
+    price_rebase.add_argument("--new-cover-evidence", type=Path, required=True)
+    price_rebase.add_argument("--signal-at", type=_aware_datetime, required=True)
+    price_rebase.add_argument("--window-sessions", type=int, default=21)
+    price_rebase.add_argument("--batch-size", type=int, default=100)
+    price_rebase.add_argument("--output-dir", type=Path, required=True)
+    phase_2_3 = subcommands.add_parser(
+        "phase-2-3-build",
+        help="build and enforce the real D032 universe from exact immutable inputs",
+    )
+    phase_2_3.add_argument("--listing-snapshot", type=Path, required=True)
+    phase_2_3.add_argument("--discovery-plan", type=Path, required=True)
+    phase_2_3.add_argument("--cover-evidence", type=Path, required=True)
+    phase_2_3.add_argument("--price-universe", type=Path, required=True)
+    phase_2_3.add_argument("--tiingo-lifecycle-zip", type=Path, required=True)
+    phase_2_3.add_argument("--signal-at", type=_aware_datetime, required=True)
+    phase_2_3.add_argument("--fsds-start", type=_fsds_quarter, required=True)
+    phase_2_3.add_argument("--fsds-end", type=_fsds_quarter, required=True)
+    phase_2_3.add_argument("--archive-dir", type=Path, help="override FSDS archive root")
+    phase_2_3.add_argument("--parquet-dir", type=Path, help="override FSDS Parquet root")
+    phase_2_3.add_argument("--store-dir", type=Path, help="override PIT snapshot root")
+    phase_2_3.add_argument("--output-dir", type=Path, help="override final universe root")
+    phase_2_3.add_argument("--archive-as-of", type=_aware_datetime)
+    phase_2_3.add_argument(
+        "--live-edge-snapshot",
+        type=Path,
+        action="append",
+        default=[],
+        help="verified current-quarter filing batch to add to the PIT store",
+    )
+    phase_2_3.add_argument(
+        "--filing-sic-snapshot",
+        type=Path,
+        action="append",
+        default=[],
+        help="verified filing-header SIC supplement",
+    )
+    filing_sic = subcommands.add_parser(
+        "edgar-filing-sic-sync",
+        help="archive filing-time SIC headers for selected cover-backed CIKs",
+    )
+    filing_sic.add_argument("--cover-evidence", type=Path, required=True)
+    filing_sic.add_argument("--cik", type=int, action="append", required=True)
+    filing_sic.add_argument("--cache-dir", type=Path, required=True)
+    filing_sic.add_argument("--output-dir", type=Path, required=True)
+    filing_sic.add_argument("--refresh", action="store_true")
+    filing_sic_rebase = subcommands.add_parser(
+        "edgar-filing-sic-rebase",
+        help="rebind unchanged filing-header SIC evidence to a replacement cover snapshot",
+    )
+    filing_sic_rebase.add_argument("--source", type=Path, required=True)
+    filing_sic_rebase.add_argument("--old-cover-evidence", type=Path, required=True)
+    filing_sic_rebase.add_argument("--new-cover-evidence", type=Path, required=True)
+    filing_sic_rebase.add_argument("--output-dir", type=Path, required=True)
     live = subcommands.add_parser(
         "edgar-live-sync",
         help="archive and normalize newly accepted 10-K/10-Q filings for one CIK",
     )
     live.add_argument("--cik", required=True, help="CIK to synchronize")
     live.add_argument("--as-of", type=_aware_datetime, required=True, help="PIT acceptance cutoff")
+    live.add_argument(
+        "--accepted-after",
+        type=_aware_datetime,
+        help="include only filings accepted strictly after this PIT lower bound",
+    )
     live.add_argument("--seen-accession", action="append", default=[])
     live.add_argument("--cache-dir", type=Path, help="override the EDGAR cache directory")
     live.add_argument("--archive-dir", type=Path, help="override as-filed archive root")
@@ -177,6 +428,15 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="return a failing status unless core and secondary thresholds pass",
     )
+    freshness = subcommands.add_parser(
+        "freshness-gate",
+        help="run the Phase 2.4 freshness/coverage kill-switch over a JSON inputs file",
+    )
+    freshness.add_argument("--inputs", type=Path, required=True)
+    freshness.add_argument(
+        "--as-of", type=_aware_datetime, help="evaluation instant (default: now, UTC)"
+    )
+    freshness.add_argument("--output", type=Path, help="write the health-block JSON here")
     return parser
 
 
@@ -193,6 +453,699 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"execution={config.settings.execution_mode.value}",
                     f"holdings={config.portfolio.holdings}",
                     f"overlay={config.regime.default_overlay}",
+                )
+            )
+        )
+        return 0
+    if args.command == "alpha-listing-sync":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir)
+        try:
+            snapshot = AlphaVantageListingClient.from_config(config).fetch_snapshot(
+                as_of=args.as_of
+            )
+            artifact = materialize_alpha_listing_snapshot(snapshot, output_root)
+        except ListingDataError as exc:
+            print(f"alpha_listing_sync_failed: {exc}", file=sys.stderr)
+            return 2
+        state = "cache" if artifact.from_cache else "created"
+        print(
+            " ".join(
+                (
+                    "alpha_listing_sync_ok",
+                    f"as_of={snapshot.as_of.isoformat()}",
+                    f"state={state}",
+                    f"snapshot_id={artifact.snapshot_id}",
+                    f"active_rows={artifact.active_rows}",
+                    f"delisted_rows={artifact.delisted_rows}",
+                )
+            )
+        )
+        return 0
+    if args.command == "sec-filing-discovery":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir)
+        try:
+            listings = read_alpha_listing_snapshot(args.listing_snapshot)
+            client = EdgarClient.from_config(config)
+            associations = parse_sec_ticker_associations(
+                client.company_tickers_exchange(refresh=args.refresh)
+            )
+            plan = build_filing_discovery_plan(listings, associations)
+            artifact = materialize_filing_discovery_plan(plan, output_root)
+        except (EdgarError, ListingDataError) as exc:
+            print(f"sec_filing_discovery_failed: {exc}", file=sys.stderr)
+            return 2
+        state = "cache" if artifact.from_cache else "created"
+        print(
+            " ".join(
+                (
+                    "sec_filing_discovery_ok",
+                    f"listing_as_of={plan.listing_as_of.isoformat()}",
+                    f"state={state}",
+                    f"snapshot_id={artifact.snapshot_id}",
+                    f"rows={artifact.rows}",
+                    f"discovered_ciks={artifact.discovered_ciks}",
+                    f"identity_gaps={artifact.identity_gaps}",
+                    f"association_unusable_rows={artifact.association_unusable_rows}",
+                )
+            )
+        )
+        return 0
+    if args.command == "sec-name-discovery":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir)
+        try:
+            listing = read_alpha_listing_snapshot(args.listing_snapshot)
+            discovery = read_filing_discovery_plan(args.discovery_plan)
+            ingested = FsdsIngestor.from_config(
+                config,
+                archive_dir=args.archive_dir,
+                output_dir=args.parquet_dir,
+            ).ingest_range(
+                args.fsds_start,
+                args.fsds_end,
+                archive_as_of=args.archive_as_of,
+            )
+            observations = fsds_company_name_observations(ingested, as_of=args.as_of)
+            corroborations = match_discovered_listing_names(listing, discovery, observations)
+            plan = augment_discovery_plan_with_exact_name_evidence(discovery, corroborations)
+            stem_corroborations = match_discovered_listing_stems(
+                listing,
+                plan,
+                observations,
+            )
+            plan = augment_discovery_plan_with_exact_name_evidence(
+                plan,
+                stem_corroborations,
+            )
+            matches = match_unmapped_listing_names(listing, plan, observations)
+            plan = augment_discovery_plan_with_exact_names(plan, matches)
+            stem_matches = {}
+            if args.legal_stem:
+                stem_matches = match_unmapped_listing_stems(listing, plan, observations)
+                plan = augment_discovery_plan_with_exact_names(plan, stem_matches)
+            artifact = materialize_filing_discovery_plan(plan, output_root)
+        except (EdgarError, ListingDataError) as exc:
+            print(f"sec_name_discovery_failed: {exc}", file=sys.stderr)
+            return 2
+        unique_matches = sum(match.status == "unique" for match in matches.values())
+        ambiguous_matches = sum(match.status == "ambiguous" for match in matches.values())
+        discovery_by_pointer = {row.listing_evidence_pointer: row for row in discovery.rows}
+        corroborated_matches = sum(
+            match.status == "unique"
+            and match.candidate_ciks == discovery_by_pointer[pointer].candidate_ciks
+            for pointer, match in corroborations.items()
+        )
+        corroborated_stem_matches = sum(
+            match.status == "unique" for match in stem_corroborations.values()
+        )
+        stem_unique_matches = sum(match.status == "unique" for match in stem_matches.values())
+        state = "cache" if artifact.from_cache else "created"
+        print(
+            " ".join(
+                (
+                    "sec_name_discovery_ok",
+                    f"state={state}",
+                    f"snapshot_id={artifact.snapshot_id}",
+                    f"observations={len(observations)}",
+                    f"corroborated_matches={corroborated_matches}",
+                    f"corroborated_stem_matches={corroborated_stem_matches}",
+                    f"unique_matches={unique_matches}",
+                    f"ambiguous_matches={ambiguous_matches}",
+                    f"stem_unique_matches={stem_unique_matches}",
+                    f"identity_gaps={artifact.identity_gaps}",
+                )
+            )
+        )
+        return 0
+    if args.command == "sec-ticker-history-discovery":
+        config = load_config()
+        try:
+            discovery = read_filing_discovery_plan(args.discovery_plan)
+            listing_names_by_pointer = None
+            if args.listing_snapshot is not None:
+                listing = read_alpha_listing_snapshot(args.listing_snapshot)
+                if listing.as_of != discovery.listing_as_of:
+                    raise EdgarError("ticker-history listing and discovery dates do not match")
+                listing_names_by_pointer = {
+                    f"alpha-vantage://{row.source_sha256}/{row.row_number}": row.name
+                    for row in listing.rows
+                    if row.state == "active"
+                }
+            client = EdgarClient.from_config(
+                config,
+                cache_dir=args.cache_dir,
+                cache_ttl_seconds=10 * 365 * 24 * 60 * 60,
+            )
+            if listing_names_by_pointer is not None:
+                corroborations = corroborate_historical_association_candidates(
+                    client,
+                    discovery,
+                    as_of=args.as_of,
+                    listing_names_by_pointer=listing_names_by_pointer,
+                    target_tickers=(frozenset(args.target_ticker) if args.target_ticker else None),
+                    parallel_queries=args.parallel_queries,
+                    refresh=args.refresh,
+                )
+                discovery = augment_discovery_plan_with_exact_name_evidence(
+                    discovery,
+                    corroborations,
+                )
+            ticker_corroborations = {}
+            if args.target_ticker:
+                ticker_corroborations = corroborate_historical_ticker_candidates(
+                    client,
+                    discovery,
+                    as_of=args.as_of,
+                    target_tickers=frozenset(args.target_ticker),
+                    parallel_queries=args.parallel_queries,
+                    refresh=args.refresh,
+                )
+                discovery = augment_discovery_plan_with_ticker_evidence(
+                    discovery,
+                    ticker_corroborations,
+                )
+            matches = discover_historical_ticker_candidates(
+                client,
+                discovery,
+                as_of=args.as_of,
+                target_tickers=(frozenset(args.target_ticker) if args.target_ticker else None),
+                listing_names_by_pointer=listing_names_by_pointer,
+                parallel_queries=args.parallel_queries,
+                refresh=args.refresh,
+            )
+            plan = augment_discovery_plan_with_exact_names(discovery, matches)
+            artifact = materialize_filing_discovery_plan(plan, args.output_dir)
+        except EdgarError as exc:
+            print(f"sec_ticker_history_discovery_failed: {exc}", file=sys.stderr)
+            return 2
+        unique_matches = sum(match.status == "unique" for match in matches.values())
+        ticker_corroborated_matches = sum(
+            match.status == "unique" for match in ticker_corroborations.values()
+        )
+        query_count = len(set(args.target_ticker)) if args.target_ticker else len(matches)
+        print(
+            " ".join(
+                (
+                    "sec_ticker_history_discovery_ok",
+                    f"snapshot_id={artifact.snapshot_id}",
+                    f"queries={query_count}",
+                    f"unique_matches={unique_matches}",
+                    f"ticker_corroborated_matches={ticker_corroborated_matches}",
+                    f"identity_gaps={artifact.identity_gaps}",
+                )
+            )
+        )
+        return 0
+    if args.command == "sec-cover-upgrade-40f":
+        config = load_config()
+        try:
+            source = read_cover_evidence_snapshot(args.cover_evidence)
+            plan = read_filing_discovery_plan(args.discovery_plan)
+            if plan.snapshot_id != source.merge.plan_snapshot_id:
+                raise EdgarError("40-F upgrade plan does not match source evidence")
+            client = EdgarClient.from_config(
+                config,
+                cache_dir=args.cache_dir,
+                cache_ttl_seconds=10 * 365 * 24 * 60 * 60,
+            )
+            targets = (
+                tuple(sorted(set(args.target_cik)))
+                if args.target_cik
+                else tuple(
+                    sorted(
+                        {
+                            gap.cik
+                            for gap in source.merge.acquisition_gaps
+                            if gap.kind == "unknown_filer_regime"
+                        }
+                    )
+                )
+            )
+            if not targets:
+                raise EdgarError("source cover evidence has no unresolved filer regimes")
+            acquisition = acquire_cover_evidence(
+                client,
+                plan,
+                args.archive_dir,
+                as_of=source.merge.as_of,
+                maximum_filings_per_cik=args.max_filings_per_cik,
+                target_ciks=targets,
+                reuse_existing_archives=True,
+                parallel_ciks=4,
+                refresh=args.refresh,
+            )
+            bootstrap = build_cover_security_master(
+                acquisition.evidence,
+                as_of=source.merge.as_of,
+            )
+            shard = materialize_cover_evidence_shard(
+                acquisition,
+                bootstrap,
+                args.output_dir,
+            )
+            upgraded = patch_cover_evidence_merge(source, shard)
+            snapshot = materialize_cover_evidence_merge(upgraded, args.output_dir)
+        except EdgarError as exc:
+            print(f"sec_cover_upgrade_40f_failed: {exc}", file=sys.stderr)
+            return 2
+        forty_f_count = sum(
+            row.form.upper().removesuffix("/A") == "40-F" for row in shard.fpi_form_observations
+        )
+        print(
+            " ".join(
+                (
+                    "sec_cover_upgrade_40f_ok",
+                    f"source_snapshot={source.snapshot_id}",
+                    f"targets={len(targets)}",
+                    f"40f_observations={forty_f_count}",
+                    f"evidence_ciks={len({row.cik for row in shard.master.securities})}",
+                    f"evidence_snapshot={snapshot.snapshot_id}",
+                    f"master_snapshot={snapshot.master_snapshot_id}",
+                )
+            )
+        )
+        return 0
+    if args.command == "sec-cover-rebase-plan":
+        config = load_config()
+        try:
+            source = read_cover_evidence_snapshot(args.cover_evidence)
+            old_plan = read_filing_discovery_plan(args.old_discovery_plan)
+            new_plan = read_filing_discovery_plan(args.new_discovery_plan)
+            targets = cover_plan_changed_ciks(old_plan, new_plan)
+            shard = None
+            if targets:
+                client = EdgarClient.from_config(
+                    config,
+                    cache_dir=args.cache_dir,
+                    cache_ttl_seconds=10 * 365 * 24 * 60 * 60,
+                )
+                acquisition = acquire_cover_evidence(
+                    client,
+                    new_plan,
+                    args.archive_dir,
+                    as_of=source.merge.as_of,
+                    maximum_filings_per_cik=args.max_filings_per_cik,
+                    target_ciks=targets,
+                    reuse_existing_archives=True,
+                    parallel_ciks=4,
+                    refresh=args.refresh,
+                )
+                bootstrap = build_cover_security_master(
+                    acquisition.evidence,
+                    as_of=source.merge.as_of,
+                )
+                shard = materialize_cover_evidence_shard(
+                    acquisition,
+                    bootstrap,
+                    args.output_dir,
+                )
+            rebased = rebase_cover_evidence_plan(
+                source,
+                old_plan,
+                new_plan,
+                shard,
+            )
+            snapshot = materialize_cover_evidence_merge(rebased, args.output_dir)
+        except EdgarError as exc:
+            print(f"sec_cover_rebase_plan_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "sec_cover_rebase_plan_ok",
+                    f"source={source.snapshot_id}",
+                    f"targets={len(targets)}",
+                    (
+                        f"evidence_ciks={len({row.cik for row in shard.master.securities})}"
+                        if shard is not None
+                        else "evidence_ciks=0"
+                    ),
+                    f"snapshot={snapshot.snapshot_id}",
+                    f"master={snapshot.master_snapshot_id}",
+                )
+            )
+        )
+        return 0
+    if args.command == "sec-cover-bootstrap":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir)
+        archive_root = args.archive_dir or output_root / "sec" / "filing-security"
+        try:
+            plan = read_filing_discovery_plan(args.discovery_plan)
+            client_options = (
+                {"cache_binary_resources": False} if args.avoid_duplicate_binary_cache else {}
+            )
+            if args.reuse_verified_cache:
+                client_options["cache_ttl_seconds"] = 10 * 365 * 24 * 60 * 60
+            client = EdgarClient.from_config(
+                config,
+                cache_dir=args.cache_dir,
+                **client_options,
+            )
+            acquisition = acquire_cover_evidence(
+                client,
+                plan,
+                archive_root,
+                as_of=args.as_of,
+                maximum_filings_per_cik=args.max_filings_per_cik,
+                maximum_ciks=args.max_ciks,
+                start_after_cik=args.start_after_cik,
+                refresh=args.refresh,
+            )
+            if args.require_evidence and not acquisition.evidence:
+                raise EdgarError("cover acquisition produced no matched filing evidence")
+            bootstrap = build_cover_security_master(acquisition.evidence, as_of=args.as_of)
+            evidence_shard = materialize_cover_evidence_shard(
+                acquisition,
+                bootstrap,
+                output_root,
+            )
+            snapshot = (
+                materialize_security_master(
+                    bootstrap.master,
+                    output_root / "security-bootstrap" / "master" / plan.snapshot_id,
+                )
+                if acquisition.complete
+                else None
+            )
+        except EdgarError as exc:
+            print(f"sec_cover_bootstrap_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "sec_cover_bootstrap_ok",
+                    f"plan={plan.snapshot_id}",
+                    f"state={'complete' if acquisition.complete else 'partial'}",
+                    f"requested_ciks={len(acquisition.requested_ciks)}",
+                    f"last_requested_cik={acquisition.requested_ciks[-1]}",
+                    f"deferred_ciks={len(acquisition.deferred_ciks)}",
+                    f"archived_filings={acquisition.archived_filings}",
+                    f"evidence_filings={len(acquisition.evidence)}",
+                    f"share_observations={len(acquisition.share_observations)}",
+                    f"fpi_form_observations={len(acquisition.fpi_form_observations)}",
+                    f"complete_form_histories={len(acquisition.form_history_proofs)}",
+                    f"evidence_ciks={len({row.cik for row in bootstrap.master.securities})}",
+                    f"acquisition_gaps={len(acquisition.gaps)}",
+                    f"security_master_gaps={len(bootstrap.gaps)}",
+                    f"evidence_shard={evidence_shard.snapshot_id}",
+                    f"master_snapshot={snapshot.snapshot_id if snapshot else 'deferred'}",
+                )
+            )
+        )
+        return 0
+    if args.command == "sec-cover-merge":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir)
+        try:
+            plan = read_filing_discovery_plan(args.discovery_plan)
+            shard_paths = tuple(
+                sorted(path.parent for path in args.evidence_root.rglob("shard.json"))
+            )
+            shards = tuple(read_cover_evidence_shard(path) for path in shard_paths)
+            merged = merge_cover_evidence_shards(shards, expected_ciks=plan.ciks)
+            if merged.plan_snapshot_id != plan.snapshot_id:
+                raise EdgarError("cover evidence shards do not belong to the discovery plan")
+            snapshot = materialize_cover_evidence_merge(merged, output_root)
+        except EdgarError as exc:
+            print(f"sec_cover_merge_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "sec_cover_merge_ok",
+                    f"plan={plan.snapshot_id}",
+                    f"shards={len(shards)}",
+                    f"covered_ciks={len(merged.requested_ciks)}",
+                    f"securities={len(merged.master.securities)}",
+                    f"symbols={len(merged.master.symbols)}",
+                    f"mapping_issues={len(merged.master.issues)}",
+                    f"acquisition_gaps={len(merged.acquisition_gaps)}",
+                    f"bootstrap_gaps={len(merged.bootstrap_gaps)}",
+                    f"share_observations={len(merged.share_observations)}",
+                    f"fpi_form_observations={len(merged.fpi_form_observations)}",
+                    f"complete_form_histories={len(merged.form_history_proofs)}",
+                    f"evidence_snapshot={snapshot.snapshot_id}",
+                    f"master_snapshot={snapshot.master_snapshot_id}",
+                )
+            )
+        )
+        return 0
+    if args.command == "sec-cover-reconcile":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir)
+        try:
+            source = read_cover_evidence_snapshot(args.cover_evidence)
+            result = reconcile_cover_evidence_merge(source.merge)
+            snapshot = materialize_cover_evidence_merge(result.merge, output_root)
+        except EdgarError as exc:
+            print(f"sec_cover_reconcile_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "sec_cover_reconcile_ok",
+                    f"source_snapshot={source.snapshot_id}",
+                    f"collapsed_groups={result.collapsed_groups}",
+                    f"rewritten_security_ids={result.rewritten_security_ids}",
+                    f"ambiguous_groups={result.ambiguous_groups}",
+                    f"securities={len(result.merge.master.securities)}",
+                    f"symbols={len(result.merge.master.symbols)}",
+                    f"mapping_issues={len(result.merge.master.issues)}",
+                    f"evidence_snapshot={snapshot.snapshot_id}",
+                    f"master_snapshot={snapshot.master_snapshot_id}",
+                )
+            )
+        )
+        return 0
+    if args.command == "universe-price-sync":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir) / "prices"
+        try:
+            discovery = read_filing_discovery_plan(args.discovery_plan)
+            cover_snapshot = read_cover_evidence_snapshot(args.cover_evidence)
+            plan = build_price_universe_plan(
+                discovery,
+                cover_snapshot,
+                signal_at=args.signal_at,
+                window_sessions=args.window_sessions,
+                batch_size=args.batch_size,
+            )
+            snapshot = acquire_price_universe(
+                AlpacaPriceProvider.from_config(config),
+                plan,
+                cover_snapshot,
+                output_root,
+            )
+        except (EdgarError, PriceDataError) as exc:
+            print(f"universe_price_sync_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "universe_price_sync_ok",
+                    f"plan={plan.snapshot_id}",
+                    f"targets={len(plan.targets)}",
+                    f"batches={len(plan.batches)}",
+                    f"raw_rows={sum(row.raw_rows for row in snapshot.price_snapshots)}",
+                    f"mapping_issues={sum(len(row.issues) for row in snapshot.price_snapshots)}",
+                    f"snapshot={snapshot.snapshot_id}",
+                )
+            )
+        )
+        return 0
+    if args.command == "universe-price-rebase":
+        try:
+            discovery = read_filing_discovery_plan(args.discovery_plan)
+            source = read_price_universe_snapshot(args.source_price_universe)
+            old_cover = read_cover_evidence_snapshot(args.old_cover_evidence)
+            new_cover = read_cover_evidence_snapshot(args.new_cover_evidence)
+            plan = build_price_universe_plan(
+                discovery,
+                new_cover,
+                signal_at=args.signal_at,
+                window_sessions=args.window_sessions,
+                batch_size=args.batch_size,
+            )
+            snapshot = rebase_price_universe_snapshot(
+                source,
+                old_cover,
+                new_cover,
+                plan,
+                args.output_dir,
+            )
+        except (EdgarError, PriceDataError) as exc:
+            print(f"universe_price_rebase_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "universe_price_rebase_ok",
+                    f"source={source.snapshot_id}",
+                    f"cover={new_cover.snapshot_id}",
+                    f"master={new_cover.master_snapshot_id}",
+                    f"targets={len(plan.targets)}",
+                    f"snapshot={snapshot.snapshot_id}",
+                )
+            )
+        )
+        return 0
+    if args.command == "phase-2-3-build":
+        config = load_config()
+        output_root = args.output_dir or Path(config.settings.paths.data_dir) / "phase-2-3"
+        try:
+            listing = read_alpha_listing_snapshot(args.listing_snapshot)
+            discovery = read_filing_discovery_plan(args.discovery_plan)
+            cover_snapshot = read_cover_evidence_snapshot(args.cover_evidence)
+            price_snapshot = read_price_universe_snapshot(args.price_universe)
+            lifecycle = read_tiingo_lifecycle_zip(args.tiingo_lifecycle_zip)
+            ingestor = FsdsIngestor.from_config(
+                config,
+                archive_dir=args.archive_dir,
+                output_dir=args.parquet_dir,
+            )
+            ingested = ingestor.ingest_range(
+                args.fsds_start,
+                args.fsds_end,
+                archive_as_of=args.archive_as_of,
+            )
+            supplements = tuple(read_live_edge_snapshot(path) for path in args.live_edge_snapshot)
+            filing_sic_supplements = tuple(
+                read_filing_sic_snapshot(path) for path in args.filing_sic_snapshot
+            )
+            pit = PitStoreBuilder.from_config(config, output_dir=args.store_dir).build(
+                [
+                    *(PitInputBatch.from_fsds_result(row) for row in ingested),
+                    *(row.pit_input() for row in supplements),
+                ]
+            )
+            result = build_phase_2_3(
+                listing,
+                discovery,
+                cover_snapshot,
+                price_snapshot,
+                ingested,
+                pit,
+                signal_at=args.signal_at,
+                config=config,
+                lifecycle=lifecycle,
+                supplements=supplements,
+                filing_sic_supplements=filing_sic_supplements,
+            )
+            universe_artifact = materialize_universe_snapshot(result.universe, output_root)
+            gate_dir = output_root / "gate-evidence" / universe_artifact.snapshot_id
+            gate_dir.mkdir(parents=True, exist_ok=True)
+            (gate_dir / "coverage.json").write_text(
+                result.coverage.to_json(),
+                encoding="utf-8",
+            )
+            (gate_dir / "evidence-gaps.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "security_id": row.security_id,
+                            "cik": row.cik,
+                            "kind": row.kind,
+                            "detail": row.detail,
+                        }
+                        for row in result.evidence.gaps
+                    ],
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        except (
+            ApplicabilityError,
+            EdgarError,
+            ListingDataError,
+            Phase23BuildError,
+            PriceDataError,
+            UniverseError,
+        ) as exc:
+            print(f"phase_2_3_build_failed: {exc}", file=sys.stderr)
+            return 2
+        gate_error: UniverseGateError | None = None
+        try:
+            enforce_phase_2_3_gate(result.universe, result.coverage)
+        except UniverseGateError as exc:
+            gate_error = exc
+        print(
+            " ".join(
+                (
+                    "phase_2_3_build_ok" if gate_error is None else "phase_2_3_gate_blocked",
+                    f"universe_snapshot={universe_artifact.snapshot_id}",
+                    f"candidates={len(result.universe.rows)}",
+                    f"included={len(result.universe.included)}",
+                    f"identity_gaps={len(result.universe.identity_mapping_gaps)}",
+                    f"sector_gaps={len(result.universe.sector_mapping_gaps)}",
+                    f"evidence_gaps={len(result.evidence.gaps)}",
+                    f"core_coverage={result.coverage.core_rate:.6f}",
+                    f"secondary_coverage={result.coverage.secondary_rate:.6f}",
+                    f"gate={'passed' if gate_error is None else 'blocked'}",
+                )
+            )
+        )
+        if gate_error is not None:
+            print(f"phase_2_3_gate_reason: {gate_error}", file=sys.stderr)
+            return 2
+        return 0
+    if args.command == "edgar-filing-sic-sync":
+        config = load_config()
+        try:
+            cover = read_cover_evidence_snapshot(args.cover_evidence)
+            client = EdgarClient.from_config(config, cache_dir=args.cache_dir)
+            snapshot = acquire_filing_sic_snapshot(
+                client,
+                cover,
+                tuple(sorted(set(args.cik))),
+                args.output_dir,
+                refresh=args.refresh,
+            )
+        except EdgarError as exc:
+            print(f"edgar_filing_sic_sync_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "edgar_filing_sic_sync_ok",
+                    f"targets={len(snapshot.target_ciks)}",
+                    f"records={len(snapshot.records)}",
+                    f"gaps={len(snapshot.gaps)}",
+                    f"snapshot={snapshot.snapshot_id}",
+                    f"path={snapshot.output_dir}",
+                )
+            )
+        )
+        return 0
+    if args.command == "edgar-filing-sic-rebase":
+        try:
+            source = read_filing_sic_snapshot(args.source)
+            old_cover = read_cover_evidence_snapshot(args.old_cover_evidence)
+            new_cover = read_cover_evidence_snapshot(args.new_cover_evidence)
+            snapshot = rebase_filing_sic_snapshot(
+                source,
+                old_cover,
+                new_cover,
+                args.output_dir,
+            )
+        except EdgarError as exc:
+            print(f"edgar_filing_sic_rebase_failed: {exc}", file=sys.stderr)
+            return 2
+        print(
+            " ".join(
+                (
+                    "edgar_filing_sic_rebase_ok",
+                    f"source={source.snapshot_id}",
+                    f"cover={new_cover.snapshot_id}",
+                    f"targets={len(snapshot.target_ciks)}",
+                    f"records={len(snapshot.records)}",
+                    f"gaps={len(snapshot.gaps)}",
+                    f"snapshot={snapshot.snapshot_id}",
+                    f"path={snapshot.output_dir}",
                 )
             )
         )
@@ -281,6 +1234,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 filings,
                 seen_accessions=args.seen_accession,
                 as_of=args.as_of,
+                accepted_after=args.accepted_after,
             )
             if not selected:
                 print(f"edgar_live_sync_ok cik={feed.cik} new_filings=0")
@@ -477,4 +1431,72 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
         return 3 if args.enforce and not report.passed else 0
+    if args.command == "freshness-gate":
+        config = load_config()
+        payload = json.loads(args.inputs.read_text(encoding="utf-8"))
+        as_of = args.as_of or datetime.now(UTC)
+        delisted_raw = payload.get("delisted", {})
+        try:
+            report = build_freshness_report(
+                as_of=as_of,
+                fundamentals_inputs=[
+                    FundamentalsFreshnessInput(
+                        row["security_id"],
+                        row["filer_category"],
+                        row["next_form"],
+                        date.fromisoformat(row["next_period_end"]),
+                    )
+                    for row in payload.get("fundamentals", [])
+                ],
+                scored_total=int(payload.get("scored_total", 0)),
+                price_inputs=[
+                    PriceFreshnessInput(
+                        row["security_id"], date.fromisoformat(row["last_bar_session"])
+                    )
+                    for row in payload.get("prices", [])
+                ],
+                delisted=DelistedAuditInput(
+                    frozenset(delisted_raw.get("active_symbols", [])),
+                    frozenset(delisted_raw.get("delisted_symbols", [])),
+                    frozenset(delisted_raw.get("master_active_symbols", [])),
+                ),
+                macro_inputs=(
+                    [
+                        MacroFreshnessInput(
+                            row["series_id"],
+                            date.fromisoformat(row["last_observation"]),
+                            int(row["cadence_days"]),
+                        )
+                        for row in payload["macro"]
+                    ]
+                    if "macro" in payload
+                    else None
+                ),
+                config=config.freshness,
+            )
+        except (KeyError, ValueError) as exc:
+            print(f"freshness_gate_failed: {exc}", file=sys.stderr)
+            return 2
+        block = report.health_block()
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(block, indent=2, sort_keys=True), encoding="utf-8")
+        print(
+            " ".join(
+                (
+                    "freshness_gate_ok" if report.passed else "freshness_gate_red",
+                    f"fundamentals_stale={len(report.fundamentals.stale_security_ids)}"
+                    f"/{report.fundamentals.scored_total}",
+                    f"prices_stale={len(report.prices.stale_security_ids)}",
+                    f"delisted_unexplained={len(report.delisted.unexplained_symbols)}",
+                    f"gate={'passed' if report.passed else 'red'}",
+                )
+            )
+        )
+        try:
+            enforce_freshness_gate(report)
+        except FreshnessGateError as exc:
+            print(f"freshness_gate_reason: {exc}", file=sys.stderr)
+            return 2
+        return 0
     raise AssertionError(f"unhandled command: {args.command}")

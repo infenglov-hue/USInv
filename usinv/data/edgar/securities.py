@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import shutil
 import uuid
 from collections.abc import Iterable
@@ -22,18 +23,53 @@ Confidence = Literal["low", "medium", "high"]
 EvidenceScope = Literal["historical_interval", "live_edge_current", "recovery_only"]
 MappingStatus = Literal["mapped", "unmapped", "quarantined"]
 _CONFIDENCE_ORDER: Final = {"low": 0, "medium": 1, "high": 2}
+_NON_COMMON_SECURITY_TITLE_PATTERN: Final = re.compile(
+    r"\b(?:warrants?|depositary shares?|preferred(?:\s+\w+){0,3}\s+"
+    r"(?:stock|shares?|securities|units?|lp)|notes?|bonds?)\b",
+    re.IGNORECASE,
+)
+_NON_COMMON_SECURITY_RIGHT_PATTERN: Final = re.compile(
+    r"^(?:series\s+\w+\s+)?(?:subscription\s+)?rights?\b|\bright to purchase\b",
+    re.IGNORECASE,
+)
+_SECURITY_UNIT_PATTERN: Final = re.compile(r"\bunits?\b", re.IGNORECASE)
+_COMMON_UNIT_PATTERN: Final = re.compile(r"\bcommon units?\b", re.IGNORECASE)
 _EXCHANGE_ALIASES: Final = {
     "NASDAQ": "NASDAQ",
     "NASDAQ GLOBAL SELECT": "NASDAQ",
+    "NASDAQ GLOBAL SELECT MARKET": "NASDAQ",
     "NASDAQ GLOBAL MARKET": "NASDAQ",
     "NASDAQ CAPITAL MARKET": "NASDAQ",
+    "THE NASDAQ GLOBAL SELECT": "NASDAQ",
+    "THE NASDAQ GLOBAL SELECT MARKET": "NASDAQ",
+    "THE NASDAQ GLOBAL MARKET": "NASDAQ",
+    "THE NASDAQ CAPITAL MARKET": "NASDAQ",
+    "THE NASDAQ STOCK MARKET": "NASDAQ",
     "THE NASDAQ STOCK MARKET LLC": "NASDAQ",
     "NYSE": "NYSE",
     "NEW YORK STOCK EXCHANGE": "NYSE",
+    "THE NEW YORK STOCK EXCHANGE": "NYSE",
     "NYSE AMERICAN": "NYSEAMERICAN",
     "NYSE AMERICAN LLC": "NYSEAMERICAN",
+    "THE NYSE AMERICAN LLC": "NYSEAMERICAN",
     "NYSE MKT": "NYSEAMERICAN",
     "AMEX": "NYSEAMERICAN",
+    "NYSEAMERICAN": "NYSEAMERICAN",
+    "NYSE ARCA": "NYSEARCA",
+    "NYSE ARCA EQUITIES": "NYSEARCA",
+    "NYSE ARCA, INC.": "NYSEARCA",
+    "NASDAQ BX": "NASDAQBX",
+    "NASDAQ OMX BX": "NASDAQBX",
+    "BATS": "BATS",
+    "BATS BZX": "BATS",
+    "BATS BYX": "BATS",
+    "BATS EDGA": "BATS",
+    "BATS EDGX": "BATS",
+    "CBOE": "CBOE",
+    "CBOE BZX": "BATS",
+    "CBOE BYX": "BATS",
+    "CBOE EDGA": "BATS",
+    "CBOE EDGX": "BATS",
 }
 
 
@@ -56,6 +92,20 @@ def normalize_exchange(value: str) -> str:
         return _EXCHANGE_ALIASES[exchange]
     except KeyError as exc:
         raise SecurityMasterError(f"unsupported exchange: {value!r}") from exc
+
+
+def is_explicit_non_common_security_title(title: str) -> bool:
+    """Return true only when a security-class title explicitly names a non-common line."""
+    normalized = " ".join(title.strip().split())
+    if not normalized:
+        return False
+    if _NON_COMMON_SECURITY_TITLE_PATTERN.search(normalized):
+        return True
+    if _NON_COMMON_SECURITY_RIGHT_PATTERN.search(normalized):
+        return True
+    return bool(_SECURITY_UNIT_PATTERN.search(normalized)) and not (
+        _COMMON_UNIT_PATTERN.search(normalized)
+    )
 
 
 def mint_security_id(cik: int, identity_anchor: str) -> str:
@@ -220,10 +270,16 @@ class SecurityMaster:
         session: date,
         *,
         minimum_confidence: Confidence = "high",
+        required_security_type: str | None = None,
     ) -> MappingResult:
         normalized_ticker = normalize_ticker(ticker)
         normalized_exchange = normalize_exchange(exchange)
         threshold = _CONFIDENCE_ORDER[minimum_confidence]
+        admitted_security_ids = {
+            security.security_id
+            for security in self.securities
+            if required_security_type is None or security.security_type == required_security_type
+        }
         evidence = tuple(
             interval
             for interval in self.symbols
@@ -232,6 +288,7 @@ class SecurityMaster:
             and interval.contains(session)
             and _CONFIDENCE_ORDER[interval.confidence] >= threshold
             and interval.scope != "recovery_only"
+            and interval.security_id in admitted_security_ids
         )
         candidates = tuple(sorted({interval.security_id for interval in evidence}))
         active_issues = tuple(
@@ -242,6 +299,11 @@ class SecurityMaster:
             and (
                 issue.ticker in {"*", normalized_ticker}
                 or bool(set(issue.security_ids).intersection(candidates))
+            )
+            and (
+                required_security_type is None
+                or issue.kind != "ticker_collision"
+                or len(set(issue.security_ids).intersection(candidates)) > 1
             )
         )
         pointers = tuple(sorted({item.evidence_pointer for item in evidence}))
@@ -561,3 +623,38 @@ def materialize_security_master(
         len(master.issues),
         False,
     )
+
+
+def read_security_master_snapshot(path: str | Path) -> SecurityMaster:
+    """Open a verified immutable security-master snapshot."""
+    root = Path(path)
+    snapshot_id = root.name
+    if len(snapshot_id) != 64:
+        raise SecurityMasterError("security master snapshot directory is not content-addressed")
+    _verify_snapshot(root, snapshot_id)
+    try:
+        security_rows = pq.read_table(root / "securities.parquet").to_pylist()
+        symbol_rows = pq.read_table(root / "security_symbols.parquet").to_pylist()
+        issue_rows = pq.read_table(root / "security_mapping_issues.parquet").to_pylist()
+        securities = tuple(Security(**row) for row in security_rows)
+        symbols = tuple(SymbolInterval(**row) for row in symbol_rows)
+    except (OSError, TypeError, ValueError) as exc:
+        raise SecurityMasterError("security master snapshot rows are invalid") from exc
+    master = build_security_master(securities, symbols)
+    expected_issues = _jsonable(master)["issues"]
+    normalized_issues = [
+        {
+            **row,
+            "valid_from": row["valid_from"].isoformat(),
+            "valid_to": row["valid_to"].isoformat() if row["valid_to"] else None,
+            "security_ids": tuple(row["security_ids"]),
+            "evidence_pointers": tuple(row["evidence_pointers"]),
+        }
+        for row in issue_rows
+    ]
+    if normalized_issues != expected_issues:
+        raise SecurityMasterError("security master issue reconstruction mismatch")
+    canonical = json.dumps(_jsonable(master), sort_keys=True, separators=(",", ":")).encode()
+    if hashlib.sha256(canonical).hexdigest() != snapshot_id:
+        raise SecurityMasterError("security master canonical identity mismatch")
+    return master

@@ -12,11 +12,13 @@ from usinv.data.edgar.companyfacts import (
     compare_edge_to_fsds,
     parse_companyfacts_document,
 )
+from usinv.data.edgar.live_edge import read_live_edge_snapshot
 from usinv.data.edgar.periods import fsds_period, nearest_month_end, quarter_count
 from usinv.data.edgar.submissions import (
     SubmissionFiling,
     detect_new_periodic_filings,
     parse_submission_history,
+    parse_submission_history_forms,
     parse_submissions_document,
 )
 from usinv.data.edgar.tag_chains import RawFact
@@ -31,6 +33,54 @@ PARITY_FIXTURE = Path(__file__).parent / "fixtures" / "edgar" / "apple_2025_10k_
 def _document(payload: dict[str, object], url: str = URL) -> EdgarDocument:
     observed = datetime(2026, 7, 19, 12, tzinfo=UTC)
     return EdgarDocument(url, observed, observed, SHA, payload, False, False)
+
+
+def test_live_edge_snapshot_reader_restores_verified_pit_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    snapshot_id = "b" * 64
+    root = tmp_path / snapshot_id
+    root.mkdir()
+    (root / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "live_edge_version": "usinv-live-edge-v2",
+                "snapshot_id": snapshot_id,
+                "batch_id": "sec-live:accession:hash",
+                "source_quarter": "2026q2",
+                "source_sha256": "c" * 64,
+                "cik": CIK,
+                "accession": ACCN,
+                "accepted": "2026-05-02T20:00:00+00:00",
+                "filing_sic": 3571,
+                "filing_sic_evidence_pointer": "sec-archive://filing.txt#sic",
+                "artifacts": {
+                    "facts_raw": {"rows": 12},
+                    "filing_facts": {"rows": 14},
+                    "presentation": {"rows": 3},
+                },
+                "issues": [
+                    {
+                        "kind": "fixture",
+                        "tag": None,
+                        "context_id": None,
+                        "detail": "retained issue",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("usinv.data.edgar.live_edge._verify", lambda *_: None)
+
+    snapshot = read_live_edge_snapshot(root)
+
+    assert snapshot.batch_id == "sec-live:accession:hash"
+    assert snapshot.source_quarter == "2026q2"
+    assert snapshot.facts_raw_rows == 12
+    assert snapshot.filing_sic == 3571
+    assert snapshot.issues[0].detail == "retained issue"
 
 
 def _submissions_payload() -> dict[str, object]:
@@ -74,7 +124,31 @@ def test_submissions_parser_keeps_current_state_separate_from_filing_history() -
     assert feed.former_names[0].name == "Apple Computer, Inc."
     assert feed.former_names[0].valid_to == date(2007, 1, 10)
     assert feed.filings[0].accepted == datetime(2025, 5, 2, 20, tzinfo=UTC)
+    assert len(feed.form_history) == 2
     assert feed.history_files == ("CIK0000320193-submissions-001.json",)
+    assert feed.unusable_filings == 0
+    assert feed.unusable_current_symbols == 0
+
+
+def test_submissions_parser_quarantines_incomplete_current_symbol_rows() -> None:
+    payload = _submissions_payload()
+    payload["tickers"] = ["AAPL", "BROKEN"]
+    payload["exchanges"] = ["Nasdaq", None]
+
+    feed = parse_submissions_document(_document(payload))
+
+    assert [(row.ticker, row.exchange) for row in feed.current_symbols] == [("AAPL", "Nasdaq")]
+    assert feed.unusable_current_symbols == 1
+
+
+def test_submissions_parser_quarantines_rows_without_a_primary_document() -> None:
+    payload = _submissions_payload()
+    payload["filings"]["recent"]["primaryDocument"][0] = ""  # type: ignore[index]
+
+    feed = parse_submissions_document(_document(payload))
+
+    assert feed.unusable_filings == 1
+    assert len(feed.filings) == 1
 
 
 def test_submission_arrays_and_history_filenames_fail_closed() -> None:
@@ -87,6 +161,12 @@ def test_submission_arrays_and_history_filenames_fail_closed() -> None:
     payload["filings"]["files"][0]["name"] = "../escape.json"
     with pytest.raises(EdgarPayloadError, match="unsafe"):
         parse_submissions_document(_document(payload))
+
+    payload = _submissions_payload()
+    payload["filings"]["recent"]["primaryDocument"][0] = "../escape.htm"  # type: ignore[index]
+    feed = parse_submissions_document(_document(payload))
+    assert feed.unusable_filings == 1 and len(feed.filings) == 1
+    assert len(feed.form_history) == 2
 
 
 def test_periodic_detection_cannot_see_a_future_acceptance() -> None:
@@ -107,6 +187,26 @@ def test_periodic_detection_cannot_see_a_future_acceptance() -> None:
         )
 
 
+def test_periodic_detection_can_select_only_the_unpublished_fsds_window() -> None:
+    feed = parse_submissions_document(_document(_submissions_payload()))
+
+    selected = detect_new_periodic_filings(
+        feed.filings,
+        seen_accessions=(),
+        accepted_after=datetime(2025, 3, 31, 23, 59, 59, tzinfo=UTC),
+        as_of=datetime(2025, 7, 17, 20, tzinfo=UTC),
+    )
+
+    assert [item.accession for item in selected] == [ACCN]
+    with pytest.raises(EdgarPayloadError, match="precede"):
+        detect_new_periodic_filings(
+            feed.filings,
+            seen_accessions=(),
+            accepted_after=datetime(2025, 7, 17, 20, tzinfo=UTC),
+            as_of=datetime(2025, 7, 17, 20, tzinfo=UTC),
+        )
+
+
 def test_older_submission_page_uses_same_acceptance_contract() -> None:
     recent = _submissions_payload()["filings"]["recent"]
     filings = parse_submission_history(
@@ -118,6 +218,15 @@ def test_older_submission_page_uses_same_acceptance_contract() -> None:
 
     assert len(filings) == 2
     assert all(item.accepted.tzinfo is UTC for item in filings)
+
+    recent["primaryDocument"][0] = None
+    forms = parse_submission_history_forms(
+        recent,
+        cik=CIK,
+        source_url="https://data.sec.gov/submissions/history.json",
+        source_sha256=SHA,
+    )
+    assert len(forms) == 2 and forms[0].accession == ACCN
 
 
 def test_period_normalization_ignores_filing_fy_fp() -> None:

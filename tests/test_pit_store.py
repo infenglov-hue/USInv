@@ -15,10 +15,10 @@ from usinv.data.edgar.client import EdgarConfigurationError
 from usinv.data.edgar.fsds import FACTS_RAW_SCHEMA
 from usinv.data.edgar.pit_store import (
     LATEST_FACT_SCHEMA,
+    PIT_CONFLICT_SCHEMA,
     PIT_FACT_SCHEMA,
     PitInputBatch,
     PitStoreBuilder,
-    PitStoreConflictError,
     PitStoreError,
     read_pit_facts_as_of,
 )
@@ -198,13 +198,21 @@ def test_snapshots_are_immutable_idempotent_and_input_order_independent(tmp_path
     assert cached.created_at == datetime(2026, 7, 18, tzinfo=UTC)
 
 
-def test_equal_time_conflicting_facts_fail_closed_without_publishing(tmp_path: Path) -> None:
+def test_equal_time_conflicting_facts_are_quarantined_and_counted(tmp_path: Path) -> None:
     source_sha = "3" * 64
     accepted = datetime(2026, 5, 1, 20, tzinfo=UTC)
     conflict = _batch(
         tmp_path,
         "conflict",
         [
+            _fact(
+                batch_id="batch:conflict",
+                source_quarter="2026q2",
+                source_sha256=source_sha,
+                adsh="0001234567-26-000000",
+                accepted=datetime(2026, 4, 1, 20, tzinfo=UTC),
+                value="99.0000",
+            ),
             _fact(
                 batch_id="batch:conflict",
                 source_quarter="2026q2",
@@ -226,11 +234,26 @@ def test_equal_time_conflicting_facts_fail_closed_without_publishing(tmp_path: P
     )
     store = tmp_path / "store"
 
-    with pytest.raises(PitStoreConflictError, match="conflicting"):
-        PitStoreBuilder(output_dir=store).build([conflict])
+    result = PitStoreBuilder(output_dir=store).build([conflict])
 
-    assert not tuple((store / "snapshots").glob("*"))
-    assert not tuple(store.glob(".pit.*.tmp"))
+    assert pq.read_table(result.table_path("facts_pit")).num_rows == 0
+    assert pq.read_table(result.table_path("facts_latest")).num_rows == 0
+    conflicts = pq.read_table(result.table_path("facts_conflicts"))
+    assert conflicts.schema.equals(PIT_CONFLICT_SCHEMA, check_metadata=True)
+    assert conflicts.to_pylist() == [
+        {
+            "cik": 1234567,
+            "tag": "Revenue",
+            "ddate": date(2026, 3, 31),
+            "qtrs": 1,
+            "uom": "USD",
+            "accepted": accepted,
+            "distinct_values": 2,
+            "candidate_rows": 2,
+            "adshs": ["0001234567-26-000001", "0001234567-26-000002"],
+            "values": ["100.0000", "101.0000"],
+        }
+    ]
 
 
 def test_identical_reprocessed_fact_is_coalesced_deterministically(tmp_path: Path) -> None:
@@ -352,7 +375,7 @@ def test_zero_rows_are_valid_and_manifest_is_complete(tmp_path: Path) -> None:
     manifest = json.loads((result.output_dir / "pit_manifest.json").read_text())
     assert manifest["pit_key"] == ["cik", "tag", "ddate", "qtrs", "uom"]
     assert manifest["selection"] == {
-        "equal_time_conflicts": "fail_closed",
+        "equal_time_conflicts": "quarantine_key_and_count",
         "facts_latest": "maximum accepted",
         "facts_pit": "minimum accepted",
     }

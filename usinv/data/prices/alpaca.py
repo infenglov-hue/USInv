@@ -30,6 +30,7 @@ from usinv.data.prices.base import (
     PriceQuery,
     PriceSecurityBinding,
     PriceSourcePage,
+    VendorBarIssue,
     VendorDailyBar,
 )
 
@@ -64,9 +65,33 @@ _ACTION_CATEGORIES: Final = frozenset(
 )
 
 
+class _QuarantinableBarError(PricePayloadError):
+    def __init__(self, session: date, detail: str) -> None:
+        super().__init__(detail)
+        self.session = session
+
+
 def _header(headers: Mapping[str, str], name: str) -> str | None:
     expected = name.casefold()
     return next((value for key, value in headers.items() if key.casefold() == expected), None)
+
+
+def _alpaca_market_data_symbol(symbol: str) -> str:
+    """Translate a canonical dash-delimited US share class to Alpaca's dot form."""
+    stem, separator, suffix = symbol.rpartition("-")
+    if separator and stem and len(suffix) == 1 and suffix.isalpha():
+        return f"{stem}.{suffix}"
+    return symbol
+
+
+def _alpaca_symbol_maps(
+    symbols: tuple[str, ...],
+) -> tuple[dict[str, str], dict[str, str]]:
+    canonical_to_vendor = {symbol: _alpaca_market_data_symbol(symbol) for symbol in symbols}
+    vendor_to_canonical = {vendor: canonical for canonical, vendor in canonical_to_vendor.items()}
+    if len(vendor_to_canonical) != len(canonical_to_vendor):
+        raise PriceConfigurationError("Alpaca vendor-symbol translation collides")
+    return canonical_to_vendor, vendor_to_canonical
 
 
 class AlpacaHttpError(PricePayloadError):
@@ -366,8 +391,18 @@ class AlpacaPriceProvider(PriceProvider):
         vwap = self._decimal(value["vw"], "vwap")
         volume = self._integer(value["v"], "volume")
         trade_count = self._integer(value["n"], "trade_count")
-        if min(open_value, high, low, close, vwap) <= 0 or volume <= 0 or trade_count < 0:
-            raise PricePayloadError("Alpaca daily bar contains non-positive price/volume")
+        no_trade_bar = volume == 0 and trade_count == 0 and vwap == 0
+        if (
+            min(open_value, high, low, close) <= 0
+            or volume < 0
+            or trade_count < 0
+            or (volume == 0 and not no_trade_bar)
+            or (volume > 0 and vwap <= 0)
+        ):
+            raise _QuarantinableBarError(
+                session,
+                "Alpaca daily bar contains invalid price, volume, or no-trade fields",
+            )
         if low > high or not low <= open_value <= high or not low <= close <= high:
             raise PricePayloadError("Alpaca daily bar violates OHLC bounds")
         return VendorDailyBar(
@@ -380,7 +415,7 @@ class AlpacaPriceProvider(PriceProvider):
             close,
             volume,
             trade_count,
-            vwap,
+            None if no_trade_bar else vwap,
             page_index,
         )
 
@@ -394,13 +429,16 @@ class AlpacaPriceProvider(PriceProvider):
     def fetch_daily_bars(self, query: PriceQuery) -> PriceFetchResult:
         """Fetch all multi-symbol daily pages with SIP and symbol remapping disabled."""
         self._validate_query(query)
+        canonical_to_vendor, vendor_to_canonical = _alpaca_symbol_maps(query.symbols)
         pages: list[PriceSourcePage] = []
         bars: list[VendorDailyBar] = []
+        provider_issues: list[VendorBarIssue] = []
+        quarantined_symbols: set[str] = set()
         page_token: str | None = None
         seen_tokens: set[str] = set()
         while True:
             params: dict[str, str | int] = {
-                "symbols": ",".join(query.symbols),
+                "symbols": ",".join(canonical_to_vendor[symbol] for symbol in query.symbols),
                 "timeframe": query.timeframe,
                 "start": query.start.astimezone(UTC).isoformat().replace("+00:00", "Z"),
                 "end": query.end.astimezone(UTC).isoformat().replace("+00:00", "Z"),
@@ -432,18 +470,31 @@ class AlpacaPriceProvider(PriceProvider):
                 raise PricePayloadError("Alpaca bars field must map symbols to arrays")
             for symbol, values in symbol_bars.items():
                 try:
-                    normalized_symbol = (
-                        normalize_ticker(symbol) if isinstance(symbol, str) else None
-                    )
+                    provider_symbol = normalize_ticker(symbol) if isinstance(symbol, str) else None
                 except SecurityMasterError as exc:
                     raise PricePayloadError("Alpaca returned an invalid symbol") from exc
-                if normalized_symbol not in query.symbols:
+                normalized_symbol = vendor_to_canonical.get(provider_symbol or "")
+                if normalized_symbol is None:
                     raise PricePayloadError("Alpaca returned an unrequested symbol")
                 if not isinstance(values, list):
                     raise PricePayloadError("Alpaca symbol bars must be an array")
-                parsed_bars = [
-                    self._parse_bar(symbol, item, page_index=page_index) for item in values
-                ]
+                parsed_bars: list[VendorDailyBar] = []
+                for item in values:
+                    try:
+                        parsed_bars.append(
+                            self._parse_bar(normalized_symbol, item, page_index=page_index)
+                        )
+                    except _QuarantinableBarError as exc:
+                        quarantined_symbols.add(normalized_symbol)
+                        provider_issues.append(
+                            VendorBarIssue(
+                                normalized_symbol,
+                                exc.session,
+                                "invalid_provider_bar",
+                                str(exc),
+                                page_index,
+                            )
+                        )
                 if any(
                     bar.timestamp < query.start.astimezone(UTC)
                     or bar.timestamp > query.end.astimezone(UTC)
@@ -458,6 +509,7 @@ class AlpacaPriceProvider(PriceProvider):
                 raise PricePayloadError("Alpaca pagination token is invalid or cyclic")
             seen_tokens.add(next_token)
             page_token = next_token
+        bars = [bar for bar in bars if bar.vendor_symbol not in quarantined_symbols]
         bars.sort(key=lambda item: (item.vendor_symbol, item.session, item.timestamp))
         return PriceFetchResult(
             ALPACA_PROVIDER,
@@ -465,6 +517,7 @@ class AlpacaPriceProvider(PriceProvider):
             query,
             tuple(pages),
             tuple(bars),
+            tuple(provider_issues),
         )
 
     def fetch_raw_and_all(
@@ -504,6 +557,7 @@ class AlpacaPriceProvider(PriceProvider):
         page: PriceSourcePage,
         batch_id: str,
         bindings: tuple[PriceSecurityBinding, ...],
+        vendor_to_canonical: Mapping[str, str],
     ) -> CorporateActionObservation:
         allowed_by_category = {
             "forward_splits": {
@@ -561,10 +615,11 @@ class AlpacaPriceProvider(PriceProvider):
         if not isinstance(symbol_value, str) or not isinstance(action_id, str) or not action_id:
             raise PricePayloadError("Alpaca declared-action identity is invalid")
         try:
-            symbol = normalize_ticker(symbol_value)
+            provider_symbol = normalize_ticker(symbol_value)
+            symbol = vendor_to_canonical[provider_symbol]
             effective_session = date.fromisoformat(ex_date_value)
             known_at = self._calendar.session(effective_session).close_at.astimezone(UTC)
-        except (SecurityMasterError, TypeError, ValueError, CalendarError) as exc:
+        except (KeyError, SecurityMasterError, TypeError, ValueError, CalendarError) as exc:
             raise PricePayloadError("Alpaca declared-action symbol/ex-date is invalid") from exc
         binding = self._action_binding(symbol, effective_session, bindings)
         if category == "cash_dividends":
@@ -602,13 +657,14 @@ class AlpacaPriceProvider(PriceProvider):
         if not bindings or start > end:
             raise PriceConfigurationError("Alpaca action bindings/bounds are invalid")
         symbols = tuple(sorted({binding.ticker for binding in bindings}))
+        canonical_to_vendor, vendor_to_canonical = _alpaca_symbol_maps(symbols)
         pages: list[PriceSourcePage] = []
         payload_pages: list[tuple[Mapping[str, Any], PriceSourcePage]] = []
         token: str | None = None
         seen_tokens: set[str] = set()
         while True:
             params: dict[str, str | int] = {
-                "symbols": ",".join(symbols),
+                "symbols": ",".join(canonical_to_vendor[symbol] for symbol in symbols),
                 "types": "forward_split,reverse_split,cash_dividend",
                 "start": start.isoformat(),
                 "end": end.isoformat(),
@@ -663,6 +719,7 @@ class AlpacaPriceProvider(PriceProvider):
                         page=page,
                         batch_id=base.batch_id,
                         bindings=bindings,
+                        vendor_to_canonical=vendor_to_canonical,
                     )
                     for item in items
                 )
@@ -692,13 +749,14 @@ class AlpacaPriceProvider(PriceProvider):
             ) from exc
         if not normalized or start > end:
             raise PriceConfigurationError("corporate-action probe bounds are invalid")
+        canonical_to_vendor, _vendor_to_canonical = _alpaca_symbol_maps(normalized)
         pages: list[PriceSourcePage] = []
         counts = dict.fromkeys(sorted(_ACTION_CATEGORIES), 0)
         token: str | None = None
         seen_tokens: set[str] = set()
         while True:
             params: dict[str, str | int] = {
-                "symbols": ",".join(normalized),
+                "symbols": ",".join(canonical_to_vendor[symbol] for symbol in normalized),
                 "start": start.isoformat(),
                 "end": end.isoformat(),
                 "sort": "asc",

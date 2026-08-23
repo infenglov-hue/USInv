@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -24,6 +25,7 @@ from usinv.data.prices.base import (
     PriceSecurityBinding,
     PriceSourcePage,
     PriceStoreError,
+    VendorBarIssue,
     VendorDailyBar,
     materialize_price_snapshot,
     price_bindings_from_security_master,
@@ -74,6 +76,7 @@ def _result(
     bars: tuple[VendorDailyBar, ...],
     *,
     marker: str = "same",
+    provider_issues: tuple[VendorBarIssue, ...] = (),
 ) -> PriceFetchResult:
     return PriceFetchResult(
         "alpaca",
@@ -81,6 +84,7 @@ def _result(
         PriceQuery(("REC",), START, END, adjustment),  # type: ignore[arg-type]
         (_page(adjustment, marker),),
         bars,
+        provider_issues,
     )
 
 
@@ -119,6 +123,24 @@ def test_ticker_reuse_maps_each_session_to_immutable_security_id(tmp_path: Path)
     assert raw.schema.equals(PRICES_RAW_SCHEMA, check_metadata=True)
     assert set(raw.column("security_id").to_pylist()) == {"old-security", "new-security"}
     assert snapshot.issues == ()
+
+
+def test_zero_trade_bar_persists_as_zero_liquidity_not_missing_data(tmp_path: Path) -> None:
+    bar = replace(
+        _bar(date(2023, 6, 1)),
+        volume=0,
+        trade_count=0,
+        vwap=None,
+    )
+    snapshot = materialize_price_snapshot(
+        _result("raw", (bar,)),
+        _result("all", (bar,)),
+        (_binding("security", date(2022, 1, 1)),),
+        tmp_path,
+    )
+
+    row = pq.read_table(snapshot.output_dir / "prices_raw.parquet").to_pylist()[0]
+    assert row["volume"] == 0 and row["vwap"] is None
 
 
 def test_bindings_are_selected_from_security_master_evidence_not_ticker_guess() -> None:
@@ -214,6 +236,28 @@ def test_unmapped_and_ambiguous_rows_are_counted_in_issue_artifact(tmp_path: Pat
     issues = pq.read_table(snapshot.output_dir / "price_mapping_issues.parquet")
     assert issues.num_rows == 4
     assert pq.read_table(snapshot.output_dir / "prices_raw.parquet").num_rows == 0
+
+
+def test_invalid_provider_bar_is_security_keyed_and_persisted_as_an_issue(
+    tmp_path: Path,
+) -> None:
+    issue = VendorBarIssue(
+        "REC",
+        date(2023, 6, 1),
+        "invalid_provider_bar",
+        "zero volume",
+        0,
+    )
+    snapshot = materialize_price_snapshot(
+        _result("raw", (), provider_issues=(issue,)),
+        _result("all", (), provider_issues=(issue,)),
+        (_binding("security", date(2022, 1, 1)),),
+        tmp_path,
+    )
+
+    assert len(snapshot.issues) == 2
+    assert all(row.candidate_security_ids == ("security",) for row in snapshot.issues)
+    assert all(row.kind == "invalid_provider_bar" for row in snapshot.issues)
 
 
 def test_corroborating_evidence_for_same_security_is_not_false_ambiguity(

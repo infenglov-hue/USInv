@@ -1,6 +1,6 @@
 # USInv — Systematic US Equity Picker
 
-**Status: PHASE 1 BUILD — security master/live edge in progress.** This repository contains the
+**Status: PHASE 2 BUILD — the point-in-time universe gate is in progress.** This repository contains the
 design specification for a point-in-time-correct, factor-based US stock
 selection research system. It is intentionally not called implementation-ready
 until the Phase-0 historical-data feasibility gate is completed and the user
@@ -121,6 +121,39 @@ presentation evidence, writes immutable full-filing and canonical
 seen accession can be prevented with `--seen-accession`; raw filings and
 generated Parquet remain in ignored user-controlled storage. The SEC contact is
 read only from the environment and is never printed or embedded in artifacts.
+
+Capture one private, dated active+delisted Alpha Vantage membership snapshot:
+
+```powershell
+$env:ALPHA_VANTAGE_API_KEY = "your-personal-key"
+python -m usinv alpha-listing-sync --as-of 2026-07-17
+```
+
+The two calls are paced and stored under ignored, content-addressed local
+storage. The command reports only counts and hashes; raw CSV payloads are never
+committed. Membership is not identity: universe selection still requires a
+unique high-confidence security-master interval for the same ticker, exchange
+and date.
+
+Build a discovery-only CIK plan from that private snapshot, then archive
+filing-time cover evidence in resumable CIK shards:
+
+```powershell
+$env:USINV_EDGAR_EMAIL = "your-monitored-address@your-domain.tld"
+python -m usinv sec-filing-discovery `
+  --listing-snapshot <listing-snapshot-directory>
+python -m usinv sec-cover-bootstrap `
+  --discovery-plan <discovery-plan-directory> `
+  --as-of 2026-07-17T16:00:00-04:00 `
+  --max-ciks 250
+```
+
+The current SEC ticker file locates candidate filings only; it never becomes
+historical identity evidence. A share class enters the security master only
+when an as-filed cover fact accepted by the cutoff supplies a matching ticker,
+exchange and class title. Every accession is content-addressed as it is fetched,
+so an interrupted shard can resume without publishing a partial security
+master; mismatches remain explicit gaps rather than guessed joins.
 
 The account-free historical feasibility checks validate the 36-security sample,
 provider contracts and metadata-only evidence matrix; public demo responses are

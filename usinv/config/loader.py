@@ -169,6 +169,37 @@ class ExperimentGridConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class FreshnessConfig:
+    """Phase 2.4 freshness / kill-switch thresholds (DATA_SPEC §8)."""
+
+    fundamentals_stale_fraction_max: float
+    fundamentals_grace_business_days: int
+    form10q_due_days_large_accelerated: int
+    form10q_due_days_accelerated: int
+    form10q_due_days_other: int
+    form10k_due_days_large_accelerated: int
+    form10k_due_days_accelerated: int
+    form10k_due_days_other: int
+    price_max_sessions_stale: int
+    macro_max_age_cadence_multiple: int
+
+    def due_window_days(self, form: str, filer_category: str) -> int:
+        """Return the periodic-report due window in calendar days for a form/filer."""
+        table = {
+            ("10-Q", "large_accelerated"): self.form10q_due_days_large_accelerated,
+            ("10-Q", "accelerated"): self.form10q_due_days_accelerated,
+            ("10-Q", "other"): self.form10q_due_days_other,
+            ("10-K", "large_accelerated"): self.form10k_due_days_large_accelerated,
+            ("10-K", "accelerated"): self.form10k_due_days_accelerated,
+            ("10-K", "other"): self.form10k_due_days_other,
+        }
+        try:
+            return table[(form, filer_category)]
+        except KeyError as exc:
+            raise ConfigError(f"no due window for form={form!r} filer={filer_category!r}") from exc
+
+
+@dataclass(frozen=True, slots=True)
 class AppConfig:
     settings: SettingsConfig
     universe: UniverseConfig
@@ -176,6 +207,7 @@ class AppConfig:
     portfolio: PortfolioConfig
     regime: RegimeConfig
     experiment_grid: ExperimentGridConfig
+    freshness: FreshnessConfig
 
     @property
     def config_hash(self) -> str:
@@ -576,6 +608,11 @@ def _validate(config: AppConfig) -> None:
     universe = config.universe
     if universe.include_otc:
         raise ConfigError("OTC cannot be enabled in v1")
+    if not universe.domestic_only or not universe.common_stock_only:
+        raise ConfigError("v1 universe must remain domestic common stock only")
+    required_exclusions = {"financials", "reits", "pre_revenue_biotech", "fpi_adr"}
+    if not required_exclusions <= set(universe.excluded_groups):
+        raise ConfigError("v1 universe scope exclusions cannot be disabled")
     if not 0 < universe.core_market_cap_min < universe.core_market_cap_max:
         raise ConfigError("core market-cap bounds are invalid")
     if universe.large_cap_min_exclusive != universe.core_market_cap_max:
@@ -625,6 +662,70 @@ def _validate(config: AppConfig) -> None:
     if grid.stage1_max + grid.stage2_max + grid.stage3_max + grid.controls_max != grid.planned_max:
         raise ConfigError("planned experiment count does not match staged limits")
 
+    freshness = config.freshness
+    if not 0.0 < freshness.fundamentals_stale_fraction_max <= 1.0:
+        raise ConfigError("fundamentals stale fraction must be in (0, 1]")
+    if freshness.fundamentals_grace_business_days < 0:
+        raise ConfigError("fundamentals grace business days cannot be negative")
+    if freshness.price_max_sessions_stale <= 0:
+        raise ConfigError("price max stale sessions must be positive")
+    if freshness.macro_max_age_cadence_multiple <= 0:
+        raise ConfigError("macro max-age cadence multiple must be positive")
+    for form in ("10-Q", "10-K"):
+        for filer in ("large_accelerated", "accelerated", "other"):
+            if freshness.due_window_days(form, filer) <= 0:
+                raise ConfigError("freshness due windows must be positive")
+
+
+def _parse_freshness(raw: Mapping[str, Any]) -> FreshnessConfig:
+    keys = {
+        "fundamentals_stale_fraction_max",
+        "fundamentals_grace_business_days",
+        "form10q_due_days_large_accelerated",
+        "form10q_due_days_accelerated",
+        "form10q_due_days_other",
+        "form10k_due_days_large_accelerated",
+        "form10k_due_days_accelerated",
+        "form10k_due_days_other",
+        "price_max_sessions_stale",
+        "macro_max_age_cadence_multiple",
+    }
+    node = _strict(raw, keys, "freshness")
+    return FreshnessConfig(
+        fundamentals_stale_fraction_max=_number(
+            node["fundamentals_stale_fraction_max"], "freshness.fundamentals_stale_fraction_max"
+        ),
+        fundamentals_grace_business_days=_integer(
+            node["fundamentals_grace_business_days"], "freshness.fundamentals_grace_business_days"
+        ),
+        form10q_due_days_large_accelerated=_integer(
+            node["form10q_due_days_large_accelerated"],
+            "freshness.form10q_due_days_large_accelerated",
+        ),
+        form10q_due_days_accelerated=_integer(
+            node["form10q_due_days_accelerated"], "freshness.form10q_due_days_accelerated"
+        ),
+        form10q_due_days_other=_integer(
+            node["form10q_due_days_other"], "freshness.form10q_due_days_other"
+        ),
+        form10k_due_days_large_accelerated=_integer(
+            node["form10k_due_days_large_accelerated"],
+            "freshness.form10k_due_days_large_accelerated",
+        ),
+        form10k_due_days_accelerated=_integer(
+            node["form10k_due_days_accelerated"], "freshness.form10k_due_days_accelerated"
+        ),
+        form10k_due_days_other=_integer(
+            node["form10k_due_days_other"], "freshness.form10k_due_days_other"
+        ),
+        price_max_sessions_stale=_integer(
+            node["price_max_sessions_stale"], "freshness.price_max_sessions_stale"
+        ),
+        macro_max_age_cadence_multiple=_integer(
+            node["macro_max_age_cadence_multiple"], "freshness.macro_max_age_cadence_multiple"
+        ),
+    )
+
 
 def load_config(directory: str | Path | None = None) -> AppConfig:
     """Load all required YAML files, reject drift, and return immutable config."""
@@ -636,6 +737,7 @@ def load_config(directory: str | Path | None = None) -> AppConfig:
         portfolio=_parse_portfolio(_read_yaml(base, "portfolio.yaml")),
         regime=_parse_regime(_read_yaml(base, "regime.yaml")),
         experiment_grid=_parse_experiment_grid(_read_yaml(base, "experiment_grid.yaml")),
+        freshness=_parse_freshness(_read_yaml(base, "freshness.yaml")),
     )
     _validate(config)
     return config

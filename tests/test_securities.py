@@ -11,17 +11,89 @@ from usinv.data.edgar.securities import (
     SymbolInterval,
     build_security_master,
     current_sec_symbol,
+    is_explicit_non_common_security_title,
     materialize_security_master,
     mint_security_id,
+    normalize_exchange,
+    read_security_master_snapshot,
 )
 
 
-def _security(cik: int, anchor: str, title: str = "Common Stock") -> Security:
+def test_exchange_normalization_is_idempotent_for_every_canonical_venue() -> None:
+    for exchange in ("NASDAQ", "NYSE", "NYSEAMERICAN"):
+        assert normalize_exchange(normalize_exchange(exchange)) == exchange
+
+
+@pytest.mark.parametrize(
+    "raw_exchange",
+    [
+        "Nasdaq Global Select Market",
+        "The Nasdaq Global Select Market",
+        "The Nasdaq Global Market",
+        "The Nasdaq Capital Market",
+        "The Nasdaq Stock Market",
+    ],
+)
+def test_exchange_normalization_accepts_filing_cover_nasdaq_labels(
+    raw_exchange: str,
+) -> None:
+    assert normalize_exchange(raw_exchange) == "NASDAQ"
+
+
+@pytest.mark.parametrize(
+    ("raw_exchange", "expected"),
+    [
+        ("The NYSE American LLC", "NYSEAMERICAN"),
+        ("The New York Stock Exchange", "NYSE"),
+    ],
+)
+def test_exchange_normalization_accepts_official_nyse_names(
+    raw_exchange: str,
+    expected: str,
+) -> None:
+    assert normalize_exchange(raw_exchange) == expected
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Warrants to purchase Common Stock",
+        "Series A Right to purchase one share of common stock",
+        "American Depositary Shares, each representing two common shares",
+        "7.25% Series A Preferred Stock",
+        "3.125% Senior Notes due 2030",
+        "Units, each consisting of one common share and one warrant",
+    ],
+)
+def test_explicit_non_common_security_titles_are_detected(title: str) -> None:
+    assert is_explicit_non_common_security_title(title)
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Common Stock",
+        "Class A Common Stock",
+        "Common Units Representing Limited Partner Interests",
+        "Common Shares, including associated Share Purchase Rights",
+    ],
+)
+def test_common_equity_titles_are_not_misclassified(title: str) -> None:
+    assert not is_explicit_non_common_security_title(title)
+
+
+def _security(
+    cik: int,
+    anchor: str,
+    title: str = "Common Stock",
+    *,
+    security_type: str = "common_stock",
+) -> Security:
     return Security(
         security_id=mint_security_id(cik, anchor),
         cik=cik,
         class_title=title,
-        security_type="common_stock",
+        security_type=security_type,
         domestic_flag=True,
         identity_anchor=anchor,
         source="sec_xbrl_cover",
@@ -115,6 +187,28 @@ def test_overlapping_recycled_ticker_is_quarantined_not_guessed() -> None:
     assert master.issues[0].kind == "ticker_collision"
 
 
+def test_equity_resolution_ignores_same_symbol_non_equity_cover_class() -> None:
+    common = _security(100, "sec-cover:common")
+    note = _security(100, "sec-cover:note", "3.125% Notes", security_type="other")
+    master = build_security_master(
+        [common, note],
+        [
+            _symbol(common, "ONE", date(2020, 1, 1)),
+            _symbol(note, "ONE", date(2020, 1, 1)),
+        ],
+    )
+
+    assert master.resolve("ONE", "NASDAQ", date(2023, 6, 1)).status == "quarantined"
+    equity = master.resolve(
+        "ONE",
+        "NASDAQ",
+        date(2023, 6, 1),
+        required_security_type="common_stock",
+    )
+    assert equity.status == "mapped"
+    assert equity.security_id == common.security_id
+
+
 def test_one_security_cannot_have_two_simultaneous_tickers_on_one_exchange() -> None:
     security = _security(100, "cusip:single")
     master = build_security_master(
@@ -142,6 +236,8 @@ def test_security_master_snapshot_is_content_addressed_and_verified(tmp_path: Pa
     assert not created.from_cache and cached.from_cache
     assert created.snapshot_id == cached.snapshot_id
     assert created.output_dir.joinpath("securities.parquet").is_file()
+    reopened = read_security_master_snapshot(created.output_dir)
+    assert reopened == master
 
     created.output_dir.joinpath("security_symbols.parquet").write_bytes(b"tampered")
     with pytest.raises(SecurityMasterError, match="failed verification"):

@@ -48,6 +48,16 @@ class SubmissionFiling:
 
 
 @dataclass(frozen=True, slots=True)
+class SubmissionFormObservation:
+    cik: int
+    accession: str
+    form: str
+    accepted: datetime
+    source_url: str
+    source_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class SubmissionFeed:
     cik: int
     name: str
@@ -61,6 +71,9 @@ class SubmissionFeed:
     observed_at: datetime
     source_url: str
     source_sha256: str
+    unusable_filings: int = 0
+    unusable_current_symbols: int = 0
+    form_history: tuple[SubmissionFormObservation, ...] = ()
 
 
 def _text(value: object, field: str, *, required: bool = True) -> str | None:
@@ -106,13 +119,13 @@ def _sequence(value: object, field: str) -> Sequence[object]:
     return value
 
 
-def _filing_rows(
+def _filing_rows_with_gaps(
     payload: Mapping[str, object],
     *,
     cik: int,
     source_url: str,
     source_sha256: str,
-) -> tuple[SubmissionFiling, ...]:
+) -> tuple[tuple[SubmissionFiling, ...], int]:
     columns = {name: _sequence(payload.get(name), name) for name in _REQUIRED_COLUMNS}
     row_count = len(columns["accessionNumber"])
     if any(len(values) != row_count for values in columns.values()):
@@ -127,13 +140,19 @@ def _filing_rows(
             optional[name] = values
 
     rows: dict[str, SubmissionFiling] = {}
+    unusable_filings = 0
     for index in range(row_count):
         accession = _text(columns["accessionNumber"][index], "accessionNumber")
         if not ACCESSION_PATTERN.fullmatch(accession):
             raise EdgarPayloadError(f"invalid SEC accession: {accession!r}")
-        primary_document = _text(columns["primaryDocument"][index], "primaryDocument")
+        primary_raw = columns["primaryDocument"][index]
+        if not isinstance(primary_raw, str) or not primary_raw.strip():
+            unusable_filings += 1
+            continue
+        primary_document = primary_raw.strip()
         if ".." in primary_document or primary_document.startswith(("/", "\\")):
-            raise EdgarPayloadError("unsafe SEC primaryDocument path")
+            unusable_filings += 1
+            continue
         filing = SubmissionFiling(
             cik=cik,
             accession=accession,
@@ -153,6 +172,57 @@ def _filing_rows(
         if prior is not None and prior != filing:
             raise EdgarPayloadError(f"conflicting submissions rows for {accession}")
         rows[accession] = filing
+    return (
+        tuple(sorted(rows.values(), key=lambda item: (item.accepted, item.accession))),
+        unusable_filings,
+    )
+
+
+def _filing_rows(
+    payload: Mapping[str, object],
+    *,
+    cik: int,
+    source_url: str,
+    source_sha256: str,
+) -> tuple[SubmissionFiling, ...]:
+    rows, _ = _filing_rows_with_gaps(
+        payload,
+        cik=cik,
+        source_url=source_url,
+        source_sha256=source_sha256,
+    )
+    return rows
+
+
+def _form_rows(
+    payload: Mapping[str, object],
+    *,
+    cik: int,
+    source_url: str,
+    source_sha256: str,
+) -> tuple[SubmissionFormObservation, ...]:
+    names = ("accessionNumber", "acceptanceDateTime", "form")
+    columns = {name: _sequence(payload.get(name), name) for name in names}
+    row_count = len(columns["accessionNumber"])
+    if any(len(values) != row_count for values in columns.values()):
+        raise EdgarPayloadError("submissions form-history arrays have different lengths")
+    rows: dict[str, SubmissionFormObservation] = {}
+    for index in range(row_count):
+        accession = _text(columns["accessionNumber"][index], "accessionNumber")
+        if not ACCESSION_PATTERN.fullmatch(accession):
+            raise EdgarPayloadError(f"invalid SEC accession: {accession!r}")
+        observation = SubmissionFormObservation(
+            cik,
+            accession,
+            _text(columns["form"][index], "form"),
+            _accepted(columns["acceptanceDateTime"][index]),
+            source_url,
+            source_sha256,
+        )
+        prior = rows.get(accession)
+        if prior is not None and prior != observation:
+            raise EdgarPayloadError(f"conflicting submissions form rows for {accession}")
+        rows[accession] = observation
     return tuple(sorted(rows.values(), key=lambda item: (item.accepted, item.accession)))
 
 
@@ -165,6 +235,22 @@ def parse_submission_history(
 ) -> tuple[SubmissionFiling, ...]:
     """Parse one paginated older submissions file, which is a columnar object."""
     return _filing_rows(
+        payload,
+        cik=cik,
+        source_url=source_url,
+        source_sha256=source_sha256,
+    )
+
+
+def parse_submission_history_forms(
+    payload: Mapping[str, object],
+    *,
+    cik: int,
+    source_url: str,
+    source_sha256: str,
+) -> tuple[SubmissionFormObservation, ...]:
+    """Parse form metadata even when an older row has no archivable primary document."""
+    return _form_rows(
         payload,
         cik=cik,
         source_url=source_url,
@@ -193,10 +279,18 @@ def parse_submissions_document(document: EdgarDocument) -> SubmissionFeed:
     exchanges = _sequence(payload.get("exchanges", ()), "exchanges")
     if len(tickers) != len(exchanges):
         raise EdgarPayloadError("submissions current ticker/exchange arrays differ in length")
-    current_symbols = tuple(
-        CurrentSymbol(_text(ticker, "tickers"), _text(exchange, "exchanges"))
-        for ticker, exchange in zip(tickers, exchanges, strict=True)
-    )
+    current_symbols: list[CurrentSymbol] = []
+    unusable_current_symbols = 0
+    for ticker, exchange in zip(tickers, exchanges, strict=True):
+        if (
+            not isinstance(ticker, str)
+            or not ticker.strip()
+            or not isinstance(exchange, str)
+            or not exchange.strip()
+        ):
+            unusable_current_symbols += 1
+            continue
+        current_symbols.append(CurrentSymbol(ticker.strip(), exchange.strip()))
 
     former_names: list[FormerName] = []
     for item in _sequence(payload.get("formerNames", ()), "formerNames"):
@@ -224,6 +318,18 @@ def parse_submissions_document(document: EdgarDocument) -> SubmissionFeed:
         sic = int(sic_value) if sic_value not in (None, "") else None
     except (TypeError, ValueError) as exc:
         raise EdgarPayloadError("submissions sic is invalid") from exc
+    recent_rows, unusable_filings = _filing_rows_with_gaps(
+        recent,
+        cik=cik,
+        source_url=document.url,
+        source_sha256=document.content_sha256,
+    )
+    form_history = _form_rows(
+        recent,
+        cik=cik,
+        source_url=document.url,
+        source_sha256=document.content_sha256,
+    )
     return SubmissionFeed(
         cik=cik,
         name=_text(payload.get("name"), "name"),
@@ -234,18 +340,16 @@ def parse_submissions_document(document: EdgarDocument) -> SubmissionFeed:
             "stateOfIncorporation",
             required=False,
         ),
-        current_symbols=current_symbols,
+        current_symbols=tuple(current_symbols),
         former_names=tuple(former_names),
-        filings=_filing_rows(
-            recent,
-            cik=cik,
-            source_url=document.url,
-            source_sha256=document.content_sha256,
-        ),
+        filings=recent_rows,
         history_files=tuple(history_files),
         observed_at=document.validated_at,
         source_url=document.url,
         source_sha256=document.content_sha256,
+        unusable_filings=unusable_filings,
+        unusable_current_symbols=unusable_current_symbols,
+        form_history=form_history,
     )
 
 
@@ -267,12 +371,18 @@ def detect_new_periodic_filings(
     *,
     seen_accessions: Iterable[str],
     as_of: datetime,
+    accepted_after: datetime | None = None,
 ) -> tuple[SubmissionFiling, ...]:
     """Return only periodic filings accepted by the caller's PIT cutoff."""
     if as_of.tzinfo is None:
         raise EdgarPayloadError("periodic filing cutoff must be timezone-aware")
+    if accepted_after is not None and accepted_after.tzinfo is None:
+        raise EdgarPayloadError("periodic filing lower bound must be timezone-aware")
     seen = frozenset(seen_accessions)
     cutoff = as_of.astimezone(UTC)
+    lower_bound = accepted_after.astimezone(UTC) if accepted_after is not None else None
+    if lower_bound is not None and lower_bound >= cutoff:
+        raise EdgarPayloadError("periodic filing lower bound must precede the cutoff")
     return tuple(
         sorted(
             (
@@ -280,6 +390,7 @@ def detect_new_periodic_filings(
                 for filing in filings
                 if filing.form in PERIODIC_FORMS
                 and filing.accession not in seen
+                and (lower_bound is None or filing.accepted > lower_bound)
                 and filing.accepted <= cutoff
             ),
             key=lambda item: (item.accepted, item.accession),

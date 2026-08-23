@@ -1,5 +1,166 @@
 # PROGRESS
 
+## 2026-07-20 — Phase 2.3 point-in-time universe (gate remediation in progress)
+
+### Implemented locally
+
+- Added a credential-safe Alpha Vantage `LISTING_STATUS` adapter for paired
+  active/delisted snapshots at one explicit date. It enforces the documented
+  post-2010 date boundary, exact CSV schema, 15-second pacing, a 25-request
+  process budget, retry policy and immutable content-addressed private storage.
+  Raw licensed CSV pages are never committed or uploaded from the live smoke.
+- Added the point-in-time universe builder and `universe_snapshots` audit
+  table. It requires the official XNYS close, exactly 21 raw-price sessions,
+  high-confidence date-valid security mappings, complete FPI form-history
+  evidence, instant shares outstanding and point-in-time SIC evidence. Every
+  listing candidate is retained with filter results, evidence pointers and
+  explicit exclusion reasons.
+- Implemented the v1 domestic-common-stock, exchange, raw-close, median-dollar-
+  volume and issuer-market-cap rules. Multiple share classes stay separate;
+  issuer capitalization is aggregated only across explicitly linked classes,
+  and only the most-liquid eligible line can enter selection. Core and large-
+  cap names remain separate size buckets.
+- Added the official Fama-French 12/49 SIC definitions as a generated,
+  hash-pinned package resource. Financials, REITs and evidence-backed pre-
+  revenue biotech exclusions fail closed. The Phase 3.1 hygiene columns are
+  present as the explicit `phase-2.3-pass-through-v1` stub required by the
+  build plan.
+- Wired the Phase 1.5 D030 applicability report to the exact included-universe
+  denominator. The Phase 2.3 gate rejects any identity/FF49 gap, missing
+  mandatory scoring input, empty final universe or sub-threshold core/secondary
+  coverage.
+
+### Verification/status
+
+- SEC evidence refresh run `29772784252` completed all 23 CIK shards after an
+  isolated retry of one transient SEC 429 and published reconciled discovery
+  and filing-backed evidence artifacts.
+- D032 run `29809262508` stopped before computation because Alpha Vantage
+  changed its historical `2026-07-17` response to include a post-cutoff IPO.
+  D038 now makes reruns consume the prior hash-verified immutable listing
+  snapshot by run ID and prevents its private CSV payloads from being
+  re-uploaded.
+- D038 verification run `29810991030` reused listing artifact run
+  `29769888331`, skipped the Alpha fetch, completed price/FSDS processing and
+  produced auditable artifact `8487682614` without re-uploading the private
+  listing CSVs. The reproducibility failure is closed. The unchanged D032
+  quality gate remains blocked on 1,658 identity gaps, 97 FF49 gaps, 89.9286%
+  core coverage and 67.1732% secondary coverage; rerunning the same evidence
+  cannot change those metrics.
+- Ruff lint/format and the complete offline suite pass: 310 tests. Tests cover
+  future filing/price rejection, raw-price non-rewriting, exact close timing,
+  FPI/financial/biotech exclusions, multi-class aggregation, large-cap
+  admission, mapping gaps, D030 denominator equality, immutable reopen and
+  corruption detection.
+- An isolated wheel build succeeds and includes `usinv/data/listings.py`,
+  `usinv/universe.py` and the generated `usinv/scoring/sic_ranges_v1.json`
+  resource.
+- **The credentialed Alpha Vantage listing smoke passed on 2026-07-20.** GitHub
+  Actions run `29737419392` materialized the paired 2026-07-17 snapshot with
+  14,207 active and 9,350 delisted rows under snapshot ID
+  `cdb21e5c192ac504cfafe419fa2b5358519a098c78eac1967fc1d7964594927e`.
+  The first live attempt exposed an undocumented HTTP 406 response to an
+  explicit CSV `Accept` header; the second showed that provider display names
+  can be blank. The final adapter sends the previously proven User-Agent-only
+  negotiation, permits blank non-key display names, and still rejects a blank
+  symbol, exchange or asset type. No raw CSV was uploaded or committed.
+- **The complete filing-backed SEC bootstrap passed.** GitHub Actions run
+  `29756489491` covered 5,627 CIKs and produced 7,057 securities/symbols from
+  two PIT-bounded cover-capable filings per issuer. The immutable complete
+  evidence snapshot is
+  `1d5745747767089355503628a5662ee1503b8b103aabe736a2d043d3ea12a051`;
+  its security-master snapshot is
+  `fa07ad44d2d3e0dad3d02119632c6a39472579948c9d41d1863932e568d0e8a6`.
+- **The first end-to-end D032 build reached the real gate.** Run
+  `29765974208` fetched all 2,523 planned Alpaca symbols in 26 batches and
+  materialized the universe, then failed closed on 3,723 unresolved identity
+  mappings (2,406 unmapped, 1,315 quarantined, two invalid symbols). The
+  included denominator measured 89.8575% core and 67.5658% secondary coverage;
+  neither result was relabeled as passing.
+- The dominant quarantine cause was filing wording drift, not a vendor/API
+  failure: the same CIK/ticker/class received separate raw IDs when two filings
+  expressed an equivalent class title or XBRL dimension differently. Added a
+  semantic equity-class reconciliation that never includes ticker text in the
+  permanent ID, preserves explicitly distinct classes and refuses concurrent
+  generic-class ambiguity. On the exact complete evidence it collapses 1,057
+  equivalent groups, reduces securities from 7,057 to 5,990 and mapping issues
+  from 1,929 to 849. The approved-exchange active-stock replay changes 1,023
+  rows from quarantined to mapped while leaving 256 quarantined, 2,309 unmapped
+  and two invalid rather than guessing them.
+- Added a merge-only mode to the existing GitHub security workflow that
+  derives the immutable evidence package from the exact retained shard IDs. It
+  avoids repeating the 90-minute SEC acquisition and does not alter the D032
+  thresholds or evidence rules.
+- The reconciled D032 run `29769888331` materially improved the exact gate:
+  unresolved identity mappings fell from 3,723 to 2,666, included securities
+  rose from 912 to 1,170 and evidence gaps fell from 5,246 to 4,076. The gate
+  still failed closed at 89.7497% core and 67.2479% secondary coverage.
+- Filing-level diagnosis of the remaining discovered-but-unmapped rows found
+  an independent exchange-label defect. AAL, ABNB and ACDC use official cover
+  labels such as `The Nasdaq Global Select Market`/`The Nasdaq Stock Market`,
+  while ASM and CVM report `NYSE` on their filings despite an exact
+  CIK+ticker `NYSEAMERICAN` discovery pair. Added enumerated Nasdaq aliases and
+  a narrow provenance-bearing NYSE-American reconciliation; unrelated venue
+  disagreements remain quarantined. A registered dispatcher can now reuse the
+  immutable discovery plan for one fresh SEC acquisition without consuming a
+  new Alpha Vantage listing request; its merge stage automatically applies the
+  already-tested D035 semantic identity reconciliation before publishing the
+  complete evidence artifact.
+- Classified only the empirically observed NYSE-family preferred (`-P`,
+  `-P-<class>`) and warrant (`-WS`) provider suffixes as explicit non-common
+  rows. The rule covers 366 preferred-format gaps in the retained failed gate;
+  `-W` is deliberately excluded because that same snapshot uses it for
+  when-issued common shares.
+- Ruff lint/format, workflow YAML parsing and the complete offline suite pass
+  after this remediation: 309 tests.
+- D032 artifact `8487682614` was replayed locally against the exact retained
+  universe rows. Of the 1,658 reported identity gaps, 346 are exact
+  exchange-qualified Tiingo stock series whose published end date precedes the
+  2026-07-17 cutoff; 169 collision groups contain only explicit non-common
+  SEC classes and 92 contain only SEC-classified foreign issuers. The 261
+  SEC-proven out-of-scope collisions can be removed from the common-stock
+  identity denominator with source pointers rather than ticker guesses; 18
+  genuinely mixed collisions remain quarantined. Tiingo end dates are retained
+  only as diagnostics and do not remove a row or satisfy the identity gate.
+- Added a strict, hash-addressed Tiingo supported-ticker lifecycle adapter and
+  immutable workflow artifact reuse. Missing exchanges in the provider's real
+  bulk schema are preserved but can never corroborate an exchange-qualified
+  observation. ETF names explicitly supplied by Alpha Vantage are now treated as
+  out-of-scope instruments under the existing common-stock contract.
+- Corrected two SEC acquisition defects exposed by the retained gaps. Safe
+  inline-XBRL parsing now converts only Python's fixed named-HTML-entity table
+  (for example `&nbsp;`) to numeric references while continuing to reject DTDs
+  and external entities. When a primary filing document has no usable XBRL,
+  the acquisition checks its archived XML instance documents before recording
+  a parse/cover gap. Fresh acquisition now considers four PIT-bounded filings
+  per CIK instead of two.
+- Ruff, workflow YAML parsing and the complete offline suite pass after these
+  changes: 320 tests. The next SEC refresh must measure the parser/selection
+  gain before a new D032 run; no acceptance threshold or PIT rule was changed.
+- Four shards in SEC refresh run `29815646806` exhausted the GitHub-hosted
+  runner disk after binary filing responses were retained both in the EDGAR
+  response cache and the immutable accession archive. The run was cancelled
+  because its exact-partition merge could no longer succeed. This was an
+  infrastructure-storage failure, not a D032/PIT result.
+- The filing archive now fetches only the primary document and possible XBRL
+  instance XML, excluding presentation/calculation/definition/label linkbases
+  and schemas that the cover parser never consumes. The shard workflow also
+  disables only the duplicate binary response-cache copy; JSON submissions
+  remain cached and every consumed filing resource is still archived and
+  hash-addressed. Ruff and the complete suite pass: 321 tests.
+- Disk-remediation validation run `29821740675` was cancelled before a result
+  when the user requested that all Codex/GitHub work stop for a Claude handoff.
+  No workflow remains active, and the cancelled run is not acceptance evidence.
+
+### Acceptance gate remains closed
+
+- The full security evidence and first real universe artifact now exist, but
+  the remaining unmapped/ambiguous listings and coverage shortfall are real
+  acceptance failures. Phase 2.3 is not marked complete and Phase 2.4/3 must
+  not start until the reconciled artifact is exercised and every remaining
+  identity, FF49, mandatory-input and 90%/75% coverage gap is resolved with
+  evidence rather than silent exclusion or inferred zeroes.
+
 ## 2026-07-20 — Phase 2.2 action reconstruction (merged as `eba4588` via PR #14)
 
 ### Implemented locally
@@ -613,3 +774,378 @@
   selected; no backtest may start before their rights and sample gates pass.
 - Alpha Vantage and EDGAR secrets are registered and are not blockers. Broker
   funding remains a later paper/live activation gate.
+
+## 2026-07-23 — Phase 2.3 checkpoint and documented deviation (BLUEPRINT-DEVIATION)
+
+Phase 2.3 D032 universe gate is **NOT passed**. User decision (2026-07-23):
+proceed to later phases under a documented deviation per AGENTS.md rule 75
+("If reality contradicts this blueprint... mark BLUEPRINT-DEVIATION and surface
+for user review"). The **full D032 pass remains a hard prerequisite before any
+performance claim (rule 6), paper operation, or live activation** — none of
+which may occur on the residual universe.
+
+### Measured state (local build, snapshot `cfc5bad6...`, signal 2026-07-17)
+
+- candidates 14,207; **included 1,646**
+- core coverage **90.83%** (PASS >=90%); secondary **78.12%** (PASS >=75%)
+- **identity gaps 178** (BLOCKING); **sector gaps 51** (BLOCKING); mandatory pending (gate short-circuits on identity)
+- Membership waterfall accounting for the 14,207: 5,658 non-stock (ETF/fund),
+  ~3,400 non-common (preferred/warrant/unit/right), 2,287 secondary share
+  class, ~640 foreign, 236 unsupported exchange, 23 below market-cap floor,
+  178 identity residual -> 1,646 included. 1,646 sits between Russell 1000 and
+  3000 — a normal quality-screened US-equity universe size, not a data loss.
+
+### Residual buckets (identity 178) — the closure plan
+
+- 129 `no_sec_match_other` — name-based EDGAR resolution -> superseded /
+  foreign-40F / evidence-backed "no SEC match" exclusion (mostly coverage-safe).
+- 25 `sec_domestic_10x_filer` — real domestic filers whose cover extraction
+  failed; repair/re-acquire. May become INCLUDED -> watch core>=90%.
+- 15 `sec_registered_no_periodic` — need form_history_proofs -> `no_periodic`.
+- 8 blank-name + 1 fund — explicit evidence-backed exclusion rules.
+- Sector 51 = 46 BDCs (SIC 6726; need cover-archived filing so filing-sic-sync
+  yields their SIC -> `sector_excluded`) + 5 FF49-table (SIC 900/3990 need a
+  Fama-French-correct mapping decision).
+
+### Product impact of proceeding on the residual
+
+Residual is ~2% of the candidate universe, concentrated in the 25 cover-failed
+domestic rows; nearly all other residual fails other filters and would resolve
+as exclusions. The included investable set (1,646) is sound and PIT-correct;
+the engine can be built and validated on it. **Only genuine watch item:**
+whether the 25 cover-failed rows share a characteristic that would bias a
+backtest — must be closed before any performance claim.
+
+### Resume artifacts (immutable, under `data/local-gate/`, gitignored)
+
+- listing `ead12cd7...`; discovery v13 `ac7f4063...`; cover v19 `fedb139a...`;
+  price universe `prices-lifecycle/universe-runs/edf85553...`; filing-sic-v1
+  `0e7c45ec...`; Tiingo lifecycle `private-lifecycle/supported_tickers.zip`.
+- Local gate = `universe-price-sync` + `phase-2-3-build` (paths as in
+  `CONTINUE_HERE.md` §3, updated to v13/v19 + the price/filing-sic supplements).
+- A 7-step closure plan is tracked in the working session task list.
+
+### Verification
+
+- ruff green; full suite 413 passed (per CLAUDE_HANDOFF).
+- Alpaca + EDGAR credentials are now local (`.env`, gitignored). Price sync and
+  the full phase-2-3-build were reproduced this session (identity 178 confirmed
+  in a full build; sector reduced 162 -> 51 via filing-header SIC supplement).
+- Latest functional commit `4337072` (pushed); doc commits follow.
+
+### Next
+
+Advance to Phase 2.4 (freshness/coverage kill-switch) and/or Phase 3 (hygiene &
+signals) on the current included universe, honoring the pre-claim/paper/live
+gate above. This PROGRESS entry is the surfaced BLUEPRINT-DEVIATION record.
+
+## 2026-07-23 — Phase 2.4 freshness / kill-switch gates implemented
+
+Built the Phase 2.4 freshness + coverage kill-switch (DATA_SPEC §8/§6, OPS_SPEC
+§3). Proceeded under the Phase 2.3 documented deviation above; freshness does not
+depend on universe completeness.
+
+### What was done
+
+- `usinv/freshness.py`: pure, testable gate evaluators + a `FreshnessReport`
+  aggregator and `enforce_freshness_gate` kill-switch (`FreshnessGateError`):
+  - **Fundamentals** — a scored security is stale when its next periodic report
+    is past `period_end + due_window(form, filer) + grace`; red when the stale
+    fraction exceeds 10%. Due windows: 10-Q 40/40/45d, 10-K 60/75/90d
+    (LAF/ACC/other), grace 5 XNYS sessions.
+  - **Prices** — any active-universe security whose last bar is older than 3
+    XNYS sessions is red.
+  - **Delisted-coverage audit** — a master-active symbol absent from BOTH the
+    active and delisted Alpha lists is an unexplained gap ⇒ red.
+  - **Macro** — series older than `2× cadence` are red (no macro series exist
+    until Phase 3.4; the gate is skipped when no macro inputs are supplied).
+- `usinv/config/freshness.yaml` + `FreshnessConfig` wired into `AppConfig`
+  (config-tunable thresholds; blueprint defaults are the initial values).
+- CLI `freshness-gate --inputs <json> [--as-of] [--output]`: prints the health
+  block and exits non-zero (red) on any stale gate.
+- `.github/workflows/nightly-data.yml`: runs the kill-switch test and the
+  freshness gate red-on-failure. The live nightly pipeline (EDGAR/price/macro
+  pull that produces the real inputs file) lands in later phases; the fixture
+  and pinned `--as-of` are a documented placeholder.
+- `tests/test_freshness.py`: 16 tests incl. the **stale-fixture → red
+  kill-switch demo** (the Phase 2.4 acceptance gate) and the fresh → green path.
+
+### Verification
+
+- `ruff check .` passes; the new files pass `ruff format --check`.
+- Full suite **429 passed** (was 413; +16 freshness tests, no regressions).
+- CLI verified locally: fresh fixture exit 0 (green), stale fixture exit 2 (red).
+- NOTE (pre-existing, not introduced here): ~25 already-committed files are
+  flagged by `ruff format --check` under ruff 0.15.x (format drift vs the
+  version they were committed with). Out of scope for this change; not touched.
+
+### Remaining for a full Phase 2.4 close
+
+- Artifact adapters that build the freshness inputs from the live nightly pull
+  (fundamentals filer-status/period-end from FSDS `sub`/PIT store, price last
+  bars, Alpha active/delisted lists) — arrive with the Phase 6 nightly pipeline.
+- Telegram alerting on red is Phase 7 (OPS_SPEC §3).
+
+## 2026-07-23 — Phase 2.3 association-candidate PIT corroboration
+
+Phase 2.3 D032 remains **blocked**. This change reduces one exact residual
+without weakening the gate or treating the current SEC ticker association as
+historical identity evidence.
+
+### What changed
+
+- Association-only, unique CIK candidates can now receive provenance only
+  when a PIT-bounded FSDS issuer name is an exact normalized, unique match to
+  the same CIK. A different or ambiguous name match cannot replace or support
+  the candidate.
+- `sec-name-discovery` applies this corroboration before searching still-
+  unmapped names and reports only same-CIK corroborations.
+- Price-universe batches can be metadata-rebased across a discovery snapshot
+  change when the old/new cover masters, time window, batch size and complete
+  ordered target set remain byte-for-byte equivalent. No provider request is
+  made by the rebase.
+
+### Immutable local measurement
+
+- Discovery snapshot:
+  `de9c0b38e73374c6c52be75df76babe4f11d8933dce01b201c13f275075dba44`
+- Cover snapshot:
+  `855deb9cb9424459ecc7285ccff37af583b7070e8023b4c733b7e3ce82d1ba12`
+  (master unchanged:
+  `6e0421388702786b54bb3d0ab242a351f3f2d3dd167b8b32e9b940c2dbfc46a1`)
+- Rebased price-universe snapshot:
+  `b1d4f9c410e16bf226f318c34f4eccb9eede62eb94176f9448345169613d1123`
+  (4,313 exact targets; existing immutable batches reused)
+- Universe snapshot:
+  `50bb61791948eee6a2b449874ec0490f678abc9ae12c4709a343638d953afa85`
+- Result: `identity_unmapped` **178 → 177** and
+  `superseded_sec_listing` **83 → 84**. The resolved row is stale `RWTS`,
+  corroborated to CIK 930236 and filing-proven current common ticker `RWT`.
+- The run intentionally omitted the old-cover-bound filing-SIC supplement;
+  therefore its 1,632 included / 162 sector-gap counts are diagnostic only and
+  are not a replacement D032 acceptance measurement. The 155 newly targeted
+  price series also remain unavailable locally.
+
+### Verification
+
+- `ruff check .` passed.
+- Full suite passed; **432 tests collected/passed**.
+- Look-ahead coverage remains explicit: FSDS issuer-name observations accepted
+  after the cutoff are excluded, and the new corroboration cannot alter an
+  existing candidate unless the exact unique filing-name CIK agrees.
+
+## 2026-07-27 — Phase 3.3 factor scoring completed
+
+Phase 3.3 was completed in two local commits on
+`agent/phase-2-3-universe-builder`:
+
+- `fd014d0`: value, quality and 12-1 total-return momentum metrics plus
+  cross-sectional sleeve ranks.
+- `af084e7`: nine-signal Piotroski F-score as a junk veto, declared-weight
+  composite, independent core/large-cap peer fitting, optional FF12-relative
+  fitting and within-bucket composite percentiles.
+
+### Correctness behavior
+
+- Every missing fundamental remains missing; no Piotroski input is converted
+  to zero.
+- An incomplete F-score is quarantined and a complete F-score <=4 is vetoed.
+  Both leave the fitted percentile population before ranks are calculated.
+- All three sleeve scores are required. Missing sleeves do not trigger silent
+  weight redistribution.
+- Core and large-cap candidates never share percentile fits. Sector-relative
+  mode further partitions peers by FF12 and fails closed when FF12 is missing.
+- Every output records its peer group, Piotroski component verdicts,
+  exclusion reason, sleeve scores, weighted composite and bucket percentile.
+
+### Verification and next gate
+
+- Targeted scoring/config tests: **38 passed**.
+- Ruff passes, including format verification of touched files.
+- Full suite: **501 passed**.
+- Phase 2.3 D032 is still open under the documented construction-only
+  deviation. No performance claim, experiment, paper operation or live
+  activation is permitted.
+- Exact next product task: Phase 3.4 vintage-correct regime signals and O0-O3
+  overlays; acceptance requires 2020-03, 2022 and 2023 historical-state tests
+  with future-vintage leakage protection.
+
+## 2026-07-27 — Phase 3.4 regime layer and Phase 3 construction complete
+
+Functional commit: `c331d95`.
+
+### Implemented
+
+- Canonical `VintagedObservation` with timezone-aware `available_from`,
+  as-of vintage resolution and equal-time conflict rejection.
+- Strict FRED/ALFRED parsers. Publication dates alone are insufficient: every
+  row requires an official timezone-aware publication instant. NFCI is
+  ALFRED-only and `SAHMCURRENT` is structurally forbidden.
+- Content-addressed immutable raw macro archive with SHA-256 verification and
+  API-key redaction.
+- Cboe VIX close parser, FRED HY-OAS basis-point contract and HYG/LQD
+  total-return ratio z-score fallback.
+- Exact registered overlays:
+  - O0: no overlay;
+  - O1: SPY-TR 200-session SMA, daily EOD, 2% hysteresis, risk-off to cash;
+  - O2: SPY-TR 10-month SMA, declared month-end evaluation only, 50% exposure;
+  - O3: O1 plus HY-OAS >500bp and above its 63-session average, with explicit
+    HYG/LQD fallback evidence.
+- Slow NFCI/Sahm directives and explicit regime-dependent factor-weight
+  selection. The code requires a caller-registered defensive vector whose
+  momentum weight is lower; it does not invent a hidden default.
+
+### Acceptance evidence
+
+- Compact PIT contract scenarios reproduce the registered 2020-03 risk-off,
+  2022 bear and 2023 chop states.
+- A +7-day availability perturbation removes the required trend history and
+  fails rather than reading future data.
+- Future NFCI revisions do not alter an earlier as-of result.
+- O3 fails closed when neither visible HY-OAS nor a visible HYG/LQD fallback is
+  available.
+- Targeted Phase 3.4 tests: **17 passed**.
+- Ruff and touched-file format checks pass.
+- Full suite: **518 passed**.
+
+### BLUEPRINT-DEVIATION — historical HY-OAS archive
+
+DATA_SPEC section 7 said to archive the full FRED HY-OAS history "now". By
+2026-07-27 the official FRED series states that, beginning April 2026, it
+retains only roughly three years. No earlier full-history archive or local FRED
+API key exists in this workspace. USInv therefore implements immutable
+acquisition for the history still obtainable and an explicitly labelled
+HYG/LQD total-return fallback; it does not fabricate the missing pre-window
+OAS history. Phase 5 historical acquisition must freeze the available OAS
+payload plus the registered fallback threshold before any experiment.
+
+### Remaining gates
+
+Phase 3 software construction is complete. Phase 2.3 D032 remains open under
+the construction-only deviation. No performance claim, historical experiment,
+paper operation or live activation is permitted until D032 and the frozen
+historical data gates genuinely pass.
+
+## 2026-07-28 — Phase 4.1 stateful portfolio construction
+
+Functional commit: `ccdb9e2`.
+
+### Implemented
+
+- Entry top-decile / hold top-quartile band policy with missing ranks failing
+  closed.
+- Deterministic transition order: forced exits, held-name retention, then new
+  candidates sorted by bucket percentile, composite, 21-day dollar volume,
+  ticker and security id.
+- Independent large-cap ceiling, round-half-up FF12 sector cap and fail-closed
+  pairwise-correlation checks.
+- Stable `position_id`, entry session, cost basis and high-water continuity;
+  effective split transformation preserves position value and stop basis.
+- Equal-weight 1/N entry notionals funded only from settled cash. A slot that
+  cannot be fully funded remains cash.
+- Rolling eligible-session turnover accounting using
+  `0.5 * (buys + sells) / pre_trade_NAV`; forced exits may breach the cap and
+  later discretionary replacement buys are blocked.
+- Fixed-anchor XNYS rotation wrapper; holidays shift individual rotations
+  without rebasing later anchors.
+
+### Verification
+
+- Targeted Phase 4.1 tests: **13 passed**.
+- Ruff and touched-file format checks pass.
+- Full suite: **531 passed**.
+- No performance output was produced. D032 and historical-data gates remain
+  open; Phase 4.1 is construction under the documented deviation.
+
+Exact next PR-sized task: Phase 4.2 trailing-stop and thesis-break exits.
+
+## 2026-07-28 — Phase 4 portfolio/backtest construction complete
+
+Functional commits:
+
+- `ccdb9e2`: Phase 4.1 stateful selector, continuity, settled-cash sizing and
+  turnover.
+- `f3d07f2`: Phase 4.2 point-in-time EOD exits.
+- `af929b7`: Phase 4.3 execution-faithful backtest and canonical ledger.
+- `cb9e4b3`: Phase 4.4 locked staged experiment protocol and fragility tools.
+- `1f4259d`: bind every experiment attempt and TEST authorization to the exact
+  purged split-protocol hash.
+
+### Phase 4.2 exits
+
+- Percent trailing stops use the split-transformed stored high-water mark and
+  a strict official-close threshold. Wilder ATR(14) uses only as-of
+  split-continuous OHLC bars anchored to the evaluated session.
+- Intraday, future, unavailable and unresolved-adjustment bars fail closed.
+  Future actions cannot rewrite an earlier stop decision.
+- Registered held-name hygiene hard gates produce a separately evidenced 10%
+  thesis-break sell collar for the next XNYS open.
+
+### Phase 4.3 execution and ledger
+
+- One event loop owns LOO collar orders, daily-open/auction quality, fill-time
+  costs, positions, settled and T+1 unsettled cash, corporate actions,
+  terminations and daily NAV.
+- Entry collar misses cancel to cash. Routine/thesis/OTC exits use the latest
+  official close and raise a manual-execution exception after the initial open
+  plus three failed retries; no fill is invented.
+- Same-auction sale proceeds cannot fund buys in the default cash-account
+  model. The fixed 40 bp baseline and 0/20/40/75 bp sensitivities change cash
+  inside the loop.
+- Acquisition, exchange-to-OTC, bankruptcy and unknown termination paths carry
+  evidence. Unknown primary treatment is a total loss with final-close and
+  30%-haircut sensitivities; unvalued stock consideration is quarantined.
+- Metrics include CAGR, Sharpe, Sortino, MaxDD, Ulcer, month-end rolling-12m
+  win rate, one-way turnover, geometric benchmark-relative alpha and reported
+  regression alpha. Seeded stationary-block-bootstrap 80%/95% intervals and
+  the complete steady-return constraint are implemented.
+
+### Phase 4.4 locked experiment protocol
+
+- XNYS-only static TRAIN/VALIDATION/TEST construction preserves the exact TEST
+  window `2023-01-03..2026-06-30`, purges the explicitly registered maximum
+  holding horizon at both earlier boundaries, and confines optional
+  rolling-origin diagnostics to TRAIN.
+- The packaged grid is verified as exactly 331,776 full-cross cells without
+  running it. Generators enforce Stage 1 = 29, Stage 2 <=96, Stage 3 <=60 and
+  controls <=5, with exact config-hash deduplication and interruption resume.
+- Stage 3 uses original-grid neighbors and exact Sharpe/alpha/Ulcer/MaxDD
+  plateau tolerances. Simplicity controls, actual-trial deflated Sharpe, named
+  fragility scenarios and fixed PASS/PRESUMED-OVERFIT/FAIL rules are explicit.
+- The append-only attempt ledger is hash chained. Every attempt records config
+  hash, frozen data-manifest hash, split-protocol hash, code SHA and output
+  hash.
+- TEST refuses an unregistered final config, changed TRAIN/VALIDATION seal,
+  changed data/split/code identity or bad unlock token. Authorization is
+  consumed before evaluation, so even a failed TEST attempt burns the holdout.
+
+### Acceptance evidence
+
+- Phase 4 targeted tests: **50 passed**.
+- Ruff lint and format verification pass for every Phase 4 module/test.
+- Full repository suite: **568 passed**.
+- The hand-computable three-stock ledger ends at exactly `$942.24`, including
+  two fill-time 40 bp charges, a split, dividend, one collar cancellation,
+  acquisition consideration and conservative unknown termination.
+- No historical performance experiment or TEST run was executed and no return
+  claim was produced.
+
+### BLUEPRINT-DEVIATION / unresolved pre-run input
+
+The original Stage-1 “best challenger” rule could select arbitrary stop and
+overlay challengers, while the same protocol required all four
+`O0/O1 × none/20%` interactions inside a Stage-2 factorial capped at 96. The
+pre-run 2026-07-28 amendment reserves `none` and `O1` for those two challenger
+slots; all other axes retain the original rule.
+
+The portfolio blueprint has no finite hard maximum holding period even though
+the split protocol requires the maximum configured holding horizon. The
+software therefore does not invent one: it requires an explicit horizon longer
+than the longest 13-week rotation and hashes the resulting full session
+partition. Before any Phase-5 run, a dated protocol amendment must register a
+finite hard holding-horizon rule/value or explicit boundary-liquidation
+semantics.
+
+Phase 2.3 D032 and the retention-permitted frozen historical archive remain
+open. Phase 4 is complete as software construction only; Phase 5 experiments,
+performance claims, paper-forward and live operation remain prohibited.

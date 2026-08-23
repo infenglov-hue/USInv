@@ -15,8 +15,9 @@ from typing import Final
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from usinv.data.edgar.client import EdgarClient
+from usinv.data.edgar.client import EdgarClient, EdgarPayloadError
 from usinv.data.edgar.companyfacts import CompanyFactsResult, compare_edge_to_fsds
+from usinv.data.edgar.filing_header import parse_filing_sic
 from usinv.data.edgar.filing_xbrl import (
     FILING_XBRL_VERSION,
     FilingArchiveResult,
@@ -34,7 +35,7 @@ from usinv.data.edgar.pit_store import PitInputBatch
 from usinv.data.edgar.submissions import SubmissionFiling
 from usinv.data.edgar.tag_chains import PresentationRow
 
-LIVE_EDGE_VERSION: Final = "usinv-live-edge-v1"
+LIVE_EDGE_VERSION: Final = "usinv-live-edge-v2"
 _FOUR_PLACES: Final = Decimal("0.0001")
 
 EDGE_FACTS_SCHEMA: Final = pa.schema(
@@ -97,6 +98,11 @@ class LiveEdgeSnapshot:
     presentation_rows: int
     issues: tuple[LiveEdgeIssue, ...]
     from_cache: bool
+    cik: int | None = None
+    accession: str | None = None
+    accepted: datetime | None = None
+    filing_sic: int | None = None
+    filing_sic_evidence_pointer: str | None = None
 
     def pit_input(self) -> PitInputBatch:
         path = self.output_dir / "facts_raw.parquet"
@@ -266,14 +272,101 @@ def _verify(path: Path, snapshot_id: str) -> None:
             raise ValueError(f"live-edge artifact failed verification: {name}")
 
 
+def read_live_edge_snapshot(path: str | Path) -> LiveEdgeSnapshot:
+    """Read one verified live-edge batch for composition into a PIT store."""
+
+    root = Path(path)
+    try:
+        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+        schema_version = int(manifest["schema_version"])
+        live_edge_version = str(manifest["live_edge_version"])
+        snapshot_id = str(manifest["snapshot_id"])
+        batch_id = str(manifest["batch_id"])
+        source_quarter = str(manifest["source_quarter"])
+        source_sha256 = str(manifest["source_sha256"])
+        cik = int(manifest["cik"])
+        accession = str(manifest["accession"])
+        accepted = datetime.fromisoformat(str(manifest["accepted"]))
+        if accepted.tzinfo is None:
+            raise ValueError("accepted")
+        accepted = accepted.astimezone(UTC)
+        filing_sic = int(manifest["filing_sic"]) if manifest["filing_sic"] is not None else None
+        filing_sic_pointer = manifest["filing_sic_evidence_pointer"]
+        artifacts = manifest["artifacts"]
+        issues = tuple(
+            LiveEdgeIssue(
+                str(item["kind"]),
+                str(item["tag"]) if item["tag"] is not None else None,
+                str(item["context_id"]) if item["context_id"] is not None else None,
+                str(item["detail"]),
+            )
+            for item in manifest["issues"]
+        )
+        facts_raw_rows = int(artifacts["facts_raw"]["rows"])
+        filing_fact_rows = int(artifacts["filing_facts"]["rows"])
+        presentation_rows = int(artifacts["presentation"]["rows"])
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise EdgarPayloadError("live-edge snapshot manifest is invalid") from exc
+    if (
+        root.name != snapshot_id
+        or schema_version != 1
+        or live_edge_version != LIVE_EDGE_VERSION
+        or len(snapshot_id) != 64
+        or not batch_id
+        or not source_quarter
+        or len(source_sha256) != 64
+        or cik <= 0
+        or not accession
+        or accepted.tzinfo is None
+        or (filing_sic is not None and not 100 <= filing_sic <= 9999)
+        or (
+            filing_sic is not None
+            and (not isinstance(filing_sic_pointer, str) or not filing_sic_pointer.strip())
+        )
+        or (filing_sic is None and filing_sic_pointer is not None)
+        or min(facts_raw_rows, filing_fact_rows, presentation_rows) < 0
+    ):
+        raise EdgarPayloadError("live-edge snapshot provenance is invalid")
+    try:
+        _verify(root, snapshot_id)
+    except ValueError as exc:
+        raise EdgarPayloadError("live-edge snapshot verification failed") from exc
+    return LiveEdgeSnapshot(
+        snapshot_id,
+        batch_id,
+        source_quarter,
+        source_sha256,
+        root,
+        facts_raw_rows,
+        filing_fact_rows,
+        presentation_rows,
+        issues,
+        True,
+        cik,
+        accession,
+        accepted,
+        filing_sic,
+        str(filing_sic_pointer) if filing_sic_pointer is not None else None,
+    )
+
+
 def materialize_live_edge(
     filing: SubmissionFiling,
     archive: FilingArchiveResult,
     parsed: FilingParseResult,
     presentation: tuple[PresentationRow, ...],
     output_root: str | Path,
+    *,
+    filing_sic: int | None = None,
+    filing_sic_evidence_pointer: str | None = None,
 ) -> LiveEdgeSnapshot:
     """Write a content-addressed filing batch consumable by the Phase 1.3 PIT store."""
+    if (
+        (filing_sic is not None and not 100 <= filing_sic <= 9999)
+        or (filing_sic is not None and not filing_sic_evidence_pointer)
+        or (filing_sic is None and filing_sic_evidence_pointer is not None)
+    ):
+        raise EdgarPayloadError("live-edge filing SIC provenance is invalid")
     source_quarter = _quarter(filing.accepted)
     source_sha256 = archive.snapshot_id
     batch_id = f"sec-live:{filing.accession}:{archive.snapshot_id[:16]}"
@@ -283,6 +376,11 @@ def materialize_live_edge(
         "batch_id": batch_id,
         "source_quarter": source_quarter,
         "source_sha256": source_sha256,
+        "cik": filing.cik,
+        "accession": filing.accession,
+        "accepted": filing.accepted.astimezone(UTC).isoformat(),
+        "filing_sic": filing_sic,
+        "filing_sic_evidence_pointer": filing_sic_evidence_pointer,
         "facts": [
             (fact.tag, fact.context_id, fact.decimals, str(fact.value), fact.text_value)
             for fact in parsed.facts
@@ -323,6 +421,11 @@ def materialize_live_edge(
             len(presentation),
             issues,
             True,
+            filing.cik,
+            filing.accession,
+            filing.accepted.astimezone(UTC),
+            filing_sic,
+            filing_sic_evidence_pointer,
         )
 
     temporary = root / f".{snapshot_id}.{uuid.uuid4().hex}.tmp"
@@ -356,6 +459,11 @@ def materialize_live_edge(
             "batch_id": batch_id,
             "source_quarter": source_quarter,
             "source_sha256": source_sha256,
+            "cik": filing.cik,
+            "accession": filing.accession,
+            "accepted": filing.accepted.astimezone(UTC).isoformat(),
+            "filing_sic": filing_sic,
+            "filing_sic_evidence_pointer": filing_sic_evidence_pointer,
             "artifacts": artifacts,
             "issues": [
                 {
@@ -386,6 +494,11 @@ def materialize_live_edge(
         len(presentation),
         issues,
         False,
+        filing.cik,
+        filing.accession,
+        filing.accepted.astimezone(UTC),
+        filing_sic,
+        filing_sic_evidence_pointer,
     )
 
 
@@ -399,13 +512,44 @@ def ingest_periodic_filing(
     refresh: bool = False,
 ) -> LiveEdgeIngestResult:
     """Archive, parse, cross-check and materialize one accepted periodic filing."""
-    archive = archive_filing(client, filing, archive_root, refresh=refresh)
-    primary_path = archive.output_dir / Path(filing.primary_document).name
-    parsed = parse_filing_xbrl(
-        primary_path.read_bytes(),
-        filing=filing,
-        source_document=primary_path.name,
+    archive = archive_filing(
+        client,
+        filing,
+        archive_root,
+        refresh=refresh,
+        include_presentation=True,
+        include_filing_header=True,
     )
+    primary_name = Path(filing.primary_document).name
+    candidate_names = (
+        primary_name,
+        *(
+            item.name
+            for item in archive.resources
+            if item.name != primary_name
+            and item.name.casefold().endswith(".xml")
+            and not item.name.casefold().endswith(("_pre.xml", "_lab.xml"))
+            and item.name.casefold() != "filingsummary.xml"
+        ),
+    )
+    parse_errors: list[str] = []
+    parsed: FilingParseResult | None = None
+    for candidate_name in candidate_names:
+        try:
+            candidate = parse_filing_xbrl(
+                (archive.output_dir / candidate_name).read_bytes(),
+                filing=filing,
+                source_document=candidate_name,
+            )
+        except EdgarPayloadError as exc:
+            parse_errors.append(f"{candidate_name}: {exc}")
+            continue
+        if candidate.facts:
+            parsed = candidate
+            break
+    if parsed is None:
+        detail = "; ".join(parse_errors) if parse_errors else "no facts in archived documents"
+        raise EdgarPayloadError(f"live-edge filing has no usable XBRL facts: {detail}")
     resource_names = {item.name for item in archive.resources}
     presentation_name = next(
         (name for name in sorted(resource_names) if name.casefold().endswith("_pre.xml")),
@@ -424,7 +568,31 @@ def ingest_periodic_filing(
         if presentation_name
         else ()
     )
-    snapshot = materialize_live_edge(filing, archive, parsed, presentation, output_root)
+    complete_submission_name = f"{filing.accession}.txt".casefold()
+    header_resource = next(
+        (item for item in archive.resources if item.name.casefold() == complete_submission_name),
+        None,
+    )
+    filing_sic = (
+        parse_filing_sic((archive.output_dir / header_resource.name).read_bytes())
+        if header_resource is not None
+        else None
+    )
+    filing_sic_pointer = (
+        f"{header_resource.url}#standard-industrial-classification"
+        f";sha256={header_resource.content_sha256}"
+        if filing_sic is not None and header_resource is not None
+        else None
+    )
+    snapshot = materialize_live_edge(
+        filing,
+        archive,
+        parsed,
+        presentation,
+        output_root,
+        filing_sic=filing_sic,
+        filing_sic_evidence_pointer=filing_sic_pointer,
+    )
 
     edge = filing_facts_to_raw(parsed)
     crosscheck = tuple(item for item in companyfacts.facts if item.adsh == filing.accession)

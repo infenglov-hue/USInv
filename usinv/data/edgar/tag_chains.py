@@ -18,7 +18,7 @@ import pyarrow.parquet as pq
 
 from usinv.data.edgar.client import EdgarError
 
-CHAIN_VERSION: Final = "usinv-sec-concepts-v1"
+CHAIN_VERSION: Final = "usinv-sec-concepts-v4"
 STRICT_COVERAGE_MEASUREMENT: Final = "strict_observed_presence"
 COVERAGE_ENFORCEMENT: Final = "phase_2_3_final_universe_applicability"
 MISSING_VALUE_POLICY: Final = "missing_is_not_zero"
@@ -72,6 +72,12 @@ CONCEPT_CHAINS: Final = (
             "SubscriptionRevenue",
             "AdvertisingRevenue",
             "PassengerRevenue",
+            "RevenuesExcludingInterestAndDividends",
+            "RevenuesNetOfInterestExpense",
+            "RegulatedOperatingRevenue",
+            "RegulatedOperatingRevenueWater",
+            "InterestAndDividendIncomeOperating",
+            "InterestIncomeOperating",
         ),
         nonnegative=True,
     ),
@@ -714,6 +720,66 @@ def standardize_pit_snapshot(
 
     raw_facts = {RawFact(*row) for row in [*known_rows, *custom_rows]}
     return standardize_facts(raw_facts, presentation=presentation)
+
+
+STRUCTURAL_IDENTITY_TAGS: Final = (
+    "CostOfGoodsAndServicesSold",
+    "CostOfGoodsSold",
+    "CostOfRevenue",
+    "CostsAndExpenses",
+    "GrossProfit",
+    "Liabilities",
+    "LiabilitiesAndStockholdersEquity",
+    "LiabilitiesCurrent",
+    "OperatingExpenses",
+    "OperatingIncomeLoss",
+    "PreferredStockSharesIssued",
+    "PreferredStockSharesOutstanding",
+    "StockholdersEquity",
+    "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
+)
+
+
+def load_structural_identity_facts(facts_path: str | Path) -> tuple[RawFact, ...]:
+    """Load only balance-sheet identity tags from a verified PIT snapshot."""
+    from usinv.data.edgar.pit_store import PIT_FACT_SCHEMA
+
+    resolved = Path(facts_path)
+    if not resolved.is_file():
+        raise StandardizationError("facts_pit artifact does not exist")
+    try:
+        schema = pq.ParquetFile(resolved).schema_arrow
+    except OSError as exc:
+        raise StandardizationError("facts_pit artifact is not readable Parquet") from exc
+    if not schema.equals(PIT_FACT_SCHEMA, check_metadata=True):
+        raise StandardizationError(
+            "structural identity facts require a verified facts_pit artifact"
+        )
+    connection = duckdb.connect(database=":memory:")
+    try:
+        connection.execute("SET TimeZone = 'UTC'")
+        connection.from_parquet(str(resolved)).create_view("pit_facts")
+        rows = connection.execute(
+            """
+            SELECT cik, tag, ddate, qtrs, uom, value, accepted, adsh, version,
+                   form, filed, filing_period
+            FROM pit_facts
+            WHERE value IS NOT NULL AND qtrs BETWEEN 0 AND 4
+              AND tag IN (SELECT UNNEST(?))
+              AND form NOT IN (SELECT UNNEST(?))
+            """,
+            [sorted(STRUCTURAL_IDENTITY_TAGS), sorted(EXCLUDED_FORMS)],
+        ).fetchall()
+    except duckdb.Error as exc:
+        raise StandardizationError("DuckDB could not read structural identity inputs") from exc
+    finally:
+        connection.close()
+    return tuple(
+        sorted(
+            (RawFact(*row) for row in rows),
+            key=lambda item: (item.cik, item.ddate, item.uom, item.tag, item.adsh),
+        )
+    )
 
 
 def eligible_ciks_from_filings(filings_paths: Iterable[str | Path]) -> frozenset[int]:

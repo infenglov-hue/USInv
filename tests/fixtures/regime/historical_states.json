@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "evidence_note": "Compact deterministic PIT contract fixture; labels historical episodes but is not a performance artifact or vendor-data substitute.",
+  "scenarios": {
+    "2020-03-risk-off": {
+      "as_of": "2020-03-23T16:00:00-04:00",
+      "spy_baseline": 100.0,
+      "spy_latest": 70.0,
+      "oas_baseline_bps": 400.0,
+      "oas_latest_bps": 900.0,
+      "expected": "risk_off"
+    },
+    "2022-bear": {
+      "as_of": "2022-06-17T16:00:00-04:00",
+      "spy_baseline": 100.0,
+      "spy_latest": 85.0,
+      "oas_baseline_bps": 350.0,
+      "oas_latest_bps": 450.0,
+      "expected": "bear"
+    },
+    "2023-chop": {
+      "as_of": "2023-03-17T16:00:00-04:00",
+      "spy_baseline": 100.0,
+      "spy_latest": 100.5,
+      "oas_baseline_bps": 350.0,
+      "oas_latest_bps": 350.0,
+      "expected": "chop"
+    }
+  }
+}

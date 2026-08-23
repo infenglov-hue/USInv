@@ -1,0 +1,266 @@
+name: Filing-backed security master bootstrap
+
+on:
+  workflow_call:
+    inputs:
+      listing_date:
+        required: false
+        type: string
+        default: "2026-07-17"
+      signal_cutoff:
+        required: false
+        type: string
+        default: "2026-07-17T16:00:00-04:00"
+      shard_size:
+        required: false
+        type: string
+        default: "250"
+      max_filings_per_cik:
+        required: false
+        type: string
+        default: "4"
+      plan_run_id:
+        required: false
+        type: string
+        default: ""
+      reconcile_run_id:
+        required: false
+        type: string
+        default: ""
+  workflow_dispatch:
+    inputs:
+      listing_date:
+        description: Alpha Vantage historical listing date
+        required: true
+        default: "2026-07-17"
+      signal_cutoff:
+        description: Point-in-time filing acceptance cutoff
+        required: true
+        default: "2026-07-17T16:00:00-04:00"
+      shard_size:
+        description: CIKs per resumable evidence shard
+        required: true
+        default: "250"
+      max_filings_per_cik:
+        description: Recent cover-capable filings archived per CIK
+        required: true
+        default: "4"
+      reconcile_run_id:
+        description: Existing complete-evidence run to reconcile without SEC refetch
+        required: false
+        default: ""
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  plan:
+    if: inputs.reconcile_run_id == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    env:
+      ALPHA_VANTAGE_API_KEY: ${{ secrets.ALPHA_VANTAGE_API_KEY }}
+      USINV_EDGAR_EMAIL: ${{ secrets.USINV_EDGAR_EMAIL }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install .
+      - name: Require private credentials
+        if: inputs.plan_run_id == ''
+        run: test -n "$ALPHA_VANTAGE_API_KEY" && test -n "$USINV_EDGAR_EMAIL"
+      - name: Materialize private listing and public discovery plan
+        if: inputs.plan_run_id == ''
+        shell: bash
+        run: |
+          python -m usinv alpha-listing-sync \
+            --as-of "${{ inputs.listing_date }}" \
+            --output-dir "${{ runner.temp }}/usinv-private-listing"
+          listing_snapshot="$(find "${{ runner.temp }}/usinv-private-listing/alpha-vantage/listing-status/${{ inputs.listing_date }}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          python -m usinv sec-filing-discovery \
+            --listing-snapshot "$listing_snapshot" \
+            --output-dir "${{ runner.temp }}/usinv-security-plan"
+      - name: Reuse immutable discovery plan
+        if: inputs.plan_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: security-discovery-plan
+          path: ${{ runner.temp }}/usinv-security-plan/security-bootstrap/discovery
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.plan_run_id }}
+      - name: Build deterministic CIK matrix
+        id: matrix
+        shell: bash
+        env:
+          SHARD_SIZE: ${{ inputs.shard_size }}
+        run: |
+          discovery_plan="$(find "${{ runner.temp }}/usinv-security-plan/security-bootstrap/discovery/${{ inputs.listing_date }}" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+          matrix="$(DISCOVERY_PLAN="$discovery_plan" python - <<'PY'
+          import json
+          import os
+          from usinv.data.edgar import read_filing_discovery_plan
+
+          plan = read_filing_discovery_plan(os.environ["DISCOVERY_PLAN"])
+          size = int(os.environ["SHARD_SIZE"])
+          if size <= 0 or not plan.ciks:
+              raise SystemExit("invalid or empty cover-evidence shard plan")
+          starts = [0, *(plan.ciks[index - 1] for index in range(size, len(plan.ciks), size))]
+          include = [
+              {"index": index, "start_after_cik": start}
+              for index, start in enumerate(starts)
+          ]
+          if len(include) > 256:
+              raise SystemExit("shard_size creates more than GitHub's 256 matrix jobs")
+          print(json.dumps({"include": include}, separators=(",", ":")))
+          PY
+          )"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+      - name: Upload compact discovery plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-discovery-plan
+          path: ${{ runner.temp }}/usinv-security-plan/security-bootstrap/discovery
+          if-no-files-found: error
+          retention-days: 7
+
+  cover-shards:
+    if: inputs.reconcile_run_id == ''
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      USINV_EDGAR_EMAIL: ${{ secrets.USINV_EDGAR_EMAIL }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install .
+      - uses: actions/download-artifact@v4
+        with:
+          name: security-discovery-plan
+          path: ${{ runner.temp }}/security-discovery-plan
+      - name: Archive and compact one exact CIK shard
+        shell: bash
+        run: |
+          discovery_plan="$(find "${{ runner.temp }}/security-discovery-plan" -name discovery.json -type f -print -quit | xargs dirname)"
+          python -m usinv sec-cover-bootstrap \
+            --discovery-plan "$discovery_plan" \
+            --as-of "${{ inputs.signal_cutoff }}" \
+            --archive-dir "${{ runner.temp }}/raw-cover-${{ matrix.index }}" \
+            --output-dir "${{ runner.temp }}/cover-shard-${{ matrix.index }}" \
+            --max-ciks "${{ inputs.shard_size }}" \
+            --start-after-cik "${{ matrix.start_after_cik }}" \
+            --max-filings-per-cik "${{ inputs.max_filings_per_cik }}" \
+            --avoid-duplicate-binary-cache \
+            --require-evidence
+      - name: Upload compact evidence shard
+        uses: actions/upload-artifact@v4
+        with:
+          name: cover-evidence-${{ matrix.index }}
+          path: ${{ runner.temp }}/cover-shard-${{ matrix.index }}/security-bootstrap/evidence-shards
+          if-no-files-found: error
+          retention-days: 7
+
+  merge:
+    if: inputs.reconcile_run_id == ''
+    needs: [plan, cover-shards]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install .
+      - uses: actions/download-artifact@v4
+        with:
+          name: security-discovery-plan
+          path: ${{ runner.temp }}/security-discovery-plan
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cover-evidence-*
+          path: ${{ runner.temp }}/cover-evidence
+      - name: Merge only the exact complete CIK partition
+        shell: bash
+        run: |
+          discovery_plan="$(find "${{ runner.temp }}/security-discovery-plan" -name discovery.json -type f -print -quit | xargs dirname)"
+          python -m usinv sec-cover-merge \
+            --discovery-plan "$discovery_plan" \
+            --evidence-root "${{ runner.temp }}/cover-evidence" \
+            --output-dir "${{ runner.temp }}/security-master-raw"
+          cover_evidence="$(find "${{ runner.temp }}/security-master-raw" -name complete-evidence.json -type f -print -quit | xargs dirname)"
+          test -n "$cover_evidence"
+          python -m usinv sec-cover-reconcile \
+            --cover-evidence "$cover_evidence" \
+            --output-dir "${{ runner.temp }}/security-master-final"
+      - name: Upload derived complete security evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: filing-backed-security-evidence
+          path: ${{ runner.temp }}/security-master-final/security-bootstrap/complete-evidence
+          if-no-files-found: error
+          retention-days: 30
+
+  reconcile:
+    if: inputs.reconcile_run_id != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install project
+        run: python -m pip install .
+      - name: Download immutable security discovery
+        uses: actions/download-artifact@v4
+        with:
+          name: security-discovery-plan
+          path: ${{ runner.temp }}/security-inputs/security-discovery-plan
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.reconcile_run_id }}
+      - name: Download immutable filing evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: filing-backed-security-evidence
+          path: ${{ runner.temp }}/security-inputs/filing-backed-security-evidence
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.reconcile_run_id }}
+      - name: Reconcile semantic equity identities
+        shell: bash
+        run: |
+          cover_evidence="$(find "${{ runner.temp }}/security-inputs/filing-backed-security-evidence" -name complete-evidence.json -type f -print -quit | xargs dirname)"
+          test -n "$cover_evidence"
+          python -m usinv sec-cover-reconcile \
+            --cover-evidence "$cover_evidence" \
+            --output-dir "${{ runner.temp }}/security-master-reconciled"
+      - name: Upload compact discovery plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-discovery-plan
+          path: ${{ runner.temp }}/security-inputs/security-discovery-plan
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload reconciled complete security evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: filing-backed-security-evidence
+          path: ${{ runner.temp }}/security-master-reconciled/security-bootstrap/complete-evidence
+          if-no-files-found: error
+          retention-days: 30

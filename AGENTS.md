@@ -5,6 +5,11 @@ current task and the spec/source-register rows that task references. Do not
 read MobileInv repos for context; everything needed is specified here (D012:
 zero coupling).
 
+When resuming the active Phase 2.3 branch, read `docs/HANDOFF.md` next for the
+current commit, run IDs, measured blockers and exact non-duplicating next step.
+For the Claude continuation requested on 2026-07-21, treat
+`docs/CLAUDE_HANDOFF.md` as the authoritative detailed handoff.
+
 ## Hard rules (non-negotiable)
 
 1. **Point-in-time above all.** Unified availability rule (identical in
