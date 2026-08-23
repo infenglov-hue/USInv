@@ -129,9 +129,7 @@ def test_only_unmapped_rows_receive_name_discovery_candidates() -> None:
     row = augmented.rows[0]
     assert row.status == "discovered"
     assert row.candidate_ciks == (123,)
-    assert row.candidate_evidence_pointers == (
-        "sec-fsds://source/accession",
-    )
+    assert row.candidate_evidence_pointers == ("sec-fsds://source/accession",)
     assert augmented.version == "usinv-sec-filing-discovery-v5"
 
 
@@ -183,9 +181,7 @@ def test_association_only_candidate_receives_exact_pit_name_provenance() -> None
     augmented = augment_discovery_plan_with_exact_name_evidence(discovery, matches)
 
     assert augmented.rows[0].candidate_ciks == (123,)
-    assert augmented.rows[0].candidate_evidence_pointers == (
-        "sec-fsds://source/accession",
-    )
+    assert augmented.rows[0].candidate_evidence_pointers == ("sec-fsds://source/accession",)
 
 
 def test_association_only_candidate_receives_unique_pit_stem_provenance() -> None:
@@ -241,9 +237,7 @@ def test_association_only_candidate_receives_unique_pit_stem_provenance() -> Non
     )
     augmented = augment_discovery_plan_with_exact_name_evidence(discovery, matches)
 
-    assert augmented.rows[0].candidate_evidence_pointers == (
-        "sec-fsds://source/accession",
-    )
+    assert augmented.rows[0].candidate_evidence_pointers == ("sec-fsds://source/accession",)
 
 
 def test_name_corroboration_cannot_replace_or_ambiguously_support_candidate() -> None:
@@ -350,9 +344,7 @@ def test_stem_discovery_adds_candidate_with_fsds_provenance() -> None:
     augmented = augment_discovery_plan_with_exact_names(discovery, matches)
 
     assert augmented.rows[0].candidate_ciks == (123,)
-    assert augmented.rows[0].candidate_evidence_pointers == (
-        "sec-fsds://source/accession",
-    )
+    assert augmented.rows[0].candidate_evidence_pointers == ("sec-fsds://source/accession",)
 
 
 def test_fsds_name_discovery_cannot_use_a_post_cutoff_filing(tmp_path) -> None:

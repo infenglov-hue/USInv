@@ -337,21 +337,25 @@ def test_missing_exchange_requires_one_allowed_listing_pair() -> None:
 
 
 def test_missing_title_requires_unique_pair_and_explicit_common_shares() -> None:
-    body = INLINE_XBRL.replace(
-        (
-            b'    <ix:nonNumeric name="dei:Security12bTitle" contextRef="class-a">'
-            b"Common Stock</ix:nonNumeric>\n"
-        ),
-        b"",
-    ).replace(
-        b"</ix:resources>",
-        b"""<xbrli:context id="entity-shares">
+    body = (
+        INLINE_XBRL.replace(
+            (
+                b'    <ix:nonNumeric name="dei:Security12bTitle" contextRef="class-a">'
+                b"Common Stock</ix:nonNumeric>\n"
+            ),
+            b"",
+        )
+        .replace(
+            b"</ix:resources>",
+            b"""<xbrli:context id="entity-shares">
           <xbrli:entity><xbrli:identifier scheme="http://www.sec.gov/CIK">0000320193</xbrli:identifier></xbrli:entity>
           <xbrli:period><xbrli:instant>2025-04-25</xbrli:instant></xbrli:period>
         </xbrli:context></ix:resources>""",
-    ).replace(
-        b'name="dei:EntityCommonStockSharesOutstanding" contextRef="class-a"',
-        b'name="dei:EntityCommonStockSharesOutstanding" contextRef="entity-shares"',
+        )
+        .replace(
+            b'name="dei:EntityCommonStockSharesOutstanding" contextRef="class-a"',
+            b'name="dei:EntityCommonStockSharesOutstanding" contextRef="entity-shares"',
+        )
     )
     result = parse_filing_xbrl(
         body,

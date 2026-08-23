@@ -144,9 +144,7 @@ def test_cover_plan_change_targets_only_changed_cik_pairs() -> None:
     stable = FilingDiscoveryRow(
         "ONE", "NASDAQ", "NASDAQ", "Stock", "listing://1", "discovered", (1,)
     )
-    added = FilingDiscoveryRow(
-        "TWO", "NYSE", "NYSE", "Stock", "listing://2", "discovered", (2,)
-    )
+    added = FilingDiscoveryRow("TWO", "NYSE", "NYSE", "Stock", "listing://2", "discovered", (2,))
 
     assert cover_plan_changed_ciks(plan((stable,)), plan((stable, added))) == (2,)
 
@@ -478,12 +476,15 @@ def test_cover_reconciliation_preserves_ordinary_share_as_common_stock() -> None
 
     assert len(master.securities) == 1
     assert master.securities[0].security_type == "common_stock"
-    assert master.resolve(
-        "ORD",
-        "NASDAQ",
-        date(2026, 6, 1),
-        required_security_type="common_stock",
-    ).status == "mapped"
+    assert (
+        master.resolve(
+            "ORD",
+            "NASDAQ",
+            date(2026, 6, 1),
+            required_security_type="common_stock",
+        ).status
+        == "mapped"
+    )
 
 
 def test_cover_reconciliation_collapses_exact_overlapping_symbol_identity() -> None:

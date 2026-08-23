@@ -657,8 +657,7 @@ def test_dedicated_test_symbol_is_evidenced_non_member(
     assert row.mapping_status == "exchange_test_listing"
     assert not snapshot.identity_mapping_gaps
     assert any(
-        "CQS_BINARY_INPUT_SPECIFICATION.pdf" in p or "ERA2016-3" in p
-        for p in row.evidence_pointers
+        "CQS_BINARY_INPUT_SPECIFICATION.pdf" in p or "ERA2016-3" in p for p in row.evidence_pointers
     )
 
 

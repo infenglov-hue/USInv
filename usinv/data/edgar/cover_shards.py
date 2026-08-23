@@ -269,9 +269,7 @@ def _replace_cover_subset(
         source.merge,
         plan_snapshot_id=plan_snapshot_id,
         requested_ciks=requested_ciks,
-        shard_snapshot_ids=tuple(
-            sorted({*source.merge.shard_snapshot_ids, shard.snapshot_id})
-        ),
+        shard_snapshot_ids=tuple(sorted({*source.merge.shard_snapshot_ids, shard.snapshot_id})),
         archives=tuple(row for row in source.merge.archives if row.cik not in targets)
         + shard.archives,
         share_observations=tuple(
@@ -290,9 +288,7 @@ def _replace_cover_subset(
             row for row in source.merge.acquisition_gaps if row.cik not in targets
         )
         + shard.acquisition_gaps,
-        bootstrap_gaps=tuple(
-            row for row in source.merge.bootstrap_gaps if row.cik not in targets
-        )
+        bootstrap_gaps=tuple(row for row in source.merge.bootstrap_gaps if row.cik not in targets)
         + shard.bootstrap_gaps,
         master=master,
     )
@@ -364,9 +360,7 @@ def reconcile_cover_evidence_merge(merged: CoverEvidenceMerge) -> CoverIdentityR
     symbols_by_security: dict[str, list[SymbolInterval]] = defaultdict(list)
     for symbol in merged.master.symbols:
         symbols_by_security[symbol.security_id].append(symbol)
-    parent = {
-        security.security_id: security.security_id for security in merged.master.securities
-    }
+    parent = {security.security_id: security.security_id for security in merged.master.securities}
 
     def find(security_id: str) -> str:
         while parent[security_id] != security_id:
@@ -381,9 +375,7 @@ def reconcile_cover_evidence_merge(merged: CoverEvidenceMerge) -> CoverIdentityR
             return
         parent[max(left_root, right_root)] = min(left_root, right_root)
 
-    securities_by_id = {
-        security.security_id: security for security in merged.master.securities
-    }
+    securities_by_id = {security.security_id: security for security in merged.master.securities}
     intervals_by_pair: dict[tuple[int, str, str], list[SymbolInterval]] = defaultdict(list)
     for symbol in merged.master.symbols:
         security = securities_by_id[symbol.security_id]
@@ -403,10 +395,7 @@ def reconcile_cover_evidence_merge(merged: CoverEvidenceMerge) -> CoverIdentityR
     for security in merged.master.securities:
         component = find(security.security_id)
         key = _semantic_equity_key(security)
-        if (
-            component_sizes[component] > 1
-            and security.security_type == "common_stock"
-        ):
+        if component_sizes[component] > 1 and security.security_type == "common_stock":
             key = f"common-stock:exact-symbol-overlap:{component}"
         elif key is None:
             untouched.append(security)

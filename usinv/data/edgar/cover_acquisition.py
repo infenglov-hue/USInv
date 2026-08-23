@@ -154,8 +154,7 @@ class CoverFormHistoryProof:
             )
             != self.terminal_form_observations
             or any(
-                row.cik != self.cik
-                or row.accepted.astimezone(UTC) > self.as_of.astimezone(UTC)
+                row.cik != self.cik or row.accepted.astimezone(UTC) > self.as_of.astimezone(UTC)
                 for row in self.terminal_form_observations
             )
         ):
@@ -660,9 +659,7 @@ def acquire_cover_evidence(
                         )
                     )
                     admitted = tuple(
-                        (cover, pair)
-                        for cover, pair in statement_admitted
-                        if pair is not None
+                        (cover, pair) for cover, pair in statement_admitted if pair is not None
                     )
                     if admitted:
                         parsed = parsed_statement

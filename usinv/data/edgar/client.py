@@ -626,13 +626,17 @@ class EdgarClient:
             or not forms
         ):
             raise EdgarConfigurationError("unsafe SEC full-text search query")
-        url = f"{EFTS_SEARCH_URL}?{urlencode({
-            'q': normalized,
-            'dateRange': 'custom',
-            'startdt': start.isoformat(),
-            'enddt': end.isoformat(),
-            'forms': ','.join(forms),
-        })}"
+        url = f"{EFTS_SEARCH_URL}?{
+            urlencode(
+                {
+                    'q': normalized,
+                    'dateRange': 'custom',
+                    'startdt': start.isoformat(),
+                    'enddt': end.isoformat(),
+                    'forms': ','.join(forms),
+                }
+            )
+        }"
         resource = self._request_resource(
             url,
             refresh=refresh,

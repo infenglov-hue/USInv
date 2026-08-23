@@ -191,9 +191,7 @@ def test_name_discovered_candidate_keeps_fsds_provenance_until_cover_match(
         (1,),
         ("sec-fsds://source/accession?cik=1#issuer-name",),
     )
-    plan = FilingDiscoveryPlan(
-        date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,)
-    )
+    plan = FilingDiscoveryPlan(date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,))
 
     result = acquire_cover_evidence(FakeClient(), plan, tmp_path, as_of=CUTOFF)
     master = build_cover_security_master(result.evidence, as_of=CUTOFF).master
@@ -216,9 +214,7 @@ def test_strong_entity_candidate_admits_sec_cover_ticker_expansion(tmp_path: Pat
         (1,),
         ("sec-fsds://source/accession?cik=1#issuer-name",),
     )
-    plan = FilingDiscoveryPlan(
-        date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,)
-    )
+    plan = FilingDiscoveryPlan(date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,))
 
     result = acquire_cover_evidence(
         FakeClient("NEW"),
@@ -252,18 +248,13 @@ def test_exact_same_filing_index_can_supply_missing_cover_listing_tags(
         (1,),
         (filing_index_pointer,),
     )
-    plan = FilingDiscoveryPlan(
-        date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,)
-    )
+    plan = FilingDiscoveryPlan(date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,))
 
     result = acquire_cover_evidence(client, plan, tmp_path, as_of=CUTOFF)
     bootstrap = build_cover_security_master(result.evidence, as_of=CUTOFF)
 
     assert not result.gaps and not bootstrap.gaps
-    assert (
-        bootstrap.master.resolve("ONE", "NASDAQ", date(2026, 6, 1)).status
-        == "mapped"
-    )
+    assert bootstrap.master.resolve("ONE", "NASDAQ", date(2026, 6, 1)).status == "mapped"
     assert filing_index_pointer in bootstrap.master.symbols[0].evidence_pointer
 
 
@@ -285,9 +276,7 @@ def test_stale_filing_index_pointer_cannot_supply_missing_cover_listing_tags(
             f"#filing-index-0000000001-25-999999-cik-1;sha256={'c' * 64};ticker=ONE",
         ),
     )
-    plan = FilingDiscoveryPlan(
-        date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,)
-    )
+    plan = FilingDiscoveryPlan(date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,))
 
     result = acquire_cover_evidence(client, plan, tmp_path, as_of=CUTOFF)
 
@@ -313,9 +302,7 @@ def test_same_filing_ticker_evidence_does_not_promote_a_preferred_class(
             f"#filing-index-{ACCESSION}-cik-1;sha256={'c' * 64};ticker=ONE",
         ),
     )
-    plan = FilingDiscoveryPlan(
-        date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,)
-    )
+    plan = FilingDiscoveryPlan(date(2026, 7, 17), "a" * 64, "b" * 64, OBSERVED, (row,))
 
     result = acquire_cover_evidence(client, plan, tmp_path, as_of=CUTOFF)
 

@@ -558,8 +558,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             for pointer, match in corroborations.items()
         )
         corroborated_stem_matches = sum(
-            match.status == "unique"
-            for match in stem_corroborations.values()
+            match.status == "unique" for match in stem_corroborations.values()
         )
         stem_unique_matches = sum(match.status == "unique" for match in stem_matches.values())
         state = "cache" if artifact.from_cache else "created"
@@ -605,9 +604,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     discovery,
                     as_of=args.as_of,
                     listing_names_by_pointer=listing_names_by_pointer,
-                    target_tickers=(
-                        frozenset(args.target_ticker) if args.target_ticker else None
-                    ),
+                    target_tickers=(frozenset(args.target_ticker) if args.target_ticker else None),
                     parallel_queries=args.parallel_queries,
                     refresh=args.refresh,
                 )

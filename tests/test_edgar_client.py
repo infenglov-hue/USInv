@@ -131,9 +131,7 @@ def test_full_text_search_is_bounded_cached_and_uses_the_efts_host(tmp_path: Pat
     )
 
     assert document.payload == payload
-    assert transport.calls[0][0].startswith(
-        "https://efts.sec.gov/LATEST/search-index?"
-    )
+    assert transport.calls[0][0].startswith("https://efts.sec.gov/LATEST/search-index?")
     assert "q=UCBI" in transport.calls[0][0]
     with pytest.raises(EdgarConfigurationError, match="unsafe"):
         client.full_text_search(

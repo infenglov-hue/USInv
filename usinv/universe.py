@@ -57,8 +57,7 @@ _CTA_TEST_SYMBOL_EVIDENCE: Final = (
     "CQS_BINARY_INPUT_SPECIFICATION.pdf#dedicated-test-symbols"
 )
 _NASDAQ_TEST_SYMBOL_EVIDENCE: Final = (
-    "https://www.nasdaqtrader.com/MicroNews.aspx?id=ERA2016-3"
-    "#reserved-test-symbols"
+    "https://www.nasdaqtrader.com/MicroNews.aspx?id=ERA2016-3#reserved-test-symbols"
 )
 FPI_FORMS: Final = frozenset({"20-F", "40-F", "6-K", "F-1"})
 PRE_REVENUE_BIOTECH_SICS: Final = frozenset({2834, 2836, 8731})
@@ -444,9 +443,7 @@ class IdentityRegimeEvidence:
     candidate_ciks_by_pointer: Mapping[str, tuple[int, ...]]
     foreign_regime_pointers: Mapping[int, tuple[str, ...]]
     no_periodic_pointers: Mapping[int, tuple[str, ...]]
-    superseded_pointers_by_listing: Mapping[str, tuple[str, ...]] = field(
-        default_factory=dict
-    )
+    superseded_pointers_by_listing: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 def build_universe_snapshot(
@@ -575,9 +572,7 @@ def build_universe_snapshot(
             if non_stock_evidence and not mapping_pass:
                 mapping_status = "non_common_listing"
             if mapping_status == "unmapped" and regime is not None:
-                listing_pointer = (
-                    f"alpha-vantage://{listing.source_sha256}/{listing.row_number}"
-                )
+                listing_pointer = f"alpha-vantage://{listing.source_sha256}/{listing.row_number}"
                 candidate_ciks = regime.candidate_ciks_by_pointer.get(listing_pointer, ())
                 if candidate_ciks and all(
                     cik in regime.foreign_regime_pointers for cik in candidate_ciks
@@ -593,9 +588,7 @@ def build_universe_snapshot(
                         pointers.update(regime.no_periodic_pointers[cik])
                 elif listing_pointer in regime.superseded_pointers_by_listing:
                     mapping_status = "superseded_sec_listing"
-                    pointers.update(
-                        regime.superseded_pointers_by_listing[listing_pointer]
-                    )
+                    pointers.update(regime.superseded_pointers_by_listing[listing_pointer])
                 elif candidate_ciks:
                     superseded = {
                         cik: tuple(
@@ -606,8 +599,7 @@ def build_universe_snapshot(
                             )
                             if symbol.valid_to is not None
                             and symbol.valid_to <= session
-                            and symbol.known_at.astimezone(UTC)
-                            <= signal_at.astimezone(UTC)
+                            and symbol.known_at.astimezone(UTC) <= signal_at.astimezone(UTC)
                             and symbol.confidence == "high"
                             and symbol.scope == "historical_interval"
                         )
@@ -858,8 +850,7 @@ def _is_explicit_non_common_listing(listing: AlphaListingRow) -> bool:
         exchange in {"NYSE", "NYSEAMERICAN", "NASDAQ"}
         and bool(NYSE_NON_COMMON_TICKER_PATTERN.search(listing.symbol))
     ) or (
-        exchange == "NASDAQ"
-        and bool(NASDAQ_NON_COMMON_FIFTH_CHARACTER.fullmatch(listing.symbol))
+        exchange == "NASDAQ" and bool(NASDAQ_NON_COMMON_FIFTH_CHARACTER.fullmatch(listing.symbol))
     )
 
 

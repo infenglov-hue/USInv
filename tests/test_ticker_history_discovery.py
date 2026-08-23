@@ -218,9 +218,7 @@ def test_unique_nontrivial_stem_corroborates_existing_candidate() -> None:
 
 
 def test_association_corroboration_requires_the_same_unique_cik() -> None:
-    document = _document(
-        [{"key": "COLLECTIVE ACQUISITION CORP (CIK 0002041047)", "doc_count": 12}]
-    )
+    document = _document([{"key": "COLLECTIVE ACQUISITION CORP (CIK 0002041047)", "doc_count": 12}])
 
     class Client:
         def full_text_search(
@@ -361,9 +359,7 @@ def test_ticker_corroboration_rejects_a_different_or_ambiguous_cik() -> None:
 
 def test_discovery_queries_listing_name_when_ticker_result_has_no_entity_match() -> None:
     ticker_document = _document_with_hits([], query="OLD")
-    name_document = _document(
-        [{"key": "OLD COMPANY INC (CIK 0000123456)", "doc_count": 12}]
-    )
+    name_document = _document([{"key": "OLD COMPANY INC (CIK 0000123456)", "doc_count": 12}])
 
     class Client:
         def __init__(self) -> None:

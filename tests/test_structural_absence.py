@@ -251,9 +251,7 @@ def test_future_facts_cannot_create_or_suppress_structural_evidence() -> None:
     evidence = derive_structural_absence_evidence(future_suppressor, (), as_of=AS_OF)
     assert len(evidence) == 1 and evidence[0].classification == "structural_zero"
 
-    future_observed = standardize_facts(
-        [_raw(3, "MinorityInterest", "7", accepted=AFTER_CUTOFF)]
-    )
+    future_observed = standardize_facts([_raw(3, "MinorityInterest", "7", accepted=AFTER_CUTOFF)])
     evidence = derive_structural_absence_evidence(
         _balance_identity_facts(3),
         future_observed,

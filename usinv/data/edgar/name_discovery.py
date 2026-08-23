@@ -131,9 +131,7 @@ def match_exact_company_name(
     return _match_indexed(normalized, index)
 
 
-def _match_indexed(
-    normalized: str, index: dict[str, dict[int, set[str]]]
-) -> ExactNameMatch:
+def _match_indexed(normalized: str, index: dict[str, dict[int, set[str]]]) -> ExactNameMatch:
     if not normalized:
         return ExactNameMatch("", "blank", (), ())
     matches = index.get(normalized, {})
@@ -213,9 +211,7 @@ def match_unmapped_listing_names(
         name = listing_names.get(row.listing_evidence_pointer)
         if name is None:
             raise EdgarPayloadError("unmapped discovery row has no active listing evidence")
-        output[row.listing_evidence_pointer] = _match_indexed(
-            normalize_company_name(name), index
-        )
+        output[row.listing_evidence_pointer] = _match_indexed(normalize_company_name(name), index)
     return output
 
 
@@ -255,9 +251,7 @@ def match_discovered_listing_names(
         name = listing_names.get(row.listing_evidence_pointer)
         if name is None:
             raise EdgarPayloadError("discovered row has no active listing evidence")
-        output[row.listing_evidence_pointer] = _match_indexed(
-            normalize_company_name(name), index
-        )
+        output[row.listing_evidence_pointer] = _match_indexed(normalize_company_name(name), index)
     return output
 
 
@@ -292,9 +286,7 @@ def match_discovered_listing_stems(
         name = listing_names.get(row.listing_evidence_pointer)
         if name is None:
             raise EdgarPayloadError("discovered row has no active listing evidence")
-        output[row.listing_evidence_pointer] = _match_indexed(
-            normalize_company_stem(name), index
-        )
+        output[row.listing_evidence_pointer] = _match_indexed(normalize_company_stem(name), index)
     return output
 
 
@@ -325,9 +317,7 @@ def match_unmapped_listing_stems(
         name = listing_names.get(row.listing_evidence_pointer)
         if name is None:
             raise EdgarPayloadError("unmapped discovery row has no active listing evidence")
-        output[row.listing_evidence_pointer] = _match_indexed(
-            normalize_company_stem(name), index
-        )
+        output[row.listing_evidence_pointer] = _match_indexed(normalize_company_stem(name), index)
     return output
 
 
@@ -345,15 +335,11 @@ def augment_discovery_plan_with_exact_name_evidence(
         and not row.candidate_evidence_pointers
     }
     if set(matches) != expected:
-        raise EdgarPayloadError(
-            "name corroborations do not cover association-only rows exactly"
-        )
+        raise EdgarPayloadError("name corroborations do not cover association-only rows exactly")
     rows = tuple(
         replace(
             row,
-            candidate_evidence_pointers=matches[
-                row.listing_evidence_pointer
-            ].evidence_pointers,
+            candidate_evidence_pointers=matches[row.listing_evidence_pointer].evidence_pointers,
         )
         if row.listing_evidence_pointer in expected
         and matches[row.listing_evidence_pointer].status == "unique"
@@ -378,11 +364,7 @@ def augment_discovery_plan_with_exact_names(
 ) -> FilingDiscoveryPlan:
     """Promote bounded name matches to discovery candidates, never identities."""
 
-    expected = {
-        row.listing_evidence_pointer
-        for row in discovery.rows
-        if row.status == "unmapped"
-    }
+    expected = {row.listing_evidence_pointer for row in discovery.rows if row.status == "unmapped"}
     if set(matches) != expected:
         raise EdgarPayloadError("name matches do not cover the plan's unmapped rows exactly")
     rows = tuple(
@@ -394,9 +376,7 @@ def augment_discovery_plan_with_exact_names(
                 else "ambiguous"
             ),
             candidate_ciks=matches[row.listing_evidence_pointer].candidate_ciks,
-            candidate_evidence_pointers=matches[
-                row.listing_evidence_pointer
-            ].evidence_pointers,
+            candidate_evidence_pointers=matches[row.listing_evidence_pointer].evidence_pointers,
         )
         if row.status == "unmapped"
         and matches[row.listing_evidence_pointer].status in {"unique", "ambiguous"}

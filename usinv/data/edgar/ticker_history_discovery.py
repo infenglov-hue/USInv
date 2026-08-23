@@ -86,9 +86,7 @@ _AUXILIARY_DISCOVERY_FORMS = (
 def _company_name_query(value: str) -> str:
     """Build a bounded, client-safe EFTS discovery query from a listing name."""
 
-    ascii_name = (
-        unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode().upper()
-    )
+    ascii_name = unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode().upper()
     cleaned = " ".join(re.sub(r"[^A-Z0-9./()\- ]+", " ", ascii_name).split())
     return cleaned[:32].rstrip()
 
@@ -159,9 +157,7 @@ def parse_entity_candidates(
             raise EdgarPayloadError("SEC full-text entity bucket is invalid") from exc
         if match is not None and count > 0:
             counts[int(match.group(1))] += count
-    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[
-        :maximum_candidates
-    ]
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:maximum_candidates]
     if not ranked:
         return ExactNameMatch("", "unmatched", (), ())
     ciks = tuple(sorted(cik for cik, _hits in ranked))
@@ -210,9 +206,7 @@ def parse_filing_index_ticker_candidates(
             if match is None:
                 continue
             listed_tickers = {
-                value.strip().upper()
-                for value in match.group(1).split(",")
-                if value.strip()
+                value.strip().upper() for value in match.group(1).split(",") if value.strip()
             }
             if wanted not in listed_tickers:
                 continue
@@ -400,11 +394,7 @@ def corroborate_historical_association_candidates(
     )
     if any(row.listing_evidence_pointer not in listing_names_by_pointer for row in all_rows):
         raise EdgarPayloadError("association corroboration lacks listing-name lineage")
-    rows = tuple(
-        row
-        for row in all_rows
-        if target_tickers is None or row.ticker in target_tickers
-    )
+    rows = tuple(row for row in all_rows if target_tickers is None or row.ticker in target_tickers)
 
     def corroborate(row) -> ExactNameMatch:
         listing_name = listing_names_by_pointer[row.listing_evidence_pointer]
@@ -430,8 +420,7 @@ def corroborate_historical_association_candidates(
     with ThreadPoolExecutor(max_workers=min(parallel_queries, max(1, len(rows)))) as executor:
         matches = tuple(executor.map(corroborate, rows))
     matched = {
-        row.listing_evidence_pointer: match
-        for row, match in zip(rows, matches, strict=True)
+        row.listing_evidence_pointer: match for row, match in zip(rows, matches, strict=True)
     }
     unmatched = ExactNameMatch("", "unmatched", (), ())
     return {
@@ -455,15 +444,9 @@ def corroborate_historical_ticker_candidates(
     if as_of.tzinfo is None or parallel_queries <= 0 or start > as_of.date():
         raise EdgarPayloadError("historical ticker corroboration bounds are invalid")
     all_rows = tuple(
-        row
-        for row in discovery.rows
-        if row.status == "discovered" and len(row.candidate_ciks) == 1
+        row for row in discovery.rows if row.status == "discovered" and len(row.candidate_ciks) == 1
     )
-    rows = tuple(
-        row
-        for row in all_rows
-        if target_tickers is None or row.ticker in target_tickers
-    )
+    rows = tuple(row for row in all_rows if target_tickers is None or row.ticker in target_tickers)
 
     def corroborate(row) -> ExactNameMatch:
         document = client.full_text_search(
@@ -491,8 +474,7 @@ def corroborate_historical_ticker_candidates(
     with ThreadPoolExecutor(max_workers=min(parallel_queries, max(1, len(rows)))) as executor:
         matches = tuple(executor.map(corroborate, rows))
     matched = {
-        row.listing_evidence_pointer: match
-        for row, match in zip(rows, matches, strict=True)
+        row.listing_evidence_pointer: match for row, match in zip(rows, matches, strict=True)
     }
     unmatched = ExactNameMatch("", "unmatched", (), ())
     return {
@@ -513,9 +495,7 @@ def augment_discovery_plan_with_ticker_evidence(
         if row.status == "discovered" and len(row.candidate_ciks) == 1
     }
     if set(matches) != expected:
-        raise EdgarPayloadError(
-            "ticker corroborations do not cover unique discovered rows exactly"
-        )
+        raise EdgarPayloadError("ticker corroborations do not cover unique discovered rows exactly")
     rows = tuple(
         replace(
             row,
@@ -561,11 +541,7 @@ def discover_historical_ticker_candidates(
     if as_of.tzinfo is None or parallel_queries <= 0 or start > as_of.date():
         raise EdgarPayloadError("historical ticker discovery bounds are invalid")
     all_rows = tuple(row for row in discovery.rows if row.status == "unmapped")
-    rows = tuple(
-        row
-        for row in all_rows
-        if target_tickers is None or row.ticker in target_tickers
-    )
+    rows = tuple(row for row in all_rows if target_tickers is None or row.ticker in target_tickers)
 
     def discover(row) -> ExactNameMatch:
         document = client.full_text_search(
@@ -599,9 +575,7 @@ def discover_historical_ticker_candidates(
                 named = parse_exact_entity_name_candidate(name_document, listing_name)
                 if named.status not in {"blank", "unmatched"}:
                     return named
-                stemmed = parse_unique_entity_stem_candidates(
-                    name_document, listing_name
-                )
+                stemmed = parse_unique_entity_stem_candidates(name_document, listing_name)
             else:
                 stemmed = parse_unique_entity_stem_candidates(document, listing_name)
         else:
@@ -650,8 +624,7 @@ def discover_historical_ticker_candidates(
     with ThreadPoolExecutor(max_workers=min(parallel_queries, max(1, len(rows)))) as executor:
         matches = tuple(executor.map(discover, rows))
     matched = {
-        row.listing_evidence_pointer: match
-        for row, match in zip(rows, matches, strict=True)
+        row.listing_evidence_pointer: match for row, match in zip(rows, matches, strict=True)
     }
     unmatched = ExactNameMatch("", "unmatched", (), ())
     return {
