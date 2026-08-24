@@ -206,9 +206,9 @@ def test_shared_spacing_enforces_configured_rate(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     ("status", "headers", "expected_delay"),
-    [(403, {}, 3.0), (429, {"retry-after": "2"}, 2.0)],
+    [(403, {}, 3.0)],
 )
-def test_403_and_429_back_off_then_retry(
+def test_403_back_off_then_retry(
     tmp_path: Path,
     status: int,
     headers: Mapping[str, str],
@@ -237,6 +237,36 @@ def test_403_and_429_back_off_then_retry(
 
     assert client.submissions(320193).payload["name"] == "Apple Inc."
     assert sleeps == [expected_delay]
+    assert len(transport.calls) == 2
+
+
+def test_429_penalty_window_waits_out_and_recovers(tmp_path: Path) -> None:
+    """A final-attempt 429 must NOT abort the caller: the client waits out the
+    penalty window (>= 10 min or Retry-After if longer), resets its attempt
+    budget and recovers — a multi-day archive shard outlives rate limits."""
+    clock = [0.0]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    transport = FakeTransport(
+        HttpResponse(status=429, headers={"retry-after": "2"}, body=b"busy"),
+        _response(SUBMISSIONS),
+    )
+    client = EdgarClient(
+        contact_email="ops@usinv.dev",
+        cache_dir=tmp_path,
+        transport=transport,
+        max_attempts=2,
+        backoff_base_seconds=3,
+        monotonic=lambda: clock[0],
+        sleep=sleep,
+    )
+
+    assert client.submissions(320193).payload["name"] == "Apple Inc."
+    assert sleeps == [600.0]
     assert len(transport.calls) == 2
 
 
