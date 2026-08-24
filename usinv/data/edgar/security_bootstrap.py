@@ -662,7 +662,15 @@ def _collapse_symbol_observations(
                 output.extend((*active, item))
                 active.clear()
                 continue
-            output.extend(replace(row, valid_to=item.valid_from) for row in active)
+            # A successor ticker starting on the SAME day would create a zero-length
+            # interval (valid_to <= valid_from) for the incumbent. Drop such rows
+            # instead of emitting them: the later observation supersedes them.
+            output.extend(
+                replaced
+                for row in active
+                if (replaced := replace(row, valid_to=item.valid_from)).valid_to
+                > replaced.valid_from
+            )
             active = [item]
         output.extend(active)
     return tuple(output)
