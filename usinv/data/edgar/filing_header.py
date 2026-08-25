@@ -28,12 +28,14 @@ class FilingHeaderMetadata:
 def parse_filing_sic(body: bytes) -> int | None:
     """Return one unambiguous filing-header SIC, or ``None`` when absent."""
 
-    values = {int(value) for value in _SIC.findall(body)}
-    if len(values) > 1:
-        raise EdgarPayloadError("complete submission contains conflicting SIC headers")
-    if not values:
+    matches = [int(value) for value in _SIC.findall(body)]
+    if not matches:
         return None
-    sic = values.pop()
+    # Multi-registrant submissions repeat the SIC line once per co-registrant and
+    # occasionally carry stale legacy lines; the FIRST match is the filer's own
+    # COMPANY DATA section, which always precedes any other registrant block.
+    # Conflicting later values must not fail the whole snapshot acquisition.
+    sic = matches[0]
     if not 100 <= sic <= 9999:
         raise EdgarPayloadError("complete submission SIC is outside the valid range")
     return sic
