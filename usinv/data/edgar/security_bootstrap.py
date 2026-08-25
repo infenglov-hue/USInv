@@ -254,6 +254,23 @@ class FilingDiscoveryPlan:
         )
 
     @property
+    def bootstrap_ciks(self) -> tuple[int, ...]:
+        """Every CIK cover acquisition may target: candidates of discovered AND
+        ambiguous rows. Must match _target_pairs' universe exactly — merge
+        validates shard coverage against this set (plan.ciks alone omits the
+        ambiguous-row candidates that bootstrap legitimately requests)."""
+        return tuple(
+            sorted(
+                {
+                    cik
+                    for row in self.rows
+                    if row.status in {"discovered", "ambiguous"} and row.candidate_ciks
+                    for cik in row.candidate_ciks
+                }
+            )
+        )
+
+    @property
     def identity_gaps(self) -> tuple[FilingDiscoveryRow, ...]:
         return tuple(row for row in self.rows if row.status in {"unmapped", "ambiguous"})
 

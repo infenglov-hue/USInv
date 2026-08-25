@@ -376,7 +376,7 @@ def test_sec_cover_merge_requires_exact_shards_before_publishing(
 ) -> None:
     import usinv.cli as cli_module
 
-    plan = SimpleNamespace(snapshot_id="a" * 64, ciks=(1, 2))
+    plan = SimpleNamespace(snapshot_id="a" * 64, ciks=(1, 2), bootstrap_ciks=(1, 2))
     shard_dir = tmp_path / "download" / "shard-one"
     shard_dir.mkdir(parents=True)
     shard_dir.joinpath("shard.json").write_text("{}", encoding="utf-8")

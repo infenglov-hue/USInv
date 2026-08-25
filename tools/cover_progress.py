@@ -4,7 +4,7 @@ import glob, json, os, sys
 
 PLAN = '/home/kerem/USInv/transfer/data/local-gate/name-plan-v44-name-discovery/security-bootstrap/discovery/2026-07-17/01158dd986c4868631baabd1987f8a070fdaa9da805f784b8db1b42a4f6a2a46/discovery.json'
 ARCHIVE = '/home/kerem/USInv/data/local-gate/cover-v44-rebuild/sec/filing-security/accessions'
-SHARDS = [f'/home/kerem/USInv/data/local-gate/cover-v44-rebuild-shard{i}/sec/filing-security/accessions' for i in range(2,7)]
+SHARDS = ['/home/kerem/USInv/data/local-gate/cover-v44-rebuild-shard1-early/sec/filing-security/accessions'] + [f'/home/kerem/USInv/data/local-gate/cover-v44-rebuild-shard{i}/sec/filing-security/accessions' for i in range(2,7)]
 
 d = json.load(open(PLAN))
 plan_ciks = sorted({c for r in d['rows'] for c in (r.get('candidate_ciks') or [])})
