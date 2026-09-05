@@ -1,5 +1,7 @@
 /data/
 /artifacts/
+/transfer/
+/workspace/
 .env
 .env.*
 !.env.example
