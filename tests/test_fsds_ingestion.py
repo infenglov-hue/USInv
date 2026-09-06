@@ -360,9 +360,7 @@ def test_num_rows_without_submission_are_quarantined_not_fatal(tmp_path: Path) -
     assert not tuple(output.glob("2026q2/*")) or True  # published batch may exist
     import json as _json
 
-    manifest = _json.loads(
-        (result.output_dir / "ingest_manifest.json").read_text(encoding="utf-8")
-    )
+    manifest = _json.loads((result.output_dir / "ingest_manifest.json").read_text(encoding="utf-8"))
     assert manifest["fact_rows_without_submission_quarantined"] >= 1
 
 

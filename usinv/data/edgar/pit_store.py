@@ -497,6 +497,7 @@ class PitStoreBuilder:
             self._write_conflicts(connection, root / "facts_conflicts.parquet")
         except duckdb.Error as exc:
             import sys as _sys
+
             print(f"pit_materialize_failed: {type(exc).__name__}: {exc}", file=_sys.stderr)
             raise PitStoreError("DuckDB could not materialize PIT fact views") from exc
         finally:

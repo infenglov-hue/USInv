@@ -490,9 +490,7 @@ class EdgarClient:
         rate_limit_rounds = 0
         attempt = 0
         while True:
-            if (
-                response_was_rate_limited := last_status == 429
-            ) and rate_limit_rounds >= 24:
+            if (response_was_rate_limited := last_status == 429) and rate_limit_rounds >= 24:
                 # Give up only after ~24 penalty windows (>= 4 hours of waits):
                 # a multi-day archive run must not die to a temporary 429.
                 break

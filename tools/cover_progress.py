@@ -5,6 +5,7 @@ Reads from ALL shard directories, including the legacy cover-v44-rebuild/sec/...
 path used by shards 1-6 and the direct cover-v44-rebuild-shard7/accessions/ path written
 by the post-Aug-25 worker script.
 """
+
 from __future__ import annotations
 
 import glob
@@ -17,9 +18,7 @@ PLAN = (
     "01158dd986c4868631baabd1987f8a070fdaa9da805f784b8db1b42a4f6a2a46/discovery.json"
 )
 
-OLD_ARCHIVE = (
-    "/home/kerem/USInv/data/local-gate/cover-v44-rebuild/sec/filing-security/accessions"
-)
+OLD_ARCHIVE = "/home/kerem/USInv/data/local-gate/cover-v44-rebuild/sec/filing-security/accessions"
 OLD_SHARDS = [
     "/home/kerem/USInv/data/local-gate/cover-v44-rebuild-shard1-early/sec/filing-security/accessions"
 ] + [
