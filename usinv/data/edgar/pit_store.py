@@ -24,7 +24,7 @@ from usinv.data.edgar.client import EdgarConfigurationError, EdgarError
 from usinv.data.edgar.fsds import FACTS_RAW_SCHEMA, FsdsIngestResult
 
 PIT_STORE_SCHEMA_VERSION: Final = 2
-PIT_STORE_BUILDER_VERSION: Final = "usinv-pit-store-v2"
+PIT_STORE_BUILDER_VERSION: Final = "usinv-pit-store-v3"
 SUPPORTED_DUCKDB_VERSION: Final = "1.5.4"
 PIT_KEY: Final = ("cik", "tag", "ddate", "qtrs", "uom")
 _HASH_PATTERN: Final = "0123456789abcdef"
@@ -429,7 +429,26 @@ class PitStoreBuilder:
                 CREATE TEMP VIEW candidates AS
                 SELECT {_FACT_COLUMNS_SQL}
                 FROM raw_facts
-                WHERE is_consolidated IS TRUE AND coreg IS NULL AND segments IS NULL
+                WHERE (is_consolidated IS TRUE AND coreg IS NULL AND segments IS NULL)
+                   OR (
+                       coreg IS NULL
+                       AND segments IN (
+                           'FreshStartAdjustmentsTypeOfFreshStartAdjustment=Successor;',
+                           'BusinessSegments=HomebuildingSegment;ConsolidationItems=OperatingSegments;SubsegmentsConsolidationItems=ReportableSubsegments;',
+                           'ConsolidationItems=OperatingSegments;'
+                       )
+                       AND NOT EXISTS (
+                           SELECT 1
+                           FROM raw_facts rf
+                           WHERE rf.cik = raw_facts.cik
+                             AND rf.tag = raw_facts.tag
+                             AND rf.ddate = raw_facts.ddate
+                             AND rf.qtrs = raw_facts.qtrs
+                             AND rf.uom = raw_facts.uom
+                             AND rf.coreg IS NULL
+                             AND rf.segments IS NULL
+                       )
+                   )
                 """
             )
             self._assert_candidates(connection)

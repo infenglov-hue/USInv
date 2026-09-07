@@ -199,6 +199,17 @@ _BALANCE_TOTAL_TAG: Final = "LiabilitiesAndStockholdersEquity"
 _OPERATING_INCOME_TAG: Final = "OperatingIncomeLoss"
 _TOTAL_EXPENSE_TAG: Final = "CostsAndExpenses"
 _OPERATING_EXPENSE_TAG: Final = "OperatingExpenses"
+_SINGLE_STEP_EXPENSE_TAGS: Final = (
+    "CostsAndExpenses",
+    "OperatingCostsAndExpenses",
+    "OperatingExpenses",
+    "GeneralAndAdministrativeExpense",
+)
+_EXPLORATION_EXPENSE_TAGS: Final = (
+    "ExplorationCosts",
+    "ExplorationExpense",
+    "MineralRightsAndPropertiesExplorationExpense",
+)
 _COST_OF_REVENUE_TAGS: Final = (
     "CostOfRevenue",
     "CostOfGoodsAndServicesSold",
@@ -341,25 +352,18 @@ def derive_structural_absence_evidence(
     revenue_zero: dict[int, list[ApplicabilityEvidence]] = defaultdict(list)
     for (cik, _, _, _), by_tag in sorted(duration.items()):
         operating_income = by_tag.get(_OPERATING_INCOME_TAG)
-        if operating_income is None:
-            continue
-        # CostsAndExpenses is the total operating deduction from revenue, so
-        # OperatingIncomeLoss + CostsAndExpenses == 0 implies zero revenue.
-        # OperatingExpenses excludes cost of revenue, so it only proves zero
-        # revenue on a single-step statement: if any cost-of-revenue or gross-
-        # profit line is present, OperatingIncomeLoss == -OperatingExpenses only
-        # forces gross profit to zero (revenue == COGS), not revenue to zero.
-        expenses = by_tag.get(_TOTAL_EXPENSE_TAG)
-        if expenses is None:
-            single_step = not any(tag in by_tag for tag in _COST_OF_REVENUE_TAGS) and (
-                _GROSS_PROFIT_TAG not in by_tag
-            )
-            if single_step:
-                expenses = by_tag.get(_OPERATING_EXPENSE_TAG)
+        net_income = by_tag.get("NetIncomeLoss") or by_tag.get("ProfitLoss")
+
+        # CostsAndExpenses / OperatingCostsAndExpenses is the total operating deduction from
+        # revenue, so OperatingIncomeLoss + CostsAndExpenses == 0 implies zero revenue even when
+        # cost of revenue is broken out.
+        total_exp = by_tag.get("CostsAndExpenses") or by_tag.get("OperatingCostsAndExpenses")
+        proved = False
         if (
-            expenses is not None
-            and expenses.value > 0
-            and operating_income.value + expenses.value == 0
+            operating_income is not None
+            and total_exp is not None
+            and total_exp.value > 0
+            and operating_income.value + total_exp.value == 0
         ):
             revenue_zero[cik].append(
                 _identity_evidence(
@@ -368,9 +372,113 @@ def derive_structural_absence_evidence(
                     "structural_zero",
                     "accounting_identity",
                     Decimal(0),
-                    (operating_income, expenses),
+                    (operating_income, total_exp),
                 )
             )
+            proved = True
+
+        single_step = not any(tag in by_tag for tag in _COST_OF_REVENUE_TAGS) and (
+            _GROSS_PROFIT_TAG not in by_tag
+        )
+        if not proved and single_step:
+            single_exp = next(
+                (by_tag[tag] for tag in _SINGLE_STEP_EXPENSE_TAGS if tag in by_tag),
+                None,
+            )
+            if (
+                operating_income is not None
+                and single_exp is not None
+                and single_exp.value > 0
+                and operating_income.value + single_exp.value == 0
+            ):
+                revenue_zero[cik].append(
+                    _identity_evidence(
+                        cik,
+                        "revenue",
+                        "structural_zero",
+                        "accounting_identity",
+                        Decimal(0),
+                        (operating_income, single_exp),
+                    )
+                )
+                proved = True
+
+            if not proved and operating_income is not None:
+                ga = by_tag.get("GeneralAndAdministrativeExpense")
+                if ga is not None:
+                    expl = next(
+                        (by_tag[tag] for tag in _EXPLORATION_EXPENSE_TAGS if tag in by_tag),
+                        None,
+                    )
+                    rd = by_tag.get("ResearchAndDevelopmentExpense")
+                    sga = by_tag.get("SellingGeneralAndAdministrativeExpense")
+                    comps = tuple(fact for fact in (ga, expl, rd, sga) if fact is not None)
+                    total_comps = sum((fact.value for fact in comps), Decimal(0))
+                    if total_comps > 0 and operating_income.value + total_comps == 0:
+                        revenue_zero[cik].append(
+                            _identity_evidence(
+                                cik,
+                                "revenue",
+                                "structural_zero",
+                                "accounting_identity",
+                                Decimal(0),
+                                (operating_income, *comps),
+                            )
+                        )
+                        proved = True
+
+            if (
+                not proved
+                and net_income is not None
+                and single_exp is not None
+                and single_exp.value > 0
+            ):
+                nonop = (
+                    by_tag.get("NonoperatingIncomeExpense")
+                    or by_tag.get("OtherNonoperatingIncomeExpense")
+                    or by_tag.get("OtherIncome")
+                )
+                nonop_val = nonop.value if nonop is not None else Decimal(0)
+                if net_income.value - nonop_val + single_exp.value == 0:
+                    sources = (
+                        (net_income, single_exp)
+                        if nonop is None
+                        else (net_income, nonop, single_exp)
+                    )
+                    revenue_zero[cik].append(
+                        _identity_evidence(
+                            cik,
+                            "revenue",
+                            "structural_zero",
+                            "accounting_identity",
+                            Decimal(0),
+                            sources,
+                        )
+                    )
+                    proved = True
+
+            if (
+                not proved
+                and operating_income is not None
+                and single_exp is not None
+                and single_exp.value > 0
+            ):
+                eq_inc = by_tag.get("IncomeLossFromEquityMethodInvestments")
+                if (
+                    eq_inc is not None
+                    and operating_income.value - eq_inc.value + single_exp.value == 0
+                ):
+                    revenue_zero[cik].append(
+                        _identity_evidence(
+                            cik,
+                            "revenue",
+                            "structural_zero",
+                            "accounting_identity",
+                            Decimal(0),
+                            (operating_income, eq_inc, single_exp),
+                        )
+                    )
+                    proved = True
 
     output: list[ApplicabilityEvidence] = []
     for cik in sorted(set(minority_observed) | set(minority_zero)):

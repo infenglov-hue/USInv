@@ -18,7 +18,7 @@ import pyarrow.parquet as pq
 
 from usinv.data.edgar.client import EdgarError
 
-CHAIN_VERSION: Final = "usinv-sec-concepts-v4"
+CHAIN_VERSION: Final = "usinv-sec-concepts-v5"
 STRICT_COVERAGE_MEASUREMENT: Final = "strict_observed_presence"
 COVERAGE_ENFORCEMENT: Final = "phase_2_3_final_universe_applicability"
 MISSING_VALUE_POLICY: Final = "missing_is_not_zero"
@@ -78,6 +78,13 @@ CONCEPT_CHAINS: Final = (
             "RegulatedOperatingRevenueWater",
             "InterestAndDividendIncomeOperating",
             "InterestIncomeOperating",
+            "RevenueNetIncludingGainLossOnDispositionOfAssets",
+            "RevenuesAndOther",
+            "OilAndGasRevenue",
+            "HomebuildingRevenue",
+            "RealEstateRevenue",
+            "InterestEarnedOnMarketableSecuritiesHeldInTrustAccount",
+            "OtherOperatingIncome",
         ),
         nonnegative=True,
     ),
@@ -91,6 +98,8 @@ CONCEPT_CHAINS: Final = (
             "ProfitLoss",
             "NetIncomeLossAvailableToCommonStockholdersBasic",
             "IncomeLossAttributableToParent",
+            "IncomeLossFromContinuingOperationsIncludingPortionAttributableToNoncontrollingInterest",
+            "IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest",
         ),
     ),
     ConceptChain("gross_profit", "core", "duration", "monetary", ("GrossProfit",)),
@@ -727,14 +736,30 @@ STRUCTURAL_IDENTITY_TAGS: Final = (
     "CostOfGoodsSold",
     "CostOfRevenue",
     "CostsAndExpenses",
+    "DeferredOfferingCostsIncludedInAccruedOfferingCosts",
+    "ExplorationCosts",
+    "ExplorationExpense",
+    "FormationCostsPaidBySponsorInExchangeForIssuanceOfClassBOrdinaryShares",
+    "GeneralAndAdministrativeExpense",
     "GrossProfit",
+    "IncomeLossFromEquityMethodInvestments",
     "Liabilities",
     "LiabilitiesAndStockholdersEquity",
     "LiabilitiesCurrent",
+    "MineralRightsAndPropertiesExplorationExpense",
+    "NetIncomeLoss",
+    "NonoperatingIncomeExpense",
+    "OperatingCostsAndExpenses",
     "OperatingExpenses",
     "OperatingIncomeLoss",
+    "OtherIncome",
+    "OtherNonoperatingIncomeExpense",
+    "PaymentOfOperationCostsThroughPromissoryNote",
     "PreferredStockSharesIssued",
     "PreferredStockSharesOutstanding",
+    "ProfitLoss",
+    "ResearchAndDevelopmentExpense",
+    "SellingGeneralAndAdministrativeExpense",
     "StockholdersEquity",
     "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
 )

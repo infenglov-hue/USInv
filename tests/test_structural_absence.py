@@ -381,6 +381,50 @@ def test_total_costs_and_expenses_prove_zero_revenue_even_with_cogs() -> None:
     assert evidence[0].classification == "structural_zero"
 
 
+def test_single_step_expanded_zero_revenue_identities_and_leakage() -> None:
+    # 1. OperatingIncomeLoss + GeneralAndAdministrativeExpense == 0
+    ga_facts = [
+        _raw(1, "OperatingIncomeLoss", "-100", qtrs=1),
+        _raw(1, "GeneralAndAdministrativeExpense", "100", qtrs=1),
+    ]
+    ev = derive_structural_absence_evidence(ga_facts, (), as_of=AS_OF)
+    assert len(ev) == 1 and ev[0].concept == "revenue" and ev[0].classification == "structural_zero"
+
+    # Leakage test: future-accepted GA fact does not leak
+    future_ga_facts = [
+        _raw(1, "OperatingIncomeLoss", "-100", qtrs=1),
+        _raw(1, "GeneralAndAdministrativeExpense", "100", qtrs=1, accepted=AFTER_CUTOFF),
+    ]
+    assert derive_structural_absence_evidence(future_ga_facts, (), as_of=AS_OF) == ()
+
+    # 2. OperatingIncomeLoss + GA + Exploration == 0
+    expl_facts = [
+        _raw(2, "OperatingIncomeLoss", "-150", qtrs=1),
+        _raw(2, "GeneralAndAdministrativeExpense", "100", qtrs=1),
+        _raw(2, "ExplorationCosts", "50", qtrs=1),
+    ]
+    ev = derive_structural_absence_evidence(expl_facts, (), as_of=AS_OF)
+    assert len(ev) == 1 and ev[0].concept == "revenue" and ev[0].classification == "structural_zero"
+
+    # 3. NetIncomeLoss - NonoperatingIncome + OperatingExpenses == 0
+    net_facts = [
+        _raw(3, "NetIncomeLoss", "-80", qtrs=1),
+        _raw(3, "OperatingExpenses", "100", qtrs=1),
+        _raw(3, "NonoperatingIncomeExpense", "20", qtrs=1),
+    ]
+    ev = derive_structural_absence_evidence(net_facts, (), as_of=AS_OF)
+    assert len(ev) == 1 and ev[0].concept == "revenue" and ev[0].classification == "structural_zero"
+
+    # 4. OperatingIncomeLoss - EquityMethod + CostsAndExpenses == 0
+    eq_facts = [
+        _raw(4, "OperatingIncomeLoss", "-70", qtrs=1),
+        _raw(4, "CostsAndExpenses", "100", qtrs=1),
+        _raw(4, "IncomeLossFromEquityMethodInvestments", "30", qtrs=1),
+    ]
+    ev = derive_structural_absence_evidence(eq_facts, (), as_of=AS_OF)
+    assert len(ev) == 1 and ev[0].concept == "revenue" and ev[0].classification == "structural_zero"
+
+
 def test_cover_share_observations_become_direct_share_facts() -> None:
     on_time = CoverShareObservation(
         security_id="sec-1",

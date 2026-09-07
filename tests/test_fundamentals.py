@@ -98,7 +98,7 @@ def _standard(
 def test_full_versioned_concept_catalog_is_present() -> None:
     concepts = {chain.concept for chain in CONCEPT_CHAINS}
 
-    assert CHAIN_VERSION == "usinv-sec-concepts-v4"
+    assert CHAIN_VERSION == "usinv-sec-concepts-v5"
     assert len(CONCEPT_CHAINS) == 19
     assert sum(chain.tier == "core" for chain in CONCEPT_CHAINS) == 14
     assert sum(chain.tier == "secondary" for chain in CONCEPT_CHAINS) == 5
@@ -383,7 +383,7 @@ def test_coverage_report_uses_full_issuer_concept_denominator() -> None:
     assert report.secondary_rate == 0
     assert not report.passed
     payload = json.loads(report.to_json())
-    assert payload["chain_version"] == "usinv-sec-concepts-v4"
+    assert payload["chain_version"] == "usinv-sec-concepts-v5"
     assert payload["measurement"] == "strict_observed_presence"
     assert payload["enforcement"] == "phase_2_3_final_universe_applicability"
     assert payload["missing_value_policy"] == "missing_is_not_zero"

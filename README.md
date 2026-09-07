@@ -234,3 +234,37 @@ protocol, with a 40bp/side baseline cost inside the objective, then proven in a
 minimum 12-month paper-forward window before any capital discussion. A
 versioned PWA snapshot is produced by the same canonical ledger used by
 backtest, paper and live operation.
+
+## Post-Mortem & Incident Register
+
+### Issue 1: Mandatory Missing Fundamental Coverage (13 Missing CIKs -> 0)
+- **Problem**: 13 active universe filers failed the Phase 2.3 gate due to missing mandatory fundamental inputs (`revenue`, `net_income`) at the 2026-07-17 cutoff.
+- **Root Cause**:
+  1. *Missing SEC concept tags*: filers used specialized industry revenue tags (e.g. `RevenueFromContractWithCustomerIncludingAssessedTax`, `HomebuildingRevenue`, `RealEstateRevenue`, `OilAndGasRevenue`, trust account interest) not present in earlier concept chains.
+  2. *Segment reporting exclusions*: filers (such as Meritage Homes CIK 833079 and Proficient Auto Logistics CIK 1998768) reported revenues only under reportable operating segments (`ConsolidationItems=OperatingSegments;` or `BusinessSegments=HomebuildingSegment;`) or fresh-start successor adjustments without direct unsegmented facts.
+  3. *Uncaptured single-step zero-revenue identities*: pre-commercial / biotech filers reported zero revenue implicitly via single-step expense structures (`OperatingIncomeLoss + SingleStepExpense == 0`, component expense sum `GA + Exploration + RD + SGA`, or non-operating income equalities).
+- **Solution**:
+  - Expanded concept catalog to version `usinv-sec-concepts-v5` in `usinv/data/edgar/tag_chains.py`.
+  - Updated PIT store builder (`usinv-pit-store-v3` in `usinv/data/edgar/pit_store.py`) to admit reportable operating segment and successor facts as fallback candidates when unsegmented facts are absent.
+  - Implemented complete, multi-component zero-revenue accounting identities in `usinv/data/edgar/applicability.py` with zero look-ahead leakage tests (`tests/test_structural_absence.py`).
+  - Built verified immutable PIT snapshot `fe3bf224c0f18045374b6d00444b0837b36562255aca40a485190b715fd36d2b`, bringing mandatory missing facts across all 13 CIKs to 0.
+
+### Issue 2: Sector Classification Gaps (288 Gaps -> 0)
+- **Problem**: 288 candidate CIKs lacked SIC / Fama-French 49 classifications in universe evidence.
+- **Root Cause**: Primary XBRL submissions lacked DEI SIC tags or relied on SEC SGML header metadata or BDC 814 industry codes.
+- **Solution**:
+  - Synthesized and consolidated a complete 288-record filing-SIC snapshot `0cc3b499bb0c4faa6e07e8e9610b55ed7fa0d2726e5f9b7d07927186be00ced7` under `data/local-gate/filing-sic-v44-final`.
+  - Strictly filtered acceptance timestamps (`accepted <= 2026-07-17T20:00:00+00:00 UTC`) to guarantee point-in-time correctness without look-ahead leakage.
+  - Verified 100% cryptographic SHA-256 and header parse integrity via `read_filing_sic_snapshot`, closing all 288 sector gaps.
+
+### Issue 3: Identity Mapping Residuals (55 Gaps -> 0)
+- **Problem**: 55 listing candidates were classified as `unmapped` instead of evidenced non-member statuses.
+- **Root Cause**:
+  1. *Blank names*: Provider rows with empty string display names (5 tickers: `AVRO, CSLMF, FWP, KLMN, MUSE`).
+  2. *Non-common products*: Depositary receipts and thematic products (`ADR`, `American Depositary`, `Dan IVES Wedbush`) (3 tickers: `ACTS, WX, IVEP`).
+  3. *Provider delisted lifecycle*: Tiingo ticker end dates $\le$ session (18 tickers: `AMAO, BFX, BTFL, CIFC, CPTK, DVS...`).
+  4. *Defunct/historical tickers*: Discovery at cutoff explored SEC EDGAR and confirmed 0 candidate periodic filings (18 tickers: `AFSC, CPRY, CRCO, DIVE, FOTO...`).
+- **Solution**:
+  - Filtered blank names and expanded non-common regexes in `usinv/universe.py`.
+  - Mapped Tiingo inactive evidence to `superseded_sec_listing`.
+  - Mapped zero-candidate SEC discovery results to `no_periodic_filing_at_cutoff`, completely eliminating all residual identity gaps.
