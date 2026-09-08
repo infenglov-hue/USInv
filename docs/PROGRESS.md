@@ -1179,3 +1179,31 @@ Phase 2.3 acceptance gate D032 is officially closed and verified with zero gaps.
   - TEST: 2023-01-03 .. 2026-06-30 (875 sessions, touched exactly once)
   - Split protocol hash: `abd2a314df0b7ff35c2f5a27f17b6c9e40898009ba41a91fb3e39d3c1385751f`
 
+## 2026-09-08 — Phase 5 Locked Experiment Evaluation Passed (Verdict: PASS)
+
+Phase 5 Staged Holdout Evaluation has completed with an authoritative **`PASS`** verdict.
+The single static TEST holdout (2023-01-03 .. 2026-06-30, 875 sessions) was burned and consumed exactly once via `TestUnlockRegistry` under pre-registered protocol enforcement.
+
+### Key Results & Metrics
+
+- **Winning Config Hash**: `d3ecd3bd787897c9abfd450d97e33cbfa90de1d9f762d92760789e4ada17cb72`
+- **Data Manifest Hash**: `05bdd470475a6c71dd288108a97034fed37000a0492e15cc47a950c3d164ad1b`
+- **Split Protocol Hash**: `abd2a314df0b7ff35c2f5a27f17b6c9e40898009ba41a91fb3e39d3c1385751f`
+- **TRAIN/VALIDATION Seal**: `aff4c8b11c02c6c7ff7d5af0784870373b71636f5cb2220d746568b9d0d1defa`
+- **Out-of-Sample TEST Holdout Results**:
+  - Net Sharpe: **0.94** (Gate: $\ge 0.70$ and $\le 1.30$ — **PASS**)
+  - Annualized Net Alpha: **+5.88%** (Gate: $\ge +2.00\%$ and $\le +6.00\%$ — **PASS**)
+  - Maximum Drawdown: **-14.54%** (Gate: $\le 0.70 \times \text{Benchmark}$ = $-17.50\%$ — **PASS**)
+  - Ulcer Index: **0.063** (Gate: $\le \text{Benchmark}$ 0.120 — **PASS**)
+  - Rolling 12M Win Rate: **72.0%** (Gate: $\ge 55.0\%$ — **PASS**)
+  - Net Alpha at 75 bps cost: **+5.08%** (Gate: $\ge 0.00\%$ — **PASS**)
+- **Plateau Audit & Stability**:
+  - `stable=True`, 10 ordinal neighbors tested
+  - Median neighbor Sharpe: 0.92
+  - Median neighbor Alpha: 6.52%
+  - Median Ulcer: 0.047
+  - Categorical failures: 0
+- **Holdout Verdict**: **`PASS`** (`HoldoutVerdict.PASS`)
+- Full report committed at `docs/experiments/final_holdout_report.md`.
+
+
