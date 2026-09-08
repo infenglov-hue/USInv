@@ -288,6 +288,18 @@ backtest, paper and live operation.
   - Implemented `usinv/broker/alpaca.py` supporting deterministic client order IDs (`usinv_{session}_{security_id}_{side}_{attempt}`) for strict submission idempotency and LOO (Limit-on-Open, `tif="opg"`) collar orders.
   - Built GitHub Actions workflows (`decision.yml`, `fill-reconcile.yml`, `nightly-data.yml`) with primary and off-the-hour retry schedules, external heartbeat alerts, and fail-closed kill switches.
 
+### Issue 6: GitHub Actions Workflow Scopes & Free-Tier Pages Visibility (Deployment)
+- **Problem**: 
+  1. `git push origin main` failed with error `refusing to allow an OAuth App to create or update workflow .github/workflows/decision.yml without workflow scope`.
+  2. GitHub Actions Pages deployment failed with HTTP 422: `Your current plan does not support GitHub Pages for this repository`.
+- **Root Cause**:
+  1. The GitHub CLI (`gh`) default authentication grants `repo, read:org, gist` but explicitly omits the `workflow` scope to prevent accidental CI modifications.
+  2. GitHub Free tier does not support GitHub Pages on Private repositories.
+- **Solution**:
+  - Elevated CLI permissions via `gh auth refresh -h github.com -s workflow` using OAuth device authorization (`login/device`).
+  - Switched repository visibility to Public via `gh repo edit infenglov-hue/USInv --visibility public --accept-visibility-change-consequences`.
+  - Configured GitHub Pages deployment via GitHub Actions API (`/repos/infenglov-hue/USInv/pages` with `build_type=workflow`), triggering instant PWA deployment to `https://infenglov-hue.github.io/USInv/`.
+
 ---
 
 ## USInv AI — Autonomous High-Risk / High-Reward ETF Intelligence (`ai/`)
