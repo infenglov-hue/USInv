@@ -254,6 +254,23 @@ class FilingDiscoveryPlan:
         )
 
     @property
+    def bootstrap_ciks(self) -> tuple[int, ...]:
+        """Every CIK cover acquisition may target: candidates of discovered AND
+        ambiguous rows. Must match _target_pairs' universe exactly — merge
+        validates shard coverage against this set (plan.ciks alone omits the
+        ambiguous-row candidates that bootstrap legitimately requests)."""
+        return tuple(
+            sorted(
+                {
+                    cik
+                    for row in self.rows
+                    if row.status in {"discovered", "ambiguous"} and row.candidate_ciks
+                    for cik in row.candidate_ciks
+                }
+            )
+        )
+
+    @property
     def identity_gaps(self) -> tuple[FilingDiscoveryRow, ...]:
         return tuple(row for row in self.rows if row.status in {"unmapped", "ambiguous"})
 
@@ -662,7 +679,15 @@ def _collapse_symbol_observations(
                 output.extend((*active, item))
                 active.clear()
                 continue
-            output.extend(replace(row, valid_to=item.valid_from) for row in active)
+            # A successor ticker starting on the SAME day would create a zero-length
+            # interval (valid_to <= valid_from) for the incumbent. Drop such rows
+            # instead of emitting them: the later observation supersedes them.
+            output.extend(
+                replaced
+                for row in active
+                if (replaced := replace(row, valid_to=item.valid_from)).valid_to
+                > replaced.valid_from
+            )
             active = [item]
         output.extend(active)
     return tuple(output)

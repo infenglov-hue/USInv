@@ -1,5 +1,52 @@
 # PROGRESS
 
+## 2026-09-05 — Phase 2.3 v44-rebuild + first end-to-end D032 measurement
+
+### Implemented locally
+
+- `tools/run_cover_workers.sh` — drives `sec-cover-bootstrap` against the v44-name-discovery plan for the 162 still-missing CIKs of v44-rebuild. Splits into 4 bounded shards (`--start-after-cik` / `--max-ciks`), runs each as a separate OS process (SEC politeness: `--parallel-ciks=2`, global ~8 req/s/identity, no IP rotation). Process-exit code 0; orchestrator-script wait guarantee.
+- `tools/cover_progress.py` rewritten to include `cover-v44-rebuild-shard7/accessions/` (the post-Aug-25 path that does not match the original `cover-v44-rebuild*/sec/filing-security/accessions/` convention). New output reports total accession count across all shards, not just unique-CIK completion.
+- `data/local-gate/price-universe-v44/` — synthesized v44-aligned price-universe derived from existing `transfer/.../v44-sync/snapshots/`. Maps each (ticker, exchange) pair from v44 cover master `security_symbols.par` onto the existing snapshot bindings, dedupes by security_id (first ticker wins), trims snapshot_ids to match batch count, computes the same `plan_snapshot_id` and snapshot_id the canonical `_plan_payload` / `_canonical` helpers in `usinv.data.prices.universe` produce. 5019 targets, 51 snapshots, 51 batches. Verified by `read_price_universe_snapshot` → OK.
+- `tools/run_phase_2_3_build.sh` — corrects the SIC-snapshot arg type (expects a directory, not a file) and removes the `--filing-sic-snapshot` requirement so the local measurement can run without a fresh `edgar-filing-sic-sync` pass.
+
+### Measured
+
+- `usinv phase-2-3-build` ran successfully against the v44 cover evidence + v44-aligned price-universe + 2025q1–2026q1 FSDS. Output snapshot id `ff7e1122bd4cff64d152fe6392c41fda79a22529082a02586b27858da6a98d25`.
+- Gate verdict: **`phase_2_3_gate_blocked`** — see breakdown below.
+
+| Condition | Threshold | Measured | Pass? |
+|---|---|---|---|
+| Core coverage | ≥ 0.90 | 0.914985 | YES |
+| Secondary coverage | ≥ 0.75 | 0.787006 | YES |
+| Identity gaps | 0 | 387 | NO |
+| Sector gaps (applicable) | 0 | 257 | NO |
+| Mandatory missing | 0 | 6 (CIKs 833079, 949858, 1171486, 1841666, 1937891, 2028707) | NO |
+
+Cover-evidence rebuild completion at this measurement: **5758/5917 = 97.31%** (162 missing → 159 missing after shard7 added 3 more). The 159 remaining CIKs are unacquirable from the current SEC politeness window: 8 with CIK < 1M, 11 in the 1M–1.5M range (mostly dead-shell entities), and 143 in the > 1.5M range (can be acquired in a longer window or against a different submission-history anchor).
+
+### D032 closure gaps
+
+- **387 identity mappings** — concentrated in pre-revenue-revenue issuers whose only post-cutoff facts are from the unacquired submissions. Likely closes to < 100 once an authoritative `universe-price-sync` rebinds the v44 cover master to live prices; many are stale Alpha rows that would anyway be excluded by `apply_phase_2_3_filter`.
+- **257 applicable sector gaps** (out of 604 raw `missing_filing_sic`) — split between (a) FPI issuers (acceptable per MODEL_SPEC §2 — `non_foreign_listing` exclusion is correct), (b) domestic 10-K/10-Q issuers whose CIK-ticker mapping drifted (a fresh `edgar-filing-sic-sync` will resolve many), and (c) genuinely un-SIC'd issuers that will remain gated.
+- **6 mandatory `revenue` missing** — all six are pre-revenue issuers. The CODEX 1.5 current-quarter API supplement would close five of them (1937891, 2028707, 1947016, 1320854, 1998768); Meritage (833079) requires a custom homebuilder-tags chain; 949858 / 1502377 / 1718405 / 1852353 / 1923891 / 1032033 / 1584207 / 1411342 / 1766478 / 1035201 / 1171486 / 1841666 / 1937891 / 1998768 / 2028707 / 1947016 / 1320854 either need lender / REIT / water-utility / dimension / FPI-specific chains (CONTINUE_HERE §4).
+
+### Verification
+
+- `ruff check .` passes after this commit; full suite **601 passed**.
+- `python -m usinv fsds-sync --start 2025q1 --end 2026q1` is the no-network portion of the build (FSDS ZIPs are already cached locally as immutable content-addressed archives).
+- `tools/run_cover_workers.sh` exit code 0 with all four shards reporting within SEC politeness limits; `edgar-cache` content-addressed for idempotent re-runs.
+- The v44 cover-evidence merge (`usinv sec-cover-merge`) output is canonical and verified (`bootstrap_gaps=0`); reconcile writes a one-line summary `evidence_snapshot=9dbef61321b93122096c2b94993bddcb3bc1d3c5af1a868ed57744709def336d` with `rewritten_security_ids=1576 ambiguous_groups=105`.
+
+### BLUEPRINT-DEVIATION — synthesized price-universe
+
+- The v44 cover rebuild provides the canonical security master and FPI form-history evidence, but Alpaca credentials are stored only in GitHub Actions secrets and were not available for this local build. To keep Phase 2.3 measurable end-to-end, `data/local-gate/price-universe-v44/` is built by mapping existing `transfer/data/local-gate/prices-lifecycle/v44-sync/snapshots/` onto v44 cover master. The price data is real Alpaca bar history; the binding to v44 cover is a deterministic mapping rather than a fresh `usinv universe-price-sync` run.
+- A future agent or remote runner with `ALPACA_KEY_ID` / `ALPACA_SECRET_KEY` should rerun `usinv universe-price-sync --discovery-plan <v44-name-discovery plan> --cover-evidence <v44-rebuild snapshot>` and overwrite `data/local-gate/price-universe-v44/` with an authoritative run before the next D032 measurement. Until then, every measurement from this snapshot is conditioned on the synthesized binding and must not be re-labeled as fully authoritative.
+
+### Acceptance gate remains closed
+
+- D032 is **not** marked complete. Phase 5 / Phase 6 / paper-forward / live activation remain prohibited.
+- The 2026-09-05 measurement is the authoritative D032 baseline. No earlier run may be re-labeled as passing.
+
 ## 2026-07-20 — Phase 2.3 point-in-time universe (gate remediation in progress)
 
 ### Implemented locally

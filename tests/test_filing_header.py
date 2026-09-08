@@ -2,9 +2,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import pytest
-
-from usinv.data.edgar.client import EdgarPayloadError
 from usinv.data.edgar.filing_header import parse_filing_header_metadata, parse_filing_sic
 
 
@@ -15,14 +12,16 @@ def test_filing_header_sic_is_accession_specific_evidence() -> None:
     assert parse_filing_sic(b"<SEC-HEADER>\nNO SIC HERE\n") is None
 
 
-def test_conflicting_filing_header_sics_fail_closed() -> None:
+def test_multi_registrant_header_uses_the_filers_own_first_sic() -> None:
+    """Co-registrant blocks repeat the SIC line with different codes; the first
+    match is the filer's own COMPANY DATA section. Later conflicts must not
+    abort a 396-CIK snapshot acquisition (observed in the gate chain)."""
     body = (
         b"STANDARD INDUSTRIAL CLASSIFICATION: FIRST [1234]\n"
         b"STANDARD INDUSTRIAL CLASSIFICATION: SECOND [5678]\n"
     )
 
-    with pytest.raises(EdgarPayloadError, match="conflicting"):
-        parse_filing_sic(body)
+    assert parse_filing_sic(body) == 1234
 
 
 def test_filing_header_metadata_keeps_the_acceptance_instant() -> None:

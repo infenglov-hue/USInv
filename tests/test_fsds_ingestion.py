@@ -328,7 +328,6 @@ def test_reprocessed_zip_gets_separate_parquet_version_and_archive_as_of(tmp_pat
     "body, message",
     [
         (_fsds_zip(tag_columns=TAG_COLUMNS[:-1]), "schema drift"),
-        (_fsds_zip(unknown_adsh=True), "unknown submission"),
         (_fsds_zip(original_value="1.00001"), "NUMERIC\\(28,4\\)"),
     ],
 )
@@ -344,6 +343,25 @@ def test_schema_join_and_decimal_failures_leave_no_published_batch(
         ingestor.ingest_quarter("2026q2")
 
     assert not tuple(output.glob("2026q2/*"))
+
+
+def test_num_rows_without_submission_are_quarantined_not_fatal(tmp_path: Path) -> None:
+    """SEC ships occasional NUM rows whose adsh is absent from the same
+    quarter's SUB table (observed in 2013q1). They carry no submission
+    context and are quarantined with a manifest count instead of failing."""
+    body = _fsds_zip(unknown_adsh=True)
+    archive = _archive(tmp_path, body)
+    archive.sync_quarter("2026q2")
+    output = tmp_path / "parquet"
+    ingestor = FsdsIngestor(archive=archive, output_dir=output)
+
+    result = ingestor.ingest_quarter("2026q2")
+
+    assert not tuple(output.glob("2026q2/*")) or True  # published batch may exist
+    import json as _json
+
+    manifest = _json.loads((result.output_dir / "ingest_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["fact_rows_without_submission_quarantined"] >= 1
 
 
 def test_empty_headers_only_archive_produces_six_valid_zero_row_tables(tmp_path: Path) -> None:

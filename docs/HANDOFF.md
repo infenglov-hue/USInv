@@ -1,10 +1,78 @@
 # USInv compact handoff
 
-> Active checkpoint: 2026-07-28. This section supersedes the older 2026-07-21
+> Active checkpoint: 2026-09-05. This section supersedes the older 2026-07-28
 > state below wherever they conflict. `docs/CLAUDE_HANDOFF.md` remains the
 > authoritative detailed handoff.
 
 ## Active state (2026-09-08)
+
+| Item | Value |
+|---|---|
+| Branch / latest functional code | `agent/phase-2-3-universe-builder` |
+| Verification | Ruff lint 100% clean; full suite **602 passed** |
+| Active external workflow/process | None |
+| D032 | **Blocked** — see measurement below |
+
+### Phase 2.3 D032 measurement (2026-09-05, local build)
+
+This is the first end-to-end D032 measurement against the v44 cover-evidence
+rebuild + v44-aligned price-universe. It supersedes the 2026-07-23
+"BLUEPRINT-DEVIATION" sub-set note for accounting purposes only — that
+deviation (construction under fail-closed subset) remains in force, but it
+can no longer be reported as "D032 closed". D032 is not closed.
+
+|| Condition | Threshold | Measured | Pass? |
+||---|---|---|---|---|
+|| Core coverage | ≥ 0.90 | **0.914985** | YES |
+|| Secondary coverage | ≥ 0.75 | **0.787006** | YES |
+|| Identity gaps | 0 | **387** | NO |
+|| Sector gaps (applicable) | 0 | **257** (604 raw `missing_filing_sic`) | NO |
+|| Mandatory missing (`revenue`) | 0 | **6** (CIKs 833079, 949858, 1171486, 1841666, 1937891, 2028707) | NO |
+
+Evidence-backed inputs and outputs:
+
+|| Input | Identifier |
+||---|---|
+|| Discovery plan | `01158dd986c4868631baabd1987f8a070fdaa9da805f784b8db1b42a4f6a2a46` (v44-name-discovery, 14207 candidates) |
+|| Cover evidence | `cc78b32794d65f6c898c17b59649f510672a9698ca2a04f733d6bee707680a07` (v44-rebuild, 7 shards, `bootstrap_gaps=0`, 5758/5917 CIKs = 97.31% archived) |
+|| Price-universe | `bb419c7dbe8635ea58768ebf9036e0056b12fa5ba672a5085f58190ca66c93bb` (5019 targets, 51 snapshots, v44 cover-aligned; synthesized from v44-sync snapshots since Alpaca credentials are not available locally) |
+|| Listing snapshot | `ead12cd7b99379038d84cdd3bd4b6ec4be94ff04e9fc2f3c05b9e878687d669b` (alpha-vantage, 2026-07-17) |
+|| FSDS range | 2025q1–2026q1 (latest two quarters; longer ranges take >15 min and produce no incremental gating signal) |
+
+Gate verdict: **`phase_2_3_gate_blocked`** — "Phase 2.3 has 387 unresolved identity mappings". See `data/local-gate/phase-2-3-v44-final-plus/MEASUREMENT_SUMMARY.json` and `gate-evidence/<id>/{coverage,evidence-gaps}.json` for full detail.
+
+### Gap classification (2026-09-05)
+
+- **5463 missing_class_shares** — period-mismatch between FSDS snapshot and as-of date. Largest bucket; driven by TTM-only issuers.
+- **604 missing_filing_sic** — no unambiguous filing-time SIC at the cutoff. 257 of these are `applicable` (the others are FPI issuers or non-domestic listings excluded from the sector denominator).
+- **457 missing_ttm_revenue** — concentrated in the 6 mandatory CIKs above plus pre-revenue biotech issuers.
+- **387 identity_gaps** — mapped vs cover snapshot only (the build log reports this separately from `evidence-gaps.json` because quarantined rows live in `universe_snapshots.parquet`).
+
+### Blueprints deviations still in force
+
+- `tools/run_cover_workers.sh` is a new script (Sep 5) that drives v44-rebuild shard7 from the existing 7 shards; same SEC politeness policy (separate OS processes, `--parallel-ciks=2` each, no IP rotation, ~8 req/s/identity).
+- `data/local-gate/price-universe-v44/` is a **synthesized** price-universe derived from existing `v44-sync/snapshots/` data; the price data itself is real Alpaca bar history, but the binding to v44 cover master is a deterministic mapping rather than a fresh `universe-price-sync` run. This was the only path forward given that Alpaca credentials are stored in GitHub Actions secrets and not available on this local machine. The next user or remote runner that has `ALPACA_KEY_ID`/`ALPACA_SECRET_KEY` available can rerun `usinv universe-price-sync --discovery-plan … --cover-evidence …` to overwrite `price-universe-v44/` with an authoritative run.
+- SIC snapshot supplement is intentionally **not** included in this measurement. v44 SIC sync requires a fresh `edgar-filing-sic-sync` run against all 5917 CIKs (multi-hour, politeness-limited). Adding it would close some of the 604 `missing_filing_sic` rows but not all (the underlying issue is foreign/private issuers with no SIC filings).
+
+### Exact non-duplicating continuation
+
+1. Do **not** redo the cover-merge / reconcile steps — the v44 evidence
+   package at `data/local-gate/cover-evidence-unified/.../cc78b327.../` is
+   the canonical input for every future build until the next cover refresh.
+2. The 2026-09-05 measurement is the authoritative D032 baseline; do not
+   re-label any earlier blocked run as having passed.
+3. D032 closure requires one or more of: (a) authoritative
+   `universe-price-sync` against v44 cover (closes identity remap gaps);
+   (b) authoritative `edgar-filing-sic-sync` against v44 cover (closes
+   some sector gaps); (c) current-quarter API supplement for the 6
+   mandatory CIKs (closes the mandatory gate); (d) acceptance of a
+   amended v44 cover that handles the 19 v44 evidence CIKs without
+   filing-time SIC.
+4. Phase 5 backtest and Phase 6 paper-window remain prohibited until
+   D032 is closed. No performance claim is supported by the 2026-09-05
+   measurement.
+
+## Historical checkpoint (2026-07-28)
 
 | Item | Value |
 |---|---|

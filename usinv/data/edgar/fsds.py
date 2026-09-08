@@ -523,15 +523,24 @@ class FsdsIngestor:
         record: FsdsArchiveRecord,
         batch_id: str,
         filings: dict[str, _FilingContext],
-    ) -> int:
+    ) -> tuple[int, int]:
+        """Write NUM facts; SEC occasionally ships NUM rows whose adsh is absent
+        from the same quarter's SUB table (known upstream inconsistency). Those
+        rows have no submission context and are quarantined (counted, skipped)
+        instead of failing the whole quarter."""
         row_count = 0
+        orphan_count = 0
         try:
             with pq.ParquetWriter(destination, FACTS_RAW_SCHEMA, compression="zstd") as writer:
                 parquet = pq.ParquetFile(raw_num_path)
                 for batch in parquet.iter_batches(batch_size=self.batch_size):
-                    output_rows = [
-                        self._fact_row(row, filings, record, batch_id) for row in batch.to_pylist()
-                    ]
+                    output_rows = []
+                    for row in batch.to_pylist():
+                        adsh = row.get("adsh")
+                        if filings.get(adsh if isinstance(adsh, str) else None) is None:
+                            orphan_count += 1
+                            continue
+                        output_rows.append(self._fact_row(row, filings, record, batch_id))
                     if output_rows:
                         writer.write_table(
                             pa.Table.from_pylist(output_rows, schema=FACTS_RAW_SCHEMA)
@@ -539,7 +548,7 @@ class FsdsIngestor:
                         row_count += len(output_rows)
         except (pa.ArrowException, InvalidOperation) as exc:
             raise FsdsSchemaError("FSDS NUM values violate NUMERIC(28,4)") from exc
-        return row_count
+        return row_count, orphan_count
 
     @staticmethod
     def _artifact(name: str, relative_path: str, root: Path) -> FsdsTableArtifact:
@@ -567,9 +576,11 @@ class FsdsIngestor:
         record: FsdsArchiveRecord,
         created_at: datetime,
         artifacts: tuple[FsdsTableArtifact, ...],
+        fact_orphans: int = 0,
     ) -> None:
         payload = {
             "schema_version": INGEST_SCHEMA_VERSION,
+            "fact_rows_without_submission_quarantined": fact_orphans,
             "dataset": "sec_financial_statement_data_sets_parquet",
             "adapter_version": INGEST_ADAPTER_VERSION,
             "secfsdstools_version": SUPPORTED_SECFSDS_VERSION,
@@ -688,7 +699,7 @@ class FsdsIngestor:
                     record,
                     batch_id,
                 )
-                self._write_facts(
+                _fact_rows, fact_orphans = self._write_facts(
                     staging / "raw" / "num.parquet",
                     staging / "facts_raw.parquet",
                     record,
@@ -700,7 +711,7 @@ class FsdsIngestor:
                     for name, relative_path in _EXPECTED_ARTIFACT_PATHS.items()
                 )
                 created_at = self._created_now()
-                self._write_manifest(staging, record, created_at, artifacts)
+                self._write_manifest(staging, record, created_at, artifacts, fact_orphans)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if target.exists():
                     shutil.rmtree(staging)

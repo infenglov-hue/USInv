@@ -538,7 +538,7 @@ def acquire_cover_evidence(
 
         def archive_selected(
             filing: SubmissionFiling,
-        ) -> FilingArchiveResult | EdgarHttpError:
+        ) -> FilingArchiveResult | Exception:
             try:
                 return archive_filing(
                     client,
@@ -549,6 +549,10 @@ def acquire_cover_evidence(
                 )
             except EdgarHttpError as exc:
                 if exc.status != 404:
+                    raise
+                return exc
+            except EdgarPayloadError as exc:
+                if "primary document is absent" not in str(exc):
                     raise
                 return exc
 
@@ -562,6 +566,16 @@ def acquire_cover_evidence(
                         filing.accession,
                         "filing_resource_missing",
                         "SEC returned HTTP 404 for a required filing archive resource",
+                    )
+                )
+                continue
+            if isinstance(archived, EdgarPayloadError):
+                gaps.append(
+                    CoverAcquisitionGap(
+                        cik,
+                        filing.accession,
+                        "filing_primary_document_missing",
+                        str(archived),
                     )
                 )
                 continue

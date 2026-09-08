@@ -14,9 +14,10 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from http.client import IncompleteRead
 from pathlib import Path
 from typing import Any, Final, Protocol
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
@@ -108,6 +109,10 @@ class UrllibTransport:
             response_headers = dict(exc.headers.items()) if exc.headers is not None else {}
             body = self._decode(exc.read(), response_headers)
             return HttpResponse(exc.code, response_headers, body)
+        except IncompleteRead as exc:
+            # Truncated chunked transfer (observed under parallel CIK fetches);
+            # surface as URLError so the client's transient-error retry applies.
+            raise URLError(f"incomplete read from {url}: {exc}") from exc
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,13 +295,17 @@ class _RequestThrottle:
         self._lock = threading.Lock()
 
     def wait(self) -> None:
+        # Reserve a slot atomically, then sleep OUTSIDE the lock: sleeping while
+        # holding the lock serializes every parallel worker behind one sleeper
+        # and collapses the effective request rate to ~1/interval regardless of
+        # worker count (observed: 4 workers -> 0.35 req/s vs 8 req/s budget).
         with self._lock:
             now = self._monotonic()
-            delay = self._next_allowed - now
-            if delay > 0:
-                self._sleep(delay)
-                now = self._monotonic()
-            self._next_allowed = max(now, self._next_allowed) + self._interval
+            start = max(now, self._next_allowed)
+            self._next_allowed = start + self._interval
+        delay = start - self._monotonic()
+        if delay > 0:
+            self._sleep(delay)
 
 
 class EdgarClient:
@@ -478,7 +487,14 @@ class EdgarClient:
             )
 
         last_status: int | None = None
-        for attempt in range(self.max_attempts):
+        rate_limit_rounds = 0
+        attempt = 0
+        while True:
+            if (response_was_rate_limited := last_status == 429) and rate_limit_rounds >= 24:
+                # Give up only after ~24 penalty windows (>= 4 hours of waits):
+                # a multi-day archive run must not die to a temporary 429.
+                break
+            attempt = 0 if response_was_rate_limited else attempt
             self._throttle.wait()
             try:
                 response = self._transport.get(
@@ -489,6 +505,7 @@ class EdgarClient:
             except OSError as exc:
                 if attempt + 1 == self.max_attempts:
                     raise EdgarHttpError(None, url, f"EDGAR network failure for {url}") from exc
+                attempt += 1
                 self._sleep(min(self.backoff_base_seconds * (2**attempt), 600.0))
                 continue
 
@@ -533,6 +550,15 @@ class EdgarClient:
                     from_cache=False,
                     revalidated=False,
                 )
+            if response.status == 429:
+                attempt += 1
+            if response.status == 429 and attempt + 1 == self.max_attempts:
+                # Temporary penalty window: wait it out (>=10 min) and restart the
+                # attempt budget instead of aborting a multi-day archive shard.
+                rate_limit_rounds += 1
+                wait = max(self._retry_delay(response, attempt), 600.0)
+                self._sleep(wait)
+                continue
             if response.status not in RETRIABLE_STATUS_CODES or attempt + 1 == self.max_attempts:
                 raise EdgarHttpError(
                     response.status,

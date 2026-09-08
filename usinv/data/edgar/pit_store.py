@@ -352,13 +352,26 @@ class PitStoreBuilder:
         connection: duckdb.DuckDBPyConnection,
         destination: Path,
     ) -> int:
+        # Join against the precomputed conflict_keys table instead of scanning all
+        # 96M candidate rows: the list() aggregation buffers per group and OOMs on
+        # the full table, while the conflicting-key join filters to a few hundred.
         query = f"""
+            WITH conflicting_rows AS (
+                SELECT candidates.*
+                FROM candidates
+                SEMI JOIN conflict_keys
+                    ON candidates.cik = conflict_keys.cik
+                   AND candidates.tag = conflict_keys.tag
+                   AND candidates.ddate = conflict_keys.ddate
+                   AND candidates.qtrs = conflict_keys.qtrs
+                   AND candidates.uom = conflict_keys.uom
+            )
             SELECT {_KEY_SQL}, accepted,
                    COUNT(DISTINCT {_LOGICAL_VALUE_SQL})::BIGINT AS distinct_values,
                    COUNT(*)::BIGINT AS candidate_rows,
                    list_sort(list_distinct(list(adsh))) AS adshs,
                    list_sort(list_distinct(list({_LOGICAL_VALUE_SQL}))) AS values
-            FROM candidates
+            FROM conflicting_rows
             GROUP BY {_KEY_SQL}, accepted
             HAVING COUNT(DISTINCT {_LOGICAL_VALUE_SQL}) > 1
             ORDER BY {_KEY_SQL}, accepted
@@ -407,10 +420,15 @@ class PitStoreBuilder:
     def _materialize(self, root: Path, inputs: Sequence[PitInputBatch]) -> None:
         temporary = root / "duckdb-tmp"
         temporary.mkdir()
-        connection = duckdb.connect(database=":memory:")
+        # A disk-backed database is required: the PIT window queries over ~96M
+        # candidate rows cannot complete within a 15 GB in-memory limit even
+        # with spilling enabled (verified: OOM at 7.4 GiB). The .duckdb file
+        # lives under `temporary`, which is removed in the finally block.
+        connection = duckdb.connect(database=str(temporary / "work.duckdb"))
         try:
             connection.execute("SET preserve_insertion_order = false")
-            connection.execute("SET temp_directory = ?", [str(temporary)])
+            connection.execute("SET memory_limit = '10GB'")
+            connection.execute("SET threads = 2")
             connection.register(
                 "declared_inputs",
                 pa.table(
@@ -421,12 +439,15 @@ class PitStoreBuilder:
                     }
                 ),
             )
+            # Persist intermediate sets as physical tables: temp views re-execute
+            # the full 96M-row scan per reference and the window queries OOM even
+            # on a disk-backed database. Tables spill to the .duckdb file instead.
             connection.from_parquet([str(item.facts_path) for item in inputs]).create_view(
                 "raw_facts"
             )
             connection.execute(
                 f"""
-                CREATE TEMP VIEW candidates AS
+                CREATE TABLE candidates AS
                 SELECT {_FACT_COLUMNS_SQL}
                 FROM raw_facts
                 WHERE (is_consolidated IS TRUE AND coreg IS NULL AND segments IS NULL)
@@ -454,7 +475,7 @@ class PitStoreBuilder:
             self._assert_candidates(connection)
             connection.execute(
                 f"""
-                CREATE TEMP VIEW conflict_keys AS
+                CREATE TABLE conflict_keys AS
                 SELECT DISTINCT {_KEY_SQL}
                 FROM (
                     SELECT {_KEY_SQL}, accepted
@@ -466,7 +487,7 @@ class PitStoreBuilder:
             )
             connection.execute(
                 """
-                CREATE TEMP VIEW eligible_candidates AS
+                CREATE TABLE eligible_candidates AS
                 SELECT candidates.*
                 FROM candidates
                 WHERE NOT EXISTS (
@@ -494,6 +515,9 @@ class PitStoreBuilder:
             )
             self._write_conflicts(connection, root / "facts_conflicts.parquet")
         except duckdb.Error as exc:
+            import sys as _sys
+
+            print(f"pit_materialize_failed: {type(exc).__name__}: {exc}", file=_sys.stderr)
             raise PitStoreError("DuckDB could not materialize PIT fact views") from exc
         finally:
             connection.close()

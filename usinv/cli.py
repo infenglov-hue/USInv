@@ -229,6 +229,9 @@ def _parser() -> argparse.ArgumentParser:
     cover.add_argument("--archive-dir", type=Path, help="override the as-filed archive root")
     cover.add_argument("--output-dir", type=Path, help="override the private data root")
     cover.add_argument("--max-ciks", type=int, help="process a bounded resumable CIK shard")
+    cover.add_argument(
+        "--parallel-ciks", type=int, default=4, help="CIKs processed concurrently (SEC-polite: 2-6)"
+    )
     cover.add_argument("--start-after-cik", type=int, help="resume after this numeric CIK")
     cover.add_argument("--max-filings-per-cik", type=int, default=4)
     cover.add_argument(
@@ -812,6 +815,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 maximum_filings_per_cik=args.max_filings_per_cik,
                 maximum_ciks=args.max_ciks,
                 start_after_cik=args.start_after_cik,
+                parallel_ciks=getattr(args, "parallel_ciks", 1) or 1,
                 refresh=args.refresh,
             )
             if args.require_evidence and not acquisition.evidence:
@@ -865,7 +869,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 sorted(path.parent for path in args.evidence_root.rglob("shard.json"))
             )
             shards = tuple(read_cover_evidence_shard(path) for path in shard_paths)
-            merged = merge_cover_evidence_shards(shards, expected_ciks=plan.ciks)
+            merged = merge_cover_evidence_shards(shards, expected_ciks=plan.bootstrap_ciks)
             if merged.plan_snapshot_id != plan.snapshot_id:
                 raise EdgarError("cover evidence shards do not belong to the discovery plan")
             snapshot = materialize_cover_evidence_merge(merged, output_root)

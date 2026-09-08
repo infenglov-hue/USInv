@@ -360,14 +360,22 @@ def parse_association_entity_stem_candidate(
         )
     ciks = tuple(sorted(evidence))
     pointers = tuple(sorted(pointer for values in evidence.values() for pointer in values))
-    if ciks != (candidate_cik,):
-        return ExactNameMatch(
-            wanted,
-            "ambiguous" if ciks else "unmatched",
-            ciks,
-            pointers,
-        )
-    return ExactNameMatch(wanted, "unique", ciks, pointers)
+    if not ciks:
+        return ExactNameMatch(wanted, "unmatched", (), ())
+    if candidate_cik in ciks:
+        status = "unique" if ciks == (candidate_cik,) else "ambiguous"
+    else:
+        status = "ambiguous"
+    if status == "ambiguous" and len(ciks) < 2:
+        status = "unmatched"
+        ciks = ()
+        pointers = ()
+    return ExactNameMatch(
+        wanted,
+        status,
+        ciks,
+        pointers,
+    )
 
 
 def corroborate_historical_association_candidates(
