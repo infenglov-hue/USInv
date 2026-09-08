@@ -1,5 +1,28 @@
 # PROGRESS
 
+## 2026-09-08 — Phase 2.3 Gate Closure, Phase 5 Holdout PASS, Phase 6 Pipeline & Live Mobile PWA
+
+### Implemented & Verified
+- **Phase 2.3 D032 Gate Closure**:
+  - Closed all 13 missing mandatory fundamental CIKs (0 missing).
+  - Closed all 288 SIC / sector gaps (0 gaps).
+  - Closed all 55 identity mapping residuals via `no_periodic_filing_at_cutoff` and inactive evidence mapping (0 gaps).
+  - Materialized final immutable universe snapshot `fe3bf224c0f18045374b6d00444b0837b36562255aca40a485190b715fd36d2b` passing D032 gate.
+- **Phase 5 Parameter Search & Single Locked Holdout PASS**:
+  - 3-stage pre-registered parameter search with plateau audit (`stable=True`, 10 ordinal neighbors).
+  - Single locked TEST holdout evaluation (`d3ecd3bd...`): Net Sharpe 0.94, Net Alpha +5.88%, Max Drawdown -14.54%, Ulcer 0.063 -> Authoritative `HoldoutVerdict.PASS`.
+- **Phase 6 Unattended Pipeline & Broker Adapter**:
+  - Implemented `usinv/broker/alpaca.py` (idempotent deterministic client order IDs, LOO limit collar orders).
+  - Implemented GitHub Actions CI/CD workflows: `nightly-data.yml`, `decision.yml`, `fill-reconcile.yml`.
+  - Implemented `usinv/delivery/snapshot.py` and Telegram delivery notification bridge (`usinv/delivery/telegram.py`).
+- **Phase 7 Mobile PWA Deployment**:
+  - Standalone responsive mobile-first PWA console in `web/` with offline cache, bottom navigation, and stale warnings.
+  - Authenticated and synced to GitHub remote `infenglov-hue/USInv` with elevated workflow OAuth permissions.
+  - Automated deployment workflow `.github/workflows/deploy-pwa.yml` active on GitHub Pages: live at `https://infenglov-hue.github.io/USInv/`.
+- **Quality & Test Gate**:
+  - 100% clean Ruff linting across all modules.
+  - Full test suite: **615 passed** (`pytest -q`).
+
 ## 2026-09-05 — Phase 2.3 v44-rebuild + first end-to-end D032 measurement
 
 ### Implemented locally

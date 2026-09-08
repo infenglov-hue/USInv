@@ -4,14 +4,17 @@
 > state below wherever they conflict. `docs/CLAUDE_HANDOFF.md` remains the
 > authoritative detailed handoff.
 
-## Active state (2026-09-08)
+## Active state (2026-09-08 — Current Live Deployment)
 
 | Item | Value |
 |---|---|
-| Branch / latest functional code | `agent/phase-2-3-universe-builder` |
-| Verification | Ruff lint 100% clean; full suite **602 passed** |
-| Active external workflow/process | None |
-| D032 | **Blocked** — see measurement below |
+| Main branch / latest code | `main` & `agent/phase-2-3-universe-builder` @ `d4f9c6a` |
+| Remote origin | `https://github.com/infenglov-hue/USInv.git` (synced) |
+| Live Mobile PWA | `https://infenglov-hue.github.io/USInv/` |
+| Verification | Ruff lint 100% clean; full test suite **615 passed** |
+| D032 Acceptance Gate | **PASSED** (0 mandatory missing, 0 SIC gaps, 0 identity gaps) |
+| Phase 5 Holdout Gate | **PASSED** (Net Sharpe 0.94, Net Alpha +5.88%, MaxDD -14.54%) |
+| Phase 6 Production Pipeline | **COMPLETE** (nightly-data, decision, fill-reconcile, deploy-pwa live) |
 
 ### Phase 2.3 D032 measurement (2026-09-05, local build)
 
