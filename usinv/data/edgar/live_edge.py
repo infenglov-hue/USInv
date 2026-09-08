@@ -570,11 +570,7 @@ def ingest_periodic_filing(
     )
     complete_submission_name = f"{filing.accession}.txt".casefold()
     header_resource = next(
-        (
-            item
-            for item in archive.resources
-            if item.name.casefold() == complete_submission_name
-        ),
+        (item for item in archive.resources if item.name.casefold() == complete_submission_name),
         None,
     )
     filing_sic = (

@@ -560,27 +560,18 @@ def parse_plain_html_cover_table(
         for index, header in enumerate(table_rows):
             keys = tuple(header_key(value) for value in header)
             title_index = next(
-                (
-                    position
-                    for position, value in enumerate(keys)
-                    if "titleofeachclass" in value
-                ),
+                (position for position, value in enumerate(keys) if "titleofeachclass" in value),
                 None,
             )
             ticker_index = next(
-                (
-                    position
-                    for position, value in enumerate(keys)
-                    if "tradingsymbol" in value
-                ),
+                (position for position, value in enumerate(keys) if "tradingsymbol" in value),
                 None,
             )
             exchange_index = next(
                 (
                     position
                     for position, value in enumerate(keys)
-                    if "nameofeachexchange" in value
-                    or "exchangeonwhichregistered" in value
+                    if "nameofeachexchange" in value or "exchangeonwhichregistered" in value
                 ),
                 None,
             )
@@ -611,9 +602,7 @@ def parse_plain_html_cover_table(
             expected_exchange = normalize_exchange(expected_exchange)
         except SecurityMasterError as exc:
             raise EdgarPayloadError("plain filing expected listing pair is invalid") from exc
-        visible_text = " ".join(
-            "".join(root.itertext()).replace("\xa0", " ").split()
-        )
+        visible_text = " ".join("".join(root.itertext()).replace("\xa0", " ").split())
         ticker_pattern = re.escape(expected_ticker).replace(r"\-", r"[- ]")
         statement_pattern = re.compile(
             r"\b(?:have\s+(?:been\s+)?(?:applied|approved)|(?:have\s+)?applied)"
@@ -632,16 +621,13 @@ def parse_plain_html_cover_table(
         for match in statement_pattern.finditer(visible_text):
             title_text = " ".join(match.group("title").split())
             lowered = title_text.casefold()
-            if (
-                is_explicit_non_common_security_title(title_text)
-                or not any(
-                    value in lowered
-                    for value in (
-                        "common stock",
-                        "common shares",
-                        "ordinary shares",
-                        "subordinate voting shares",
-                    )
+            if is_explicit_non_common_security_title(title_text) or not any(
+                value in lowered
+                for value in (
+                    "common stock",
+                    "common shares",
+                    "ordinary shares",
+                    "subordinate voting shares",
                 )
             ):
                 continue
@@ -907,11 +893,7 @@ def extract_cover_security_classes(
         if undimensioned_shares:
             latest_period = max(fact.period_end for fact in undimensioned_shares)
             latest_share = min(
-                (
-                    fact
-                    for fact in undimensioned_shares
-                    if fact.period_end == latest_period
-                ),
+                (fact for fact in undimensioned_shares if fact.period_end == latest_period),
                 key=lambda fact: fact.evidence_pointer,
             )
         if (
@@ -974,12 +956,7 @@ def extract_cover_security_classes(
                         True,
                     )
                 )
-        elif (
-            ticker is not None
-            and title is None
-            and latest_share is not None
-            and allowed_pairs
-        ):
+        elif ticker is not None and title is None and latest_share is not None and allowed_pairs:
             try:
                 normalized_ticker = normalize_ticker(ticker.text_value)
             except SecurityMasterError:
@@ -1036,9 +1013,7 @@ def extract_cover_security_classes(
                 if selected_exchange is None:
                     continue
                 try:
-                    normalized_exchanges.add(
-                        normalize_exchange(selected_exchange.text_value)
-                    )
+                    normalized_exchanges.add(normalize_exchange(selected_exchange.text_value))
                 except SecurityMasterError:
                     normalized_exchanges.add("")
             exchange_consistent = not normalized_exchanges or normalized_exchanges == {
@@ -1054,9 +1029,7 @@ def extract_cover_security_classes(
                     or "subordinate voting share" in lowered_title
                 )
             )
-            if exchange_consistent and (
-                explicit_common_title or (title is None and latest_share)
-            ):
+            if exchange_consistent and (explicit_common_title or (title is None and latest_share)):
                 anchor = title or latest_share
                 assert anchor is not None
                 output.append(
@@ -1125,9 +1098,7 @@ def security_evidence_from_cover(
     elif is_explicit_non_common_security_title(title):
         security_type = "other"
     elif (
-        "common" in lowered
-        or "ordinary share" in lowered
-        or "subordinate voting share" in lowered
+        "common" in lowered or "ordinary share" in lowered or "subordinate voting share" in lowered
     ):
         security_type = "common_stock"
     else:

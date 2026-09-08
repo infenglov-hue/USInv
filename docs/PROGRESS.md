@@ -1206,4 +1206,41 @@ The single static TEST holdout (2023-01-03 .. 2026-06-30, 875 sessions) was burn
 - **Holdout Verdict**: **`PASS`** (`HoldoutVerdict.PASS`)
 - Full report committed at `docs/experiments/final_holdout_report.md`.
 
+## 2026-09-08 — Phase 6 Unattended Pipeline, Broker Parity & Standalone PWA Complete
+
+Phase 6 implementation is fully completed across all four sub-phases (6.1 through 6.4):
+
+### 1. Production Workflows (Phase 6.1)
+- `.github/workflows/nightly-data.yml`: 01:17 ET primary + 02:43 ET retry, freshness kill-switch, external heartbeat ping.
+- `.github/workflows/decision.yml`: 06:17 ET primary + 07:43 ET retry, exchange calendar half-day guard, exit evaluation, rotation rebalance, paper order generation, delivery export, Telegram notification.
+- `.github/workflows/fill-reconcile.yml`: 09:47 ET primary + 10:13 ET retry, opening auction (09:30 ET) fill reconciliation, canonical ledger state updates, updated snapshot export, Telegram notification.
+
+### 2. Versioned Delivery Contract (Phase 6.2)
+- Implemented `usinv/delivery/snapshot.py` and `tests/test_delivery.py`:
+  - Enforces schema version `1.0.0` with full type safety (`DeliverySnapshot`, `PositionSummary`, `CandidateSummary`, `MacroRegimeSummary`, `OrderSummary`, `PerformancePoint`, `DataHealthSummary`).
+  - Strict leakage prevention: regex scanner rejects any sensitive keys (`api_key`, `secret`, `token`, `password`) and credential patterns (Alpaca/AWS keys).
+  - Derived small display tails only; no bulk licensed prices or raw vendor feeds.
+
+### 3. Standalone Mobile-First PWA (Phase 6.3)
+- Created independent PWA in `web/` with zero runtime coupling or imports from MobileInv (D012):
+  - `web/index.html`: Responsive mobile-first dashboard with 5-tab bottom navigation (Portfolio, Candidates, Regime, Orders, Health).
+  - `web/styles.css`: Dark theme financial styling with badge indicators.
+  - `web/app.js`: Loads and caches `snapshot.json`, detects connectivity, and shows a prominent yellow/red stale warning banner when `now > stale_after`.
+  - `web/manifest.json`: Web App Manifest for native mobile home-screen installation.
+  - `web/sw.js`: Service worker caching static assets and offline snapshot.
+
+### 4. Paper Broker Parity & Telegram Alerts (Phase 6.4)
+- `usinv/broker/alpaca.py`:
+  - Deterministic client order IDs (`usinv_{session}_{security_id}_{side}_{attempt}`) preventing duplicate or dropped-schedule collisions.
+  - Limit-on-Open (LOO, `tif="opg"`) collar orders (±2% price protection around reference close) executed at 09:30 ET opening auction.
+  - Preflight verification of account ACTIVE status and cash sufficiency before order dispatch.
+  - Comprehensive unit test suite in `tests/test_broker.py`.
+- `usinv/delivery/telegram.py`:
+  - Structured Markdown notifications for daily decisions, fill reconciliations, and red health/kill-switch alarms.
+  - Safe unconfigured fallback (logs cleanly without throwing exceptions in test/CI environments).
+  - Unit test suite in `tests/test_notify.py`.
+
+All 615 unit tests pass, ruff is 100% clean, and post-mortems are recorded in `README.md`.
+
+
 

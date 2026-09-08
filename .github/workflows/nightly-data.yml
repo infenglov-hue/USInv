@@ -9,7 +9,8 @@ name: nightly-data
 
 on:
   schedule:
-    - cron: "17 6 * * 1-5" # ~01:17 ET on weekdays
+    - cron: "17 6 * * 1-5" # 01:17 ET primary on weekdays
+    - cron: "43 7 * * 1-5" # 02:43 ET retry on weekdays
   workflow_dispatch:
 
 permissions:
@@ -41,3 +42,9 @@ jobs:
           python -m usinv freshness-gate
           --inputs tests/fixtures/freshness/nightly_inputs.json
           --as-of 2026-02-17T16:00:00-05:00
+      - name: Heartbeat success ping
+        if: success() && env.HEARTBEAT_URL != ''
+        env:
+          HEARTBEAT_URL: ${{ secrets.HEARTBEAT_URL }}
+        run: |
+          curl -fsS -m 10 --retry 3 "${HEARTBEAT_URL}" || true

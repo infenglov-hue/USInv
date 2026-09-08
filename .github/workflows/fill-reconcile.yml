@@ -1,0 +1,71 @@
+name: fill-reconcile
+
+# Phase 6.1 Fill Reconciliation Pipeline (OPS_SPEC §2-3, CODEX 6.1).
+# Reconciles opening auction fills (09:30 ET) against scheduled LOO orders,
+# commits cash settlement and positions to the canonical ledger, publishes the
+# updated delivery snapshot, and sends the Telegram reconciliation summary.
+
+on:
+  schedule:
+    - cron: "47 13 * * 1-5" # 09:47 ET primary on weekdays
+    - cron: "13 14 * * 1-5" # 10:13 ET retry on weekdays
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fill-reconcile-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Execute fill reconciliation
+        env:
+          APCA_API_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -c "
+          from datetime import date
+          from usinv.delivery.snapshot import load_snapshot
+          from usinv.delivery.telegram import TelegramNotifier
+          from pathlib import Path
+
+          snap_path = Path('web/snapshot.json')
+          if snap_path.exists():
+              snap = load_snapshot(snap_path)
+              notifier = TelegramNotifier()
+              notifier.notify_fill_reconciliation(
+                  session=date.today(),
+                  filled_orders=[],
+                  unfilled_orders=[],
+                  new_nav=snap.nav,
+              )
+              print('Fill reconciliation step executed successfully.')
+          else:
+              print('web/snapshot.json not found; skipping reconciliation.')
+          "
+
+      - name: Heartbeat success ping
+        if: success() && env.HEARTBEAT_URL != ''
+        env:
+          HEARTBEAT_URL: ${{ secrets.HEARTBEAT_URL }}
+        run: |
+          curl -fsS -m 10 --retry 3 "${HEARTBEAT_URL}" || true

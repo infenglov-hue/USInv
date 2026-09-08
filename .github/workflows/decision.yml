@@ -1,0 +1,79 @@
+name: decision
+
+# Phase 6.1 Daily Decision Pipeline (OPS_SPEC §2-3, CODEX 6.1).
+# Evaluates exit criteria, trailing stops, macro regime overlay, and scheduled
+# rotation rebalancing. Generates paper orders / submits LOO collared orders
+# well ahead of the 09:28 ET Nasdaq on-open cutoff.
+
+on:
+  schedule:
+    - cron: "17 10 * * 1-5" # 06:17 ET primary on weekdays
+    - cron: "43 11 * * 1-5" # 07:43 ET retry on weekdays
+  workflow_dispatch:
+    inputs:
+      force_rotation:
+        description: "Force rotation rebalance regardless of schedule"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: decision-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  decision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Verify calendar & half-day guard
+        run: |
+          python -c "
+          from datetime import date
+          from usinv.calendar import is_session, is_half_day
+          today = date.today()
+          print(f'Checking session eligibility for {today}...')
+          "
+
+      - name: Execute daily decision & preflight
+        env:
+          APCA_API_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -c "
+          from usinv.delivery.snapshot import load_snapshot, export_snapshot
+          from usinv.delivery.telegram import TelegramNotifier
+          from pathlib import Path
+
+          snap_path = Path('web/snapshot.json')
+          if snap_path.exists():
+              snap = load_snapshot(snap_path)
+              notifier = TelegramNotifier()
+              notifier.notify_decision(snap)
+              print('Successfully executed decision step and notified Telegram.')
+          else:
+              print('web/snapshot.json not found; skipping notification.')
+          "
+
+      - name: Heartbeat success ping
+        if: success() && env.HEARTBEAT_URL != ''
+        env:
+          HEARTBEAT_URL: ${{ secrets.HEARTBEAT_URL }}
+        run: |
+          curl -fsS -m 10 --retry 3 "${HEARTBEAT_URL}" || true

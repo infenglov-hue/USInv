@@ -143,9 +143,7 @@ def _simulate_performance(
     mz_std = math.sqrt(sum((z - mz_mean) ** 2 for z in raw_mzs) / (len(raw_mzs) - 1))
     mzs = [(z - mz_mean) / mz_std for z in raw_mzs]
 
-    config_seed = (
-        int(hashlib.sha256(config.config_hash.encode()).hexdigest()[:8], 16) + seed_offset
-    )
+    config_seed = int(hashlib.sha256(config.config_hash.encode()).hexdigest()[:8], 16) + seed_offset
     strat_rng = random.Random(config_seed)
     raw_szs = [strat_rng.gauss(0, 1) for _ in sessions]
     sz_mean = sum(raw_szs) / len(raw_szs)
@@ -431,7 +429,7 @@ def run_all_experiments(
     verdict = classify_holdout(assessment)
     print(f"\nHOLDOUT VERDICT: >>> {verdict.value.upper()} <<<")
 
-    report_md = fr"""# Final Holdout Evaluation Report (Phase 5)
+    report_md = rf"""# Final Holdout Evaluation Report (Phase 5)
 
 - **Date**: {date.today().isoformat()}
 - **Verdict**: **{verdict.value.upper()}**

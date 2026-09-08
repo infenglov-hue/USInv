@@ -1,0 +1,108 @@
+{
+  "schema_version": "1.0.0",
+  "as_of_session": "2026-07-17",
+  "generated_at": "2026-07-17T20:00:00Z",
+  "stale_after": "2026-07-20T16:00:00Z",
+  "config_hash": "d3ecd3bd787897c9abfd450d97e33cbfa90de1d9f762d92760789e4ada17cb72",
+  "code_sha": "80f09f3c1d4a89e9f136b6cbef5847db1d12fae2",
+  "data_manifest_hash": "05bdd470475a6c71dd288108a97034fed37000a0492e15cc47a950c3d164ad1b",
+  "nav": 105420.5,
+  "cash": 10542.0,
+  "positions_value": 94878.5,
+  "positions": [
+    {
+      "security_id": "SEC:0000320193:AAPL",
+      "ticker": "AAPL",
+      "company_name": "Apple Inc.",
+      "shares": 150.0,
+      "cost_basis": 185.2,
+      "current_price": 220.5,
+      "market_value": 33075.0,
+      "weight_pct": 31.37,
+      "stop_price": 176.4,
+      "high_water_mark": 225.0,
+      "entry_session": "2026-06-01"
+    },
+    {
+      "security_id": "SEC:0001018724:AMZN",
+      "ticker": "AMZN",
+      "company_name": "Amazon.com Inc.",
+      "shares": 180.0,
+      "cost_basis": 165.4,
+      "current_price": 188.9,
+      "market_value": 34002.0,
+      "weight_pct": 32.25,
+      "stop_price": 151.12,
+      "high_water_mark": 192.0,
+      "entry_session": "2026-06-01"
+    }
+  ],
+  "candidates": [
+    {
+      "rank": 1,
+      "security_id": "SEC:0000320193:AAPL",
+      "ticker": "AAPL",
+      "company_name": "Apple Inc.",
+      "sector": "Computers",
+      "core_or_large": "large",
+      "composite_score": 0.884,
+      "factor_ranks": {
+        "momentum": 0.92,
+        "value": 0.54,
+        "quality": 0.96,
+        "low_vol": 0.72,
+        "size": 0.4
+      },
+      "red_flag_status": "CLEAN",
+      "entry_reference_price": 220.5
+    }
+  ],
+  "macro_regime": {
+    "regime": "NORMAL",
+    "overlay": "O1",
+    "equity_exposure_target": 1.0,
+    "signal_summary": "SPY > 200 SMA; Drawdown < 6.0%; Overlay inactive",
+    "benchmark_dd": -0.024,
+    "as_of_session": "2026-07-17"
+  },
+  "orders": [
+    {
+      "order_id": "ord_20260717_001",
+      "client_order_id": "usinv_20260717_SEC000032019_buy_a1",
+      "security_id": "SEC:0000320193:AAPL",
+      "ticker": "AAPL",
+      "side": "buy",
+      "quantity": 150.0,
+      "reference_close": 220.5,
+      "limit_price": 224.91,
+      "collar_pct": 0.02,
+      "status": "pending",
+      "reason": "entry"
+    }
+  ],
+  "performance_tail": [
+    {
+      "session": "2026-07-16",
+      "nav": 104800.0,
+      "benchmark_nav": 101200.0,
+      "daily_return": 0.0059,
+      "benchmark_daily_return": 0.0032
+    },
+    {
+      "session": "2026-07-17",
+      "nav": 105420.5,
+      "benchmark_nav": 101500.0,
+      "daily_return": 0.0059,
+      "benchmark_daily_return": 0.003
+    }
+  ],
+  "data_health": {
+    "status": "HEALTHY",
+    "freshness_evaluated_at": "2026-07-17T20:00:00Z",
+    "core_coverage_pct": 91.57,
+    "secondary_coverage_pct": 78.75,
+    "identity_gaps": 0,
+    "sector_gaps": 0,
+    "warnings": []
+  }
+}

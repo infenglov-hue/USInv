@@ -180,8 +180,7 @@ def _identity_regime_evidence(
     }
     latest_terminal_by_cik = {
         proof.cik: max(
-            observation.accepted.astimezone(UTC)
-            for observation in proof.terminal_form_observations
+            observation.accepted.astimezone(UTC) for observation in proof.terminal_form_observations
         )
         for proof in merge.form_history_proofs
         if proof.terminal_form_observations
@@ -243,10 +242,7 @@ def _identity_regime_evidence(
                 )
             )
             continue
-        if (
-            len(archives_by_cik.get(cik, ())) < 2
-            or cik not in current_common_pointers
-        ):
+        if len(archives_by_cik.get(cik, ())) < 2 or cik not in current_common_pointers:
             continue
         if mapping.status == "unmapped":
             superseded_by_listing[row.listing_evidence_pointer] = tuple(
