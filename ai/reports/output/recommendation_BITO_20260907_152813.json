@@ -1,0 +1,67 @@
+{
+  "symbol": "BITO",
+  "name": "ProShares Bitcoin Strategy ETF",
+  "category": "thematic_and_crypto",
+  "leverage": 1.0,
+  "action": "SPECULATIVE_BUY",
+  "conviction_score": 59.7,
+  "thesis_summary": "BITO (Crypto Futures) y\u00fcksek volatilite ve g\u00fc\u00e7l\u00fc yukar\u0131 y\u00f6nl\u00fc tepki potansiyeline sahiptir. Pozitif momentum (72.6 RSI) korunmakta olup, s\u0131k\u0131 stop loss (%3.7) ile kontroll\u00fc taktik pozisyon i\u00e7in uygundur.",
+  "bull_catalysts": [
+    "Positive momentum and sustained institutional flows into BITO ecosystem."
+  ],
+  "bear_risks": [
+    "Is Gold Losing Its Hedge \u2014 When Safe Havens Fail, What's Left? (benzinga)",
+    "Google's Jaw-Dropping Capex \u2013 AI Story Has More Gas; Unstable Market Structures Hit Silver, Gold, Bitcoin, And Stocks (benzinga)",
+    "Bitcoin Meltdown Slams ETF Market: 5 Funds Hit Fresh Lows As Traders Hunt A Bottom (benzinga)"
+  ],
+  "macro_context": "Mevcut makro rejim 'CHOPPY_ROTATION' (65% g\u00fcven). Bu fon rejim dinamikleriyle y\u00fcksek korelasyona ve r\u00fczgar arkas\u0131na sahip.",
+  "metrics": {
+    "symbol": "BITO",
+    "current_price": 10.64,
+    "return_5d": -0.0014,
+    "return_20d": 0.2251,
+    "return_60d": 0.2952,
+    "return_120d": 0.0566,
+    "annualized_volatility": 0.3727,
+    "downside_deviation": 0.3401,
+    "sortino_ratio": 0.51,
+    "sharpe_ratio": 0.46,
+    "max_drawdown_60d": -0.1188,
+    "rsi_14": 72.59,
+    "ema_20": 9.71,
+    "sma_50": 8.9,
+    "sma_200": 9.47,
+    "trend_alignment": "BULLISH",
+    "beta_spy": 1.18,
+    "beta_qqq": 0.62,
+    "avg_volume_20d": 10688587.0,
+    "avg_dollar_volume_20d": 113726565.0,
+    "is_liquid": true,
+    "is_high_risk": true
+  },
+  "trade_plan": {
+    "entry_zone_low": 10.55,
+    "entry_zone_high": 10.73,
+    "target_1": 11.8,
+    "target_2": 12.8,
+    "stop_loss": 9.87,
+    "risk_reward_ratio": 2.81,
+    "max_portfolio_allocation_pct": 15.0,
+    "expected_holding_days": 45,
+    "trailing_stop_atr": 0.38
+  },
+  "risk_profile": {
+    "volatility_grade": "VERY_HIGH",
+    "leverage_decay_risk": "LOW",
+    "max_historical_drawdown": -0.1188,
+    "suggested_stop_loss_pct": 7.0,
+    "beta_exposure": 0.62
+  },
+  "generated_at": "2026-09-07T15:28:13.638071Z",
+  "raw_evidence": {
+    "quant_score": 85.0,
+    "sortino_score": 33.666666666666664,
+    "macro_score": 65.0,
+    "sentiment_score": 35.0
+  }
+}

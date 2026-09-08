@@ -1,0 +1,67 @@
+{
+  "symbol": "XBI",
+  "name": "SPDR S&P Biotech ETF",
+  "category": "thematic_and_crypto",
+  "leverage": 1.0,
+  "action": "SPECULATIVE_BUY",
+  "conviction_score": 70.6,
+  "thesis_summary": "XBI (Biotechnology High-Beta) y\u00fcksek volatilite ve g\u00fc\u00e7l\u00fc yukar\u0131 y\u00f6nl\u00fc tepki potansiyeline sahiptir. Pozitif momentum (55.2 RSI) korunmakta olup, s\u0131k\u0131 stop loss (%3.0) ile kontroll\u00fc taktik pozisyon i\u00e7in uygundur.",
+  "bull_catalysts": [
+    "Oil Surges, Treasury Yields Climb a Fifth Day, Software Retreats: Stock Market Today (benzinga)",
+    "What's Going On With Novavax Stock? (benzinga)",
+    "Novavax Stock Climbs Monday: What's Going On? (benzinga)"
+  ],
+  "bear_risks": [
+    "Nasdaq 100 Falls As Warsh Revives Rate Hike Bets: Stock Market Today (benzinga)"
+  ],
+  "macro_context": "Mevcut makro rejim 'CHOPPY_ROTATION' (65% g\u00fcven). Bu fon rejim dinamikleriyle y\u00fcksek korelasyona ve r\u00fczgar arkas\u0131na sahip.",
+  "metrics": {
+    "symbol": "XBI",
+    "current_price": 163.85,
+    "return_5d": 0.0085,
+    "return_20d": 0.0372,
+    "return_60d": 0.2347,
+    "return_120d": 0.2409,
+    "annualized_volatility": 0.2963,
+    "downside_deviation": 0.3036,
+    "sortino_ratio": 1.79,
+    "sharpe_ratio": 1.83,
+    "max_drawdown_60d": -0.1048,
+    "rsi_14": 55.23,
+    "ema_20": 162.4,
+    "sma_50": 158.08,
+    "sma_200": 146.14,
+    "trend_alignment": "STRONG_BULLISH",
+    "beta_spy": 0.89,
+    "beta_qqq": 0.44,
+    "avg_volume_20d": 414960.0,
+    "avg_dollar_volume_20d": 67991171.0,
+    "is_liquid": true,
+    "is_high_risk": true
+  },
+  "trade_plan": {
+    "entry_zone_low": 162.54,
+    "entry_zone_high": 165.16,
+    "target_1": 178.59,
+    "target_2": 191.37,
+    "stop_loss": 154.02,
+    "risk_reward_ratio": 2.8,
+    "max_portfolio_allocation_pct": 15.0,
+    "expected_holding_days": 45,
+    "trailing_stop_atr": 4.36
+  },
+  "risk_profile": {
+    "volatility_grade": "HIGH",
+    "leverage_decay_risk": "LOW",
+    "max_historical_drawdown": -0.1048,
+    "suggested_stop_loss_pct": 5.0,
+    "beta_exposure": 0.44
+  },
+  "generated_at": "2026-09-07T15:29:19.996660Z",
+  "raw_evidence": {
+    "quant_score": 77.44,
+    "sortino_score": 76.33333333333333,
+    "macro_score": 65.0,
+    "sentiment_score": 60.0
+  }
+}

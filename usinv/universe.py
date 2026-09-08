@@ -64,6 +64,7 @@ FPI_FORMS: Final = frozenset({"20-F", "40-F", "6-K", "F-1"})
 PRE_REVENUE_BIOTECH_SICS: Final = frozenset({2834, 2836, 8731})
 NON_COMMON_LISTING_NAME_PATTERN: Final = re.compile(
     r"\b(?:ETF|exchange[- ]traded funds?|warrants?|rights?|depositary shares?|"
+    r"ADRs?|American Depositary Receipts?|"
     r"common shares? of beneficial interest|royalty trust|oil trust|"
     r"rolling shares?|non[- ]?voting shares?|"
     r"preferred(?:\s+\w+){0,3}\s+(?:stock|shares?|securities|units?|lp)|"
@@ -73,6 +74,7 @@ NON_COMMON_LISTING_NAME_PATTERN: Final = re.compile(
 )
 NON_COMMON_LISTING_PRODUCT_PATTERN: Final = re.compile(
     r"\b(?:ProShares|iShares|Tidal Trust|Grayscale Investments|Innovator|"
+    r"Dan IVES Wedbush|"
     r"KraneShares|VistaShares|Timothy Plan|Hedgeye|Milliman|FundVantage Trust|"
     r"PPLUS Trust|Synthetic Fixed[- ]?Income Securities|Structured Products Corp|"
     r"Lehman ABS Corp|Merrill Lynch Depositor|"
@@ -570,16 +572,16 @@ def build_universe_snapshot(
                 mapping_pass = False
                 security = None
                 pointers.add(test_evidence)
-            if explicit_non_common_listing and not mapping_pass:
-                mapping_status = "non_common_listing"
-            if non_stock_evidence and not mapping_pass:
+            elif (explicit_non_common_listing or non_stock_evidence) and not mapping_pass:
                 mapping_status = "non_common_listing"
             if mapping_status == "unmapped" and regime is not None:
                 listing_pointer = (
                     f"alpha-vantage://{listing.source_sha256}/{listing.row_number}"
                 )
-                candidate_ciks = regime.candidate_ciks_by_pointer.get(listing_pointer, ())
-                if candidate_ciks and all(
+                candidate_ciks = regime.candidate_ciks_by_pointer.get(listing_pointer)
+                if candidate_ciks is not None and not candidate_ciks:
+                    mapping_status = "no_periodic_filing_at_cutoff"
+                elif candidate_ciks and all(
                     cik in regime.foreign_regime_pointers for cik in candidate_ciks
                 ):
                     mapping_status = "non_domestic_listing"

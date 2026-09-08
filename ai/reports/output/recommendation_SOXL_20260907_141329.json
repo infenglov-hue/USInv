@@ -1,0 +1,66 @@
+{
+  "symbol": "SOXL",
+  "name": "Direxion Daily Semiconductor Bull 3X Shares",
+  "category": "leveraged_tech_semi",
+  "leverage": 3.0,
+  "action": "AVOID_CASH",
+  "conviction_score": 42.8,
+  "thesis_summary": "SOXL i\u00e7in volatilite erimesi veya negatif momentum riski y\u00fcksektir. Mevcut makro rejimde nakitte kalmak veya daha g\u00fc\u00e7l\u00fc alternatiflere y\u00f6nelmek \u00f6nerilir.",
+  "bull_catalysts": [
+    "Salesforce Stock Has Surged as AI and Anthropic Bets Pay Off, But Technical Risks Remain (benzinga)",
+    "Bloom Energy Stock Faces Key Risks as Growth Fuels S&P 500 Index Inclusion (benzinga)"
+  ],
+  "bear_risks": [
+    "OpenAI Scientist Sounds the Alarm on AI, Warns \u2018No One Is Prepared\u2019 for What Comes Next \u2014 Hopes for \u2018Voluntary Slowdowns\u2019 in AI Development (benzinga)"
+  ],
+  "macro_context": "Mevcut makro rejim 'CHOPPY_ROTATION' (65% g\u00fcven). Bu fon rejim dinamikleriyle y\u00fcksek korelasyona ve r\u00fczgar arkas\u0131na sahip.",
+  "metrics": {
+    "symbol": "SOXL",
+    "current_price": 117.54,
+    "return_5d": 0.0416,
+    "return_20d": -0.0958,
+    "return_60d": -0.4755,
+    "return_120d": 0.4589,
+    "annualized_volatility": 1.6638,
+    "downside_deviation": 1.8352,
+    "sortino_ratio": 1.26,
+    "sharpe_ratio": 1.39,
+    "max_drawdown_60d": -0.6948,
+    "rsi_14": 45.63,
+    "ema_20": 121.0,
+    "sma_50": 145.2,
+    "sma_200": 162.18,
+    "trend_alignment": "STRONG_BEARISH",
+    "beta_spy": 9.67,
+    "beta_qqq": 6.61,
+    "avg_volume_20d": 922287.0,
+    "avg_dollar_volume_20d": 108405637.0,
+    "is_liquid": true,
+    "is_high_risk": true
+  },
+  "trade_plan": {
+    "entry_zone_low": 116.6,
+    "entry_zone_high": 118.48,
+    "target_1": 138.69,
+    "target_2": 157.02,
+    "stop_loss": 103.44,
+    "risk_reward_ratio": 2.8,
+    "max_portfolio_allocation_pct": 10.0,
+    "expected_holding_days": 15,
+    "trailing_stop_atr": 11.0
+  },
+  "risk_profile": {
+    "volatility_grade": "EXTREME",
+    "leverage_decay_risk": "HIGH",
+    "max_historical_drawdown": -0.6948,
+    "suggested_stop_loss_pct": 9.0,
+    "beta_exposure": 6.61
+  },
+  "generated_at": "2026-09-07T14:13:29.158427Z",
+  "raw_evidence": {
+    "quant_score": 10.840000000000002,
+    "sortino_score": 58.666666666666664,
+    "macro_score": 65.0,
+    "sentiment_score": 55.0
+  }
+}

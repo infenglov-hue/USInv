@@ -268,3 +268,18 @@ backtest, paper and live operation.
   - Filtered blank names and expanded non-common regexes in `usinv/universe.py`.
   - Mapped Tiingo inactive evidence to `superseded_sec_listing`.
   - Mapped zero-candidate SEC discovery results to `no_periodic_filing_at_cutoff`, completely eliminating all residual identity gaps.
+
+---
+
+## USInv AI — Autonomous High-Risk / High-Reward ETF Intelligence (`ai/`)
+
+A dedicated autonomous investment intelligence engine is located in [`ai/`](ai/README.md). It discovers, analyzes, and provides concrete tactical trade plans for investable high-risk / high-reward funds and ETFs (2x/3x Leveraged, Disruptive Thematic, Crypto, Biotech, and Tactical Hedges).
+
+Quick commands:
+```powershell
+python -m ai.cli macro
+python -m ai.cli scan --top 3
+python -m ai.cli deepdive SOXL
+python -m ai.cli history
+```
+See [`ai/README.md`](ai/README.md) for full architectural details, post-mortem notes, and configuration guides.

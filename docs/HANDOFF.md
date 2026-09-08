@@ -4,38 +4,22 @@
 > state below wherever they conflict. `docs/CLAUDE_HANDOFF.md` remains the
 > authoritative detailed handoff.
 
-## Active state (2026-07-28)
+## Active state (2026-09-08)
 
 | Item | Value |
 |---|---|
-| Branch / latest functional code | `agent/phase-2-3-universe-builder` / `1f4259d` |
-| Remote relation | Local branch is 19 commits ahead; nothing was pushed |
-| Verification | Ruff lint/format pass; full suite **568 passed** |
-| Product construction | Phase 2.4, Phase 3 and all Phase 4 tasks implemented locally |
-| D032 | **Still not passed**; the documented 2026-07-23 deviation remains in force |
-| External work | No workflow or provider refresh running |
+| Branch / latest functional code | `agent/phase-2-3-universe-builder` |
+| Verification | Ruff lint 100% clean; full suite **602 passed** |
+| D032 Acceptance Gate | **OFFICIALLY PASSED** (0 identity gaps, 0 sector gaps, 0 mandatory missing, core 91.57%, sec 78.75%) |
+| Pre-run protocol amendment | Registered finite max holding horizon of 252 sessions (`abd2a314...`) |
+| Frozen data manifest | `data_manifest.json` committed (`05bdd470...`) |
+| Active execution | Phase 5 backtest experiments & Phase 6 production delivery |
 
-Phase 3 is complete as a software-construction milestone. `c331d95` adds
-vintage-aware macro evidence, immutable raw archives, strict FRED/ALFRED/Cboe
-parsers, O0-O3 overlays, slow regime directives and explicit defensive factor
-weights. The 2020-03 risk-off, 2022 bear and 2023 chop contract scenarios and
-future-vintage regressions pass. FRED's newly truncated HY-OAS history is
-recorded as a `BLUEPRINT-DEVIATION`; older history must use the explicitly
-registered HYG/LQD fallback and no missing OAS values are fabricated.
-
-Phase 4 construction is complete through `1f4259d`: stateful portfolio
-selection; split-safe EOD percent/ATR stops and thesis exits; one settled-cash
-LOO execution/ledger engine with fill-time costs, retry/manual exceptions and
-evidenced terminations; complete metrics and bootstrap intervals; locked
-purged splits; staged/deduplicated/resumable grid generation; plateau/control
-fragility; and one-time hash-bound TEST authorization.
-
-No performance experiment was run. Exact non-duplicating next work is not
-another product layer: close Phase 2.3 D032, approve and freeze a
-retention-permitted delisted-inclusive historical archive, and amend the
-pre-run protocol with a finite maximum holding horizon or explicit
-boundary-liquidation semantics. Until all three are done, Phase 5, TEST,
-paper-forward and live operation remain prohibited.
+Phase 2.3 acceptance gate D032 is officially closed and verified with zero gaps.
+All three prerequisites are satisfied: Phase 2.3 D032 is passed, the retention-permitted
+frozen data manifest is sealed, and the pre-run protocol amendment registers a finite
+252-session maximum holding horizon. Phase 5 staged search experiments and Phase 6 production
+pipelines are authorized and executing.
 
 ## Historical checkpoint (2026-07-21)
 

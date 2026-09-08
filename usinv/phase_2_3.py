@@ -262,8 +262,7 @@ def _identity_regime_evidence(
         candidate_ciks_by_pointer={
             row.listing_evidence_pointer: row.candidate_ciks
             for row in discovery.rows
-            if row.candidate_ciks
-            and not any("confidence=weak" in pointer for pointer in row.candidate_evidence_pointers)
+            if not any("confidence=weak" in pointer for pointer in row.candidate_evidence_pointers)
         },
         foreign_regime_pointers=foreign_regime,
         no_periodic_pointers=no_periodic,

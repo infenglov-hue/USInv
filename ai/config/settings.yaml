@@ -1,0 +1,29 @@
+alpaca:
+  base_url: "https://paper-api.alpaca.markets"
+  data_url: "https://data.alpaca.markets"
+  feed: "iex"
+  timeout_seconds: 15
+
+screener:
+  min_price: 5.0
+  min_avg_daily_volume: 50000 # Realistic for IEX feed (corresponds to multi-million consolidated)
+  min_dollar_volume: 1000000.0
+  min_annualized_volatility: 0.25 # 25% minimum annual volatility for high-risk classification
+  lookback_days: 90
+
+scoring_weights:
+  momentum: 0.35
+  sortino_ratio: 0.20
+  macro_alignment: 0.25
+  catalyst_sentiment: 0.20
+
+risk:
+  max_portfolio_allocation_pct: 15.0 # Max 15% single-ETF allocation for leveraged/high-risk assets
+  default_stop_loss_pct: 8.0 # Standard 8% stop loss
+  atr_multiplier_stop: 2.0 # 2x ATR dynamic stop
+  min_risk_reward_ratio: 2.0 # Target at least 1:2 R/R
+  leverage_decay_penalty_days: 30 # Time horizon cap for holding 3x leveraged ETFs
+
+storage:
+  duckdb_path: "ai/data/ai_alpha.duckdb"
+  reports_dir: "ai/reports/output"

@@ -1,0 +1,135 @@
+categories:
+  leveraged_tech_semi:
+    description: "2x and 3x leveraged technology and semiconductor growth funds"
+    risk_level: "EXTREME"
+    symbols:
+      - symbol: "TQQQ"
+        name: "ProShares UltraPro QQQ"
+        leverage: 3.0
+        underlying: "QQQ / Nasdaq-100"
+        theme: "Tech & Growth"
+      - symbol: "SOXL"
+        name: "Direxion Daily Semiconductor Bull 3X Shares"
+        leverage: 3.0
+        underlying: "Semiconductors"
+        theme: "Semiconductors & AI"
+      - symbol: "TECL"
+        name: "Direxion Daily Technology Bull 3X Shares"
+        leverage: 3.0
+        underlying: "Technology Select Sector"
+        theme: "Enterprise Tech"
+      - symbol: "FNGU"
+        name: "MicroSectors FANG+ Index 3X Leveraged ETN"
+        leverage: 3.0
+        underlying: "FANG+ Tech Giants"
+        theme: "Mega-Cap Tech"
+      - symbol: "NVDL"
+        name: "GraniteShares 2x Long NVDA Daily ETF"
+        leverage: 2.0
+        underlying: "NVIDIA Corp"
+        theme: "AI Chips Single-Stock"
+      - symbol: "USD"
+        name: "ProShares Ultra Semiconductors"
+        leverage: 2.0
+        underlying: "Semiconductors"
+        theme: "Semiconductors 2X"
+
+  leveraged_broad_smallcap:
+    description: "2x and 3x leveraged broad market and high-beta small caps"
+    risk_level: "VERY_HIGH"
+    symbols:
+      - symbol: "UPRO"
+        name: "ProShares UltraPro S&P 500"
+        leverage: 3.0
+        underlying: "S&P 500"
+        theme: "Broad US Large Cap"
+      - symbol: "TNA"
+        name: "Direxion Daily Small Cap Bull 3X Shares"
+        leverage: 3.0
+        underlying: "Russell 2000"
+        theme: "Small-Cap High-Beta"
+
+  thematic_and_crypto:
+    description: "Disruptive technology, crypto spot/derivatives, and biotech high-beta"
+    risk_level: "HIGH"
+    symbols:
+      - symbol: "SMH"
+        name: "VanEck Semiconductor ETF"
+        leverage: 1.0
+        underlying: "MVIS Semiconductor 25 Index"
+        theme: "Semiconductors"
+      - symbol: "ARKK"
+        name: "ARK Innovation ETF"
+        leverage: 1.0
+        underlying: "Disruptive Innovation"
+        theme: "Disruptive Tech & AI"
+      - symbol: "IBIT"
+        name: "iShares Bitcoin Trust ETF"
+        leverage: 1.0
+        underlying: "Bitcoin Spot"
+        theme: "Crypto / Digital Assets"
+      - symbol: "WGMI"
+        name: "Valkyrie Bitcoin Miners ETF"
+        leverage: 1.0
+        underlying: "Bitcoin Mining Equities"
+        theme: "Crypto Mining High-Beta"
+      - symbol: "BITO"
+        name: "ProShares Bitcoin Strategy ETF"
+        leverage: 1.0
+        underlying: "Bitcoin CME Futures"
+        theme: "Crypto Futures"
+      - symbol: "XBI"
+        name: "SPDR S&P Biotech ETF"
+        leverage: 1.0
+        underlying: "S&P Biotechnology Select"
+        theme: "Biotechnology High-Beta"
+      - symbol: "BOTZ"
+        name: "Global X Robotics & Artificial Intelligence ETF"
+        leverage: 1.0
+        underlying: "Robotics & AI Theme"
+        theme: "AI & Robotics"
+
+  leveraged_inverse_hedge:
+    description: "Tactical short/hedging vehicles used in severe Risk-Off regimes"
+    risk_level: "EXTREME"
+    symbols:
+      - symbol: "SQQQ"
+        name: "ProShares UltraPro Short QQQ"
+        leverage: -3.0
+        underlying: "Nasdaq-100 Short"
+        theme: "Tech Short Hedge"
+      - symbol: "SOXS"
+        name: "Direxion Daily Semiconductor Bear 3X"
+        leverage: -3.0
+        underlying: "Semiconductors Short"
+        theme: "Semiconductor Short Hedge"
+      - symbol: "SPXU"
+        name: "ProShares UltraPro Short S&P 500"
+        leverage: -3.0
+        underlying: "S&P 500 Short"
+        theme: "Market Short Hedge"
+
+  commodities_and_volatility:
+    description: "Tactical commodity swings and volatility products"
+    risk_level: "EXTREME"
+    symbols:
+      - symbol: "UCO"
+        name: "ProShares Ultra Bloomberg Crude Oil"
+        leverage: 2.0
+        underlying: "WTI Crude Oil"
+        theme: "Energy Momentum"
+      - symbol: "BOIL"
+        name: "ProShares Ultra Bloomberg Natural Gas"
+        leverage: 2.0
+        underlying: "Natural Gas"
+        theme: "Commodity Volatility"
+      - symbol: "UVXY"
+        name: "ProShares Ultra VIX Short-Term Futures"
+        leverage: 1.5
+        underlying: "VIX Short-Term Futures"
+        theme: "Volatility Spike Hedge"
+      - symbol: "SVIX"
+        name: "-1x Short VIX Futures ETF"
+        leverage: -1.0
+        underlying: "Short VIX Futures"
+        theme: "Volatility Short Carry"

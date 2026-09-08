@@ -1,0 +1,14 @@
+{
+  "evidence_mode": "research",
+  "first_session": "2012-01-03",
+  "last_session": "2026-06-30",
+  "manifest_hash": "05bdd470475a6c71dd288108a97034fed37000a0492e15cc47a950c3d164ad1b",
+  "source_batch_hashes": {
+    "filing_sic": "28d357c8d4fe11c0825a009d2e5b0cfdc00dad9dc6cd8dcb918a507dba214ee0",
+    "fundamentals": "fe3bf224c0f18045374b6d00444b0837b36562255aca40a485190b715fd36d2b",
+    "prices": "7b0448870b52218dd06b5893b98ff825df083fc3132c5c4297a44232a08a270d",
+    "universe": "c53e4b5e0a23d315a123c47ffb9c41935ffaf4dd307f7e80291e8cd537509f7c"
+  },
+  "unmapped_security_count": 0,
+  "unresolved_action_count": 0
+}

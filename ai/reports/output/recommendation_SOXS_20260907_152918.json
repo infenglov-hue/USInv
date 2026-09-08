@@ -1,0 +1,66 @@
+{
+  "symbol": "SOXS",
+  "name": "Direxion Daily Semiconductor Bear 3X",
+  "category": "leveraged_inverse_hedge",
+  "leverage": -3.0,
+  "action": "AVOID_CASH",
+  "conviction_score": 57.2,
+  "thesis_summary": "SOXS i\u00e7in volatilite erimesi veya negatif momentum riski y\u00fcksektir. Mevcut makro rejimde nakitte kalmak veya daha g\u00fc\u00e7l\u00fc alternatiflere y\u00f6nelmek \u00f6nerilir.",
+  "bull_catalysts": [
+    "Salesforce Stock Has Surged as AI and Anthropic Bets Pay Off, But Technical Risks Remain (benzinga)",
+    "Bloom Energy Stock Faces Key Risks as Growth Fuels S&P 500 Index Inclusion (benzinga)"
+  ],
+  "bear_risks": [
+    "OpenAI Scientist Sounds the Alarm on AI, Warns \u2018No One Is Prepared\u2019 for What Comes Next \u2014 Hopes for \u2018Voluntary Slowdowns\u2019 in AI Development (benzinga)"
+  ],
+  "macro_context": "Mevcut makro rejim 'CHOPPY_ROTATION' (65% g\u00fcven). Makro r\u00fczgarlar bu varl\u0131k i\u00e7in temkinli olmay\u0131 gerektiriyor.",
+  "metrics": {
+    "symbol": "SOXS",
+    "current_price": 46.325,
+    "return_5d": -0.0557,
+    "return_20d": 0.0244,
+    "return_60d": 8.3209,
+    "return_120d": 1.0676,
+    "annualized_volatility": 15.3381,
+    "downside_deviation": 1.6073,
+    "sortino_ratio": 13.39,
+    "sharpe_ratio": 1.4,
+    "max_drawdown_60d": -0.4766,
+    "rsi_14": 51.13,
+    "ema_20": 47.21,
+    "sma_50": 37.96,
+    "sma_200": 23.62,
+    "trend_alignment": "NEUTRAL",
+    "beta_spy": -5.51,
+    "beta_qqq": -8.86,
+    "avg_volume_20d": 793472.0,
+    "avg_dollar_volume_20d": 36757586.0,
+    "is_liquid": true,
+    "is_high_risk": true
+  },
+  "trade_plan": {
+    "entry_zone_low": 45.95,
+    "entry_zone_high": 46.7,
+    "target_1": 54.66,
+    "target_2": 61.88,
+    "stop_loss": 40.77,
+    "risk_reward_ratio": 2.8,
+    "max_portfolio_allocation_pct": 10.0,
+    "expected_holding_days": 15,
+    "trailing_stop_atr": 4.27
+  },
+  "risk_profile": {
+    "volatility_grade": "EXTREME",
+    "leverage_decay_risk": "HIGH",
+    "max_historical_drawdown": -0.4766,
+    "suggested_stop_loss_pct": 9.0,
+    "beta_exposure": -8.86
+  },
+  "generated_at": "2026-09-07T15:29:18.782725Z",
+  "raw_evidence": {
+    "quant_score": 49.88,
+    "sortino_score": 100.0,
+    "macro_score": 35.0,
+    "sentiment_score": 55.0
+  }
+}

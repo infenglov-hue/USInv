@@ -183,6 +183,14 @@ optimistic end. A Sharpe near 1.0 net over a decade is elite; demand less.
 
 ## 7. Amendment log
 
+- **2026-09-08 — pre-run protocol amendment (finite holding horizon & data manifest freeze):**
+  Registered the finite maximum holding horizon of 252 sessions (one trading year, exceeding the 65-session maximum rotation horizon) with boundary purging across the static splits:
+  - TRAIN: 2012-01-03 through 2017-12-28 (1,508 usable sessions; 252 sessions purged prior to VALIDATION)
+  - VALIDATION: 2019-01-02 through 2021-12-30 (756 usable sessions; 252 sessions purged prior to TEST)
+  - TEST: 2023-01-03 through 2026-06-30 (875 sessions, touched exactly once)
+  - Split protocol hash: `abd2a314df0b7ff35c2f5a27f17b6c9e40898009ba41a91fb3e39d3c1385751f`
+  Committed `data_manifest.json` with frozen source batch hashes (manifest hash: `05bdd470475a6c71dd288108a97034fed37000a0492e15cc47a950c3d164ad1b`).
+
 - **2026-07-28 — pre-run executable-protocol clarification (no experiment
   results existed):** resolved an internal conflict between generic Stage-1
   best-challenger retention, the four mandatory O0/O1 × none/20% interaction

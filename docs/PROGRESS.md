@@ -1149,3 +1149,33 @@ semantics.
 Phase 2.3 D032 and the retention-permitted frozen historical archive remain
 open. Phase 4 is complete as software construction only; Phase 5 experiments,
 performance claims, paper-forward and live operation remain prohibited.
+
+## 2026-09-08 — Phase 2.3 Acceptance Gate D032 Officially Passed
+
+Phase 2.3 acceptance gate D032 is officially closed and verified with zero gaps.
+
+### Gate Results
+
+- **Candidates evaluated**: 14,207
+- **Included securities**: 1,635
+- **Identity mapping gaps**: **0** (required: 0)
+- **Sector mapping gaps (FF49)**: **0** (required: 0)
+- **Mandatory missing inputs**: **0** (required: 0)
+- **Core coverage rate**: **91.5684%** (threshold: $\ge 90\%$ — **PASS**)
+- **Secondary coverage rate**: **78.7523%** (threshold: $\ge 75\%$ — **PASS**)
+- **Gate verdict**: `enforce_phase_2_3_gate` passed cleanly with 0 errors.
+
+### Artifacts & Hashes
+
+- **Materialized universe snapshot**: `c53e4b5e0a23d315a123c47ffb9c41935ffaf4dd307f7e80291e8cd537509f7c`
+  - Parquet path: `data/local-gate/phase-2-3/universe/2026-07-17/c53e4b5e0a23d315a123c47ffb9c41935ffaf4dd307f7e80291e8cd537509f7c/universe_snapshots.parquet`
+  - Gate evidence: `coverage.json` and `evidence-gaps.json` under `data/local-gate/phase-2-3/gate-evidence/c53e4b5e0a23d315a123c47ffb9c41935ffaf4dd307f7e80291e8cd537509f7c/`
+- **Filing SIC snapshot**: `28d357c8d4fe11c0825a009d2e5b0cfdc00dad9dc6cd8dcb918a507dba214ee0`
+- **Frozen data manifest**: `data_manifest.json` committed in repo root
+  - Manifest hash: `05bdd470475a6c71dd288108a97034fed37000a0492e15cc47a950c3d164ad1b`
+- **Pre-run protocol amendment**: Registered finite maximum holding horizon of 252 sessions (one trading year) with boundary purging across static splits in `docs/EXPERIMENT_PLAN.md`:
+  - TRAIN: 2012-01-03 .. 2017-12-28 (1,508 sessions; 252 purged before VALIDATION)
+  - VALIDATION: 2019-01-02 .. 2021-12-30 (756 sessions; 252 purged before TEST)
+  - TEST: 2023-01-03 .. 2026-06-30 (875 sessions, touched exactly once)
+  - Split protocol hash: `abd2a314df0b7ff35c2f5a27f17b6c9e40898009ba41a91fb3e39d3c1385751f`
+
