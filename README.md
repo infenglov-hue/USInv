@@ -309,6 +309,10 @@ backtest, paper and live operation.
   - Added `ai` to `extend-exclude` in `pyproject.toml`, preserving 100% clean `ruff check .` and `ruff format --check .` for core CI workflows, while keeping all unit tests active.
   - Refreshed and unified `docs/HANDOFF.md` and `README.md` to cleanly state the Phase 6 Complete / Phase 7 Paper-Forward active status.
 
+### Issue 8: CI/CD Decision Workflow Missing Module Export (`is_half_day`)
+- **Problem**: Scheduled GitHub Actions workflow `decision.yml` failed with `ImportError: cannot import name 'is_half_day' from 'usinv.calendar'`.
+- **Root Cause**: The session eligibility step in `decision.yml` attempted to import `is_half_day` directly from `usinv.calendar`, but `is_half_day` existed only as a boolean attribute of `TradingSession` instances rather than a top-level helper function.
+- **Solution**: Exported top-level `is_half_day(value: SessionDate) -> bool` in `usinv/calendar.py` backed by `default_calendar().session(value).is_half_day`, verified across all 14 calendar unit tests.
 
 ---
 

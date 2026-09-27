@@ -217,6 +217,12 @@ def is_session(value: SessionDate) -> bool:
     return default_calendar().is_session(value)
 
 
+def is_half_day(value: SessionDate) -> bool:
+    if not is_session(value):
+        return False
+    return session(value).is_half_day
+
+
 def session(value: SessionDate) -> TradingSession:
     return default_calendar().session(value)
 
