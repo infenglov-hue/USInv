@@ -561,7 +561,7 @@ def materialize_security_master(
             True,
         )
 
-    temporary = root / f".{snapshot_id}.{uuid.uuid4().hex}.tmp"
+    temporary = root / f".tmp.{uuid.uuid4().hex[:12]}"
     temporary.mkdir(parents=True, exist_ok=False)
     try:
         pq.write_table(

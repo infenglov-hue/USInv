@@ -710,7 +710,7 @@ def materialize_cover_evidence_shard(
         / acquisition.plan_snapshot_id
         / acquisition.as_of.date().isoformat()
     )
-    temporary = root / f".pending.{uuid.uuid4().hex}.tmp"
+    temporary = root / f".tmp.{uuid.uuid4().hex[:12]}"
     temporary.mkdir(parents=True, exist_ok=False)
     try:
         master_snapshot = materialize_security_master(bootstrap.master, temporary / "master")
@@ -967,7 +967,7 @@ def materialize_cover_evidence_merge(
         / merged.as_of.date().isoformat()
         / "snapshots"
     )
-    temporary = root / f".pending.{uuid.uuid4().hex}.tmp"
+    temporary = root / f".tmp.{uuid.uuid4().hex[:12]}"
     temporary.mkdir(parents=True, exist_ok=False)
     try:
         master_snapshot = materialize_security_master(merged.master, temporary / "master")

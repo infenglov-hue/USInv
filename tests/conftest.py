@@ -32,3 +32,16 @@ def artifact_guard() -> Iterator[None]:
         | {path for path in set(before) & set(after) if before[path] != after[path]}
     )
     assert after == before, f"tests modified production runtime paths: {changed}"
+
+
+import sys  # noqa: E402
+
+if sys.platform == "win32":
+
+    @pytest.fixture
+    def tmp_path(tmp_path: Path) -> Path:
+        resolved = str(tmp_path.resolve())
+        if not resolved.startswith("\\\\?\\"):
+            return Path(f"\\\\?\\{resolved}")
+        return tmp_path
+
