@@ -1,5 +1,25 @@
 # PROGRESS
 
+## 2026-09-27 — Phase 7 Weekly Integrity Audit & Windows Path Resilience
+
+### Implemented & Verified
+- **Weekly Integrity Audit & Drift Monitoring (`usinv/delivery/audit.py`, `.github/workflows/weekly-audit.yml`)**:
+  - Implemented `evaluate_weekly_audit` per OPS_SPEC §3, §5, and CODEX Phase 7:
+    - Validates delivery snapshot schema and uncorrupted state.
+    - Evaluates exact NAV accounting identity: `positions_value + cash == nav` (verified to penny precision).
+    - Checks immutability of frozen winning model/config hash (`d3ecd3bd...`) and data manifest hash (`05bdd470...`).
+    - Evaluates performance tail continuity and data health coverage thresholds (Core ≥90%, Secondary ≥75%, 0 identity/sector gaps).
+  - Integrated `weekly-audit` subcommand in `usinv/cli.py` with optional `--enforce`, `--output`, and `--notify-telegram`.
+  - Added scheduled weekend workflow `.github/workflows/weekly-audit.yml` (Sundays 07:00 ET / 11:00 UTC).
+  - Extended `TelegramNotifier` with `notify_weekly_audit`.
+  - Corrected demo portfolio balance in `web/snapshot.json` by restoring third position (`MSFT`), establishing 100.0% accounting identity parity.
+- **Windows Path Length & Unicode Resilience**:
+  - Compacted temporary staging directories in `usinv/data/edgar/cover_shards.py` and `usinv/data/edgar/securities.py` to eliminate 260 MAX_PATH exhaustion on Windows.
+  - Added Win32 extended-length path prefix (`\\?\`) handler for pytest `tmp_path` fixture in `tests/conftest.py`.
+- **Quality & Verification**:
+  - Ruff lint 100% clean (`ruff check .`).
+  - Added 8 comprehensive unit tests in `tests/test_audit.py`, expanding full test suite to **623 passed** (`pytest -q`).
+
 ## 2026-09-27 — Multi-Environment Agent Handoff, .env.example & Subsystem Boundaries
 
 ### Implemented & Verified

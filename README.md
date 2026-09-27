@@ -314,7 +314,21 @@ backtest, paper and live operation.
 - **Root Cause**: The session eligibility step in `decision.yml` attempted to import `is_half_day` directly from `usinv.calendar`, but `is_half_day` existed only as a boolean attribute of `TradingSession` instances rather than a top-level helper function.
 - **Solution**: Exported top-level `is_half_day(value: SessionDate) -> bool` in `usinv/calendar.py` backed by `default_calendar().session(value).is_half_day`, verified across all 14 calendar unit tests.
 
+### Issue 9: Windows Path Length Exhaustion & Weekly Integrity Audit (Phase 7)
+- **Problem**: 
+  1. On Windows environments with default `LongPathsEnabled=0`, deeply nested temporary staging paths in atomic writes exceeded the 260 MAX_PATH limitation, causing `WinError 3` / `WinError 206` during test execution.
+  2. The demo `web/snapshot.json` portfolio had an accounting drift where `positions_value + cash != nav`, and no automated weekly integrity audit job existed to police ledger drift and frozen config immutability.
+- **Root Cause**:
+  1. Win32 file APIs enforce 260 characters by default unless the extended-length prefix (`\\?\`) is used.
+  2. The demo snapshot omitted a third position without rebalancing `positions_value` and `nav`.
+- **Solution**:
+  1. Compacted temporary staging directories in `usinv/data/edgar/cover_shards.py` and `usinv/data/edgar/securities.py`, and added a Win32 extended-length path prefix handler for pytest `tmp_path` in `tests/conftest.py`.
+  2. Implemented `usinv/delivery/audit.py` (`evaluate_weekly_audit`) and integrated the `weekly-audit` CLI command.
+  3. Rebalanced `web/snapshot.json` to 100.0% accounting identity parity by restoring the third position (`MSFT`).
+  4. Added `.github/workflows/weekly-audit.yml` running scheduled weekend audits with Telegram alerts, and expanded test suite to **623 passed**.
+
 ---
+
 
 ## USInv AI — Autonomous High-Risk / High-Reward ETF Intelligence (`ai/`)
 

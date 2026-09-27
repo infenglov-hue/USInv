@@ -1,0 +1,48 @@
+name: weekly-audit
+
+# Phase 7 & OPS_SPEC §3, §5 Weekly Pipeline & Paper-Forward Ledger Integrity Audit
+# Evaluates delivery snapshot schema, NAV accounting identity, frozen config/model
+# immutability, performance tail continuity, and coverage gates. Runs weekends.
+
+on:
+  schedule:
+    - cron: "0 11 * * 0" # 07:00 ET on Sundays
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weekly-audit-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+
+      - name: Execute weekly integrity audit
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python -m usinv weekly-audit --snapshot web/snapshot.json --notify-telegram --enforce
+
+      - name: Heartbeat success ping
+        if: success() && env.HEARTBEAT_URL != ''
+        env:
+          HEARTBEAT_URL: ${{ secrets.HEARTBEAT_URL }}
+        run: |
+          curl -fsS -m 10 --retry 3 "${HEARTBEAT_URL}" || true

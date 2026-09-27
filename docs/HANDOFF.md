@@ -11,10 +11,10 @@
 | Latest branch / HEAD | `main` & `agent/phase-2-3-universe-builder` |
 | Remote origin | `https://github.com/infenglov-hue/USInv.git` |
 | Live Mobile PWA | `https://infenglov-hue.github.io/USInv/` |
-| Code Quality & Verification | Ruff lint 100% clean (`ruff check .`); full test suite **615 passed** (`pytest -q`) |
+| Code Quality & Verification | Ruff lint 100% clean (`ruff check .`); full test suite **623 passed** (`pytest -q`) |
 | Phase 2.3 (D032 Gate) | **OFFICIALLY PASSED** (0 mandatory missing, 0 SIC gaps, 0 identity gaps) |
 | Phase 5 (Holdout Gate) | **OFFICIALLY PASSED** (Net Sharpe 0.94, Net Alpha +5.88%, MaxDD -14.54%) |
-| Phase 6 (Production Delivery) | **COMPLETE** (nightly-data, decision, fill-reconcile, deploy-pwa workflows active) |
+| Phase 6 (Production Delivery) | **COMPLETE** (nightly-data, decision, fill-reconcile, deploy-pwa, weekly-audit active) |
 | Active Phase | **Phase 7: Paper-Forward Window Execution & Monitoring** (minimum 12 rotations) |
 | Subsystem: `ai/` | **OPERATIONAL** (autonomous high-risk/high-reward ETF intelligence engine, 8 passed) |
 
@@ -45,7 +45,7 @@ Always verify the offline quality gate first:
 python -m ruff check .
 python -m pytest -q
 ```
-Expected output: `All checks passed!` and `615 passed`.
+Expected output: `All checks passed!` and `623 passed`.
 
 ### 3. Current Project Standing
 - **Phases 0 through 6 are fully implemented, verified, and merged into `main`.**
@@ -55,6 +55,8 @@ Expected output: `All checks passed!` and `615 passed`.
   - `decision.yml`: Runs on rotation days (09:00 ET) to generate target orders and update `snapshot.json`.
   - `fill-reconcile.yml`: Runs at 16:15 ET to reconcile Alpaca order executions.
   - `deploy-pwa.yml`: Automatically publishes PWA state changes to GitHub Pages.
+  - `weekly-audit.yml`: Evaluates weekly NAV accounting identity, frozen config immutability, and coverage gates.
+
 
 ### 4. Next Tasks & Roadmap
 1. **Phase 7 (Paper-Forward Window):**

@@ -1,5 +1,10 @@
 """Versioned snapshots and notifications."""
 
+from usinv.delivery.audit import (
+    AuditError,
+    AuditReport,
+    evaluate_weekly_audit,
+)
 from usinv.delivery.snapshot import (
     SNAPSHOT_SCHEMA_VERSION,
     CandidateSummary,
@@ -17,6 +22,8 @@ from usinv.delivery.snapshot import (
 
 __all__ = [
     "SNAPSHOT_SCHEMA_VERSION",
+    "AuditError",
+    "AuditReport",
     "CandidateSummary",
     "DataHealthSummary",
     "DeliveryError",
@@ -25,7 +32,9 @@ __all__ = [
     "OrderSummary",
     "PerformancePoint",
     "PositionSummary",
+    "evaluate_weekly_audit",
     "export_snapshot",
     "load_snapshot",
     "validate_snapshot_dict",
 ]
+

@@ -35,6 +35,19 @@
       "stop_price": 151.12,
       "high_water_mark": 192.0,
       "entry_session": "2026-06-01"
+    },
+    {
+      "security_id": "SEC:0000789019:MSFT",
+      "ticker": "MSFT",
+      "company_name": "Microsoft Corporation",
+      "shares": 65.0,
+      "cost_basis": 410.0,
+      "current_price": 427.7154,
+      "market_value": 27801.5,
+      "weight_pct": 26.38,
+      "stop_price": 342.17,
+      "high_water_mark": 435.0,
+      "entry_session": "2026-06-01"
     }
   ],
   "candidates": [

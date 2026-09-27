@@ -136,3 +136,31 @@ class TelegramNotifier:
             f"_Automated pipeline stopped; fails closed per blueprint protocol._"
         )
         return self.send_message(msg)
+
+    def notify_weekly_audit(self, audit_report: dict[str, Any]) -> bool:
+        """Send weekly integrity and audit verification summary."""
+        passed = audit_report.get("passed", False)
+        status_icon = "✅" if passed else "❌"
+        violations = audit_report.get("violations", [])
+        v_lines = "\n".join(f"  • {v}" for v in violations) if violations else "  _None._"
+        warnings = audit_report.get("warnings", [])
+        w_lines = "\n".join(f"  • {w}" for w in warnings) if warnings else "  _None._"
+        metrics = audit_report.get("metrics", {})
+
+        nav_val = metrics.get("nav", 0.0)
+        cash_val = metrics.get("cash", 0.0)
+        msg = (
+            f"📋 *USInv Weekly Integrity Audit {status_icon}*\n\n"
+            f"*Status:* `{'PASSED' if passed else 'VIOLATIONS DETECTED'}`\n"
+            f"• As-of Session: `{metrics.get('as_of_session', 'N/A')}`\n"
+            f"• Portfolio NAV: `${nav_val:,.2f}` (Cash: `${cash_val:,.2f}`)\n"
+            f"• Positions Count: `{metrics.get('positions_count', 0)}`\n"
+            f"• Core Coverage: `{metrics.get('core_coverage_pct', 0.0):.1f}%` | "
+            f"Secondary: `{metrics.get('secondary_coverage_pct', 0.0):.1f}%`\n\n"
+            f"*Violations:*\n{v_lines}\n\n"
+            f"*Warnings:*\n{w_lines}\n\n"
+            f"Config: `{str(metrics.get('config_hash', ''))[:10]}...` | "
+            f"Manifest: `{str(metrics.get('data_manifest_hash', ''))[:10]}...`"
+        )
+        return self.send_message(msg)
+

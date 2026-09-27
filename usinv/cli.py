@@ -440,7 +440,39 @@ def _parser() -> argparse.ArgumentParser:
         "--as-of", type=_aware_datetime, help="evaluation instant (default: now, UTC)"
     )
     freshness.add_argument("--output", type=Path, help="write the health-block JSON here")
+    weekly_audit = subcommands.add_parser(
+        "weekly-audit",
+        help="evaluate snapshot schema, NAV accounting identity, and frozen config integrity",
+    )
+    weekly_audit.add_argument(
+        "--snapshot",
+        type=Path,
+        default=Path("web/snapshot.json"),
+        help="path to delivery snapshot.json (default: web/snapshot.json)",
+    )
+    weekly_audit.add_argument(
+        "--expected-config-hash",
+        type=str,
+        default=None,
+        help="expected frozen config hash (default: pre-registered winning config)",
+    )
+    weekly_audit.add_argument(
+        "--output",
+        type=Path,
+        help="write audit report JSON to this path",
+    )
+    weekly_audit.add_argument(
+        "--notify-telegram",
+        action="store_true",
+        help="send audit summary to configured Telegram chat",
+    )
+    weekly_audit.add_argument(
+        "--enforce",
+        action="store_true",
+        help="exit with non-zero code if any integrity violations are detected",
+    )
     return parser
+
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1503,4 +1535,33 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"freshness_gate_reason: {exc}", file=sys.stderr)
             return 2
         return 0
+    if args.command == "weekly-audit":
+        from usinv.delivery.audit import FROZEN_CONFIG_HASH, evaluate_weekly_audit
+        from usinv.delivery.telegram import TelegramNotifier
+
+        expected_hash = args.expected_config_hash or FROZEN_CONFIG_HASH
+        report = evaluate_weekly_audit(args.snapshot, expected_config_hash=expected_hash)
+
+        if args.output is not None:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(report.to_json() + "\n", encoding="utf-8")
+
+        status_str = "pass" if report.passed else "fail"
+        print(
+            f"weekly_audit_{status_str} passed={report.passed} "
+            f"violations={len(report.violations)} warnings={len(report.warnings)}"
+        )
+        for v in report.violations:
+            print(f"  VIOLATION: {v}", file=sys.stderr)
+        for w in report.warnings:
+            print(f"  WARNING: {w}")
+
+        if args.notify_telegram:
+            notifier = TelegramNotifier()
+            notifier.notify_weekly_audit(report.to_dict())
+
+        if args.enforce and not report.passed:
+            return 2
+        return 0
     raise AssertionError(f"unhandled command: {args.command}")
+
