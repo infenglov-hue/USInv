@@ -163,4 +163,3 @@ class TelegramNotifier:
             f"Manifest: `{str(metrics.get('data_manifest_hash', ''))[:10]}...`"
         )
         return self.send_message(msg)
-

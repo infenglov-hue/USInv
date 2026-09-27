@@ -44,4 +44,3 @@ if sys.platform == "win32":
         if not resolved.startswith("\\\\?\\"):
             return Path(f"\\\\?\\{resolved}")
         return tmp_path
-

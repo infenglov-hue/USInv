@@ -474,7 +474,6 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the requested USInv command."""
     args = _parser().parse_args(argv)
@@ -1564,4 +1563,3 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         return 0
     raise AssertionError(f"unhandled command: {args.command}")
-

@@ -37,4 +37,3 @@ __all__ = [
     "load_snapshot",
     "validate_snapshot_dict",
 ]
-
