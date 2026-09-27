@@ -14,40 +14,96 @@
       "security_id": "SEC:0000320193:AAPL",
       "ticker": "AAPL",
       "company_name": "Apple Inc.",
-      "shares": 150.0,
-      "cost_basis": 185.2,
+      "shares": 90.0,
+      "cost_basis": 195.0,
       "current_price": 220.5,
-      "market_value": 33075.0,
-      "weight_pct": 31.37,
-      "stop_price": 176.4,
+      "market_value": 19845.0,
+      "weight_pct": 18.82,
+      "stop_price": 185.0,
+      "target_price": 260.0,
       "high_water_mark": 225.0,
-      "entry_session": "2026-06-01"
+      "entry_session": "2026-06-01",
+      "thesis": "Apple Inc. (AAPL), güçlü Buffett kalite skoru (%96) ve ekosistem fiyatlama gücüyle 5'li portföyün çekirdek slotuna seçildi. $260.00 hedef seviyesiyle %17.9 yukarı potansiyel sunarken, $185.00 dinamik ATR stop-loss seviyesi ile aşağı yönlü risk sınırlandırılmıştır.",
+      "factor_chips": [
+        {"factor": "quality", "label": "Buffett Kalite", "score_pct": 96.0},
+        {"factor": "momentum", "label": "Momentum", "score_pct": 92.0}
+      ]
     },
     {
-      "security_id": "SEC:0001018724:AMZN",
-      "ticker": "AMZN",
-      "company_name": "Amazon.com Inc.",
-      "shares": 180.0,
-      "cost_basis": 165.4,
-      "current_price": 188.9,
-      "market_value": 34002.0,
-      "weight_pct": 32.25,
-      "stop_price": 151.12,
-      "high_water_mark": 192.0,
-      "entry_session": "2026-06-01"
+      "security_id": "SEC:0001045810:NVDA",
+      "ticker": "NVDA",
+      "company_name": "NVIDIA Corporation",
+      "shares": 155.0,
+      "cost_basis": 110.0,
+      "current_price": 122.5,
+      "market_value": 18987.5,
+      "weight_pct": 18.01,
+      "stop_price": 104.0,
+      "target_price": 155.0,
+      "high_water_mark": 128.0,
+      "entry_session": "2026-06-15",
+      "thesis": "NVIDIA Corp. (NVDA), sektör lideri brüt karlılık ve %98 rekor momentum puanıyla büyüme lideri olarak portföyde yer alıyor. $155.00 hedef fiyat (%26.5 prim) hedeflenirken, oynaklık riski $104.00 seviyesindeki ATR stop ile kontrol edilmektedir.",
+      "factor_chips": [
+        {"factor": "momentum", "label": "Momentum", "score_pct": 98.0},
+        {"factor": "growth", "label": "Büyüme İvmesi", "score_pct": 95.0}
+      ]
     },
     {
       "security_id": "SEC:0000789019:MSFT",
       "ticker": "MSFT",
       "company_name": "Microsoft Corporation",
-      "shares": 65.0,
+      "shares": 44.0,
       "cost_basis": 410.0,
-      "current_price": 427.7154,
-      "market_value": 27801.5,
-      "weight_pct": 26.38,
-      "stop_price": 342.17,
+      "current_price": 430.0,
+      "market_value": 18920.0,
+      "weight_pct": 17.95,
+      "stop_price": 365.0,
+      "target_price": 495.0,
       "high_water_mark": 435.0,
-      "entry_session": "2026-06-01"
+      "entry_session": "2026-06-01",
+      "thesis": "Microsoft Corp. (MSFT), bulut ve yapay zeka gelirlerindeki istikrarlı nakit akışı ile hold-band tampon kuralı kapsamında portföyde tutulmaya devam ediyor. $495.00 hedefi geçerliliğini korurken, koruyucu stop seviyesi $365.00 olarak yukarı kilitlenmiştir.",
+      "factor_chips": [
+        {"factor": "quality", "label": "Buffett Kalite", "score_pct": 94.0},
+        {"factor": "piotroski", "label": "Piotroski", "score_pct": 89.0}
+      ]
+    },
+    {
+      "security_id": "SEC:0001018724:AMZN",
+      "ticker": "AMZN",
+      "company_name": "Amazon.com Inc.",
+      "shares": 100.0,
+      "cost_basis": 165.4,
+      "current_price": 188.9,
+      "market_value": 18890.0,
+      "weight_pct": 17.92,
+      "stop_price": 160.0,
+      "target_price": 225.0,
+      "high_water_mark": 192.0,
+      "entry_session": "2026-06-01",
+      "thesis": "Amazon.com Inc. (AMZN), AWS faaliyet marjı genişlemesi ve serbest nakit akışı toparlanması ile dengeli büyüme slotu olarak seçildi. $225.00 hedef fiyat (%19.1 prim) öngörülürken, sermaye koruması için $160.00 stop seviyesi belirlendi.",
+      "factor_chips": [
+        {"factor": "growth", "label": "Büyüme İvmesi", "score_pct": 88.0},
+        {"factor": "value", "label": "Graham Değerleme", "score_pct": 74.0}
+      ]
+    },
+    {
+      "security_id": "SEC:0000059478:LLY",
+      "ticker": "LLY",
+      "company_name": "Eli Lilly and Company",
+      "shares": 20.0,
+      "cost_basis": 850.0,
+      "current_price": 911.8,
+      "market_value": 18236.0,
+      "weight_pct": 17.3,
+      "stop_price": 785.0,
+      "target_price": 1080.0,
+      "high_water_mark": 930.0,
+      "entry_session": "2026-07-06",
+      "thesis": "Eli Lilly (LLY), sağlık sektöründe patent gücü ve olağanüstü satış büyüme ivmesi ile defansif-büyüme slotuna yerleşti. $1,080.00 hedef seviyesi (%18.4 potansiyel) taşınırken, $785.00 zarar kes seviyesiyle risk korunmaktadır.",
+      "factor_chips": [
+        {"factor": "quality", "label": "Buffett Kalite", "score_pct": 95.0},
+        {"factor": "momentum", "label": "Momentum", "score_pct": 91.0}
+      ]
     }
   ],
   "candidates": [
@@ -58,25 +114,116 @@
       "company_name": "Apple Inc.",
       "sector": "Computers",
       "core_or_large": "large",
-      "composite_score": 0.884,
+      "composite_score": 0.942,
       "factor_ranks": {
         "momentum": 0.92,
-        "value": 0.54,
+        "value": 0.65,
         "quality": 0.96,
-        "low_vol": 0.72,
-        "size": 0.4
+        "low_vol": 0.75,
+        "growth": 0.84
       },
       "red_flag_status": "CLEAN",
-      "entry_reference_price": 220.5
+      "entry_reference_price": 220.5,
+      "target_price": 260.0,
+      "stop_price": 185.0,
+      "thesis": "Apple Inc. (AAPL), güçlü ekosistem nakit akışı ve yüksek sermaye getirisi ile çekirdek slotta lider."
+    },
+    {
+      "rank": 2,
+      "security_id": "SEC:0001045810:NVDA",
+      "ticker": "NVDA",
+      "company_name": "NVIDIA Corporation",
+      "sector": "Semiconductors",
+      "core_or_large": "large",
+      "composite_score": 0.935,
+      "factor_ranks": {
+        "momentum": 0.98,
+        "value": 0.42,
+        "quality": 0.95,
+        "low_vol": 0.55,
+        "growth": 0.97
+      },
+      "red_flag_status": "CLEAN",
+      "entry_reference_price": 122.5,
+      "target_price": 155.0,
+      "stop_price": 104.0,
+      "thesis": "NVIDIA Corp. (NVDA), yapay zeka hızlandırıcı pazarındaki mutlak üstünlüğüyle momentum öncüsü."
+    },
+    {
+      "rank": 3,
+      "security_id": "SEC:0000059478:LLY",
+      "ticker": "LLY",
+      "company_name": "Eli Lilly and Company",
+      "sector": "Health",
+      "core_or_large": "large",
+      "composite_score": 0.918,
+      "factor_ranks": {
+        "momentum": 0.91,
+        "value": 0.50,
+        "quality": 0.95,
+        "low_vol": 0.80,
+        "growth": 0.92
+      },
+      "red_flag_status": "CLEAN",
+      "entry_reference_price": 911.8,
+      "target_price": 1080.0,
+      "stop_price": 785.0,
+      "thesis": "Eli Lilly (LLY), metabolik tedavi devrimi ve yüksek marjlı ilaç satışlarıyla güçlü savunma kalkanı."
+    },
+    {
+      "rank": 4,
+      "security_id": "SEC:0000789019:MSFT",
+      "ticker": "MSFT",
+      "company_name": "Microsoft Corporation",
+      "sector": "Business Equipment",
+      "core_or_large": "large",
+      "composite_score": 0.895,
+      "factor_ranks": {
+        "momentum": 0.85,
+        "value": 0.60,
+        "quality": 0.94,
+        "low_vol": 0.82,
+        "growth": 0.86
+      },
+      "red_flag_status": "CLEAN",
+      "entry_reference_price": 430.0,
+      "target_price": 495.0,
+      "stop_price": 365.0,
+      "thesis": "Microsoft Corp. (MSFT), kurumsal bulut liderliği ve yüksek tekrarlayan abonelik gelirleriyle istikrar çıpası."
+    },
+    {
+      "rank": 5,
+      "security_id": "SEC:0001018724:AMZN",
+      "ticker": "AMZN",
+      "company_name": "Amazon.com Inc.",
+      "sector": "Retail",
+      "core_or_large": "large",
+      "composite_score": 0.884,
+      "factor_ranks": {
+        "momentum": 0.84,
+        "value": 0.74,
+        "quality": 0.89,
+        "low_vol": 0.68,
+        "growth": 0.88
+      },
+      "red_flag_status": "CLEAN",
+      "entry_reference_price": 188.9,
+      "target_price": 225.0,
+      "stop_price": 160.0,
+      "thesis": "Amazon.com Inc. (AMZN), e-ticaret lojistik verimliliği ve AWS büyümesiyle serbest nakit akışı şampiyonu."
     }
   ],
   "macro_regime": {
     "regime": "NORMAL",
     "overlay": "O1",
     "equity_exposure_target": 1.0,
-    "signal_summary": "SPY > 200 SMA; Drawdown < 6.0%; Overlay inactive",
+    "signal_summary": "SPY > 200 SMA; HY OAS 320 bps; Piyasa Rejimi: NORMAL (%100 Hissede)",
     "benchmark_dd": -0.024,
-    "as_of_session": "2026-07-17"
+    "as_of_session": "2026-07-17",
+    "cash_state": "NORMAL",
+    "cash_target_pct": 0.0,
+    "rotation_cadence": "2-Haftalık (Bi-Weekly Pazartesi)",
+    "next_rotation_date": "2026-07-27"
   },
   "orders": [
     {
@@ -85,35 +232,42 @@
       "security_id": "SEC:0000320193:AAPL",
       "ticker": "AAPL",
       "side": "buy",
-      "quantity": 150.0,
+      "quantity": 10.0,
       "reference_close": 220.5,
       "limit_price": 224.91,
       "collar_pct": 0.02,
       "status": "pending",
-      "reason": "entry"
+      "reason": "rotation_rebalance"
     }
   ],
   "performance_tail": [
     {
+      "session": "2026-07-15",
+      "nav": 104250.0,
+      "benchmark_nav": 100800.0,
+      "daily_return": 0.0062,
+      "benchmark_daily_return": 0.0035
+    },
+    {
       "session": "2026-07-16",
       "nav": 104800.0,
       "benchmark_nav": 101200.0,
-      "daily_return": 0.0059,
-      "benchmark_daily_return": 0.0032
+      "daily_return": 0.0053,
+      "benchmark_daily_return": 0.0040
     },
     {
       "session": "2026-07-17",
       "nav": 105420.5,
       "benchmark_nav": 101500.0,
       "daily_return": 0.0059,
-      "benchmark_daily_return": 0.003
+      "benchmark_daily_return": 0.0030
     }
   ],
   "data_health": {
     "status": "HEALTHY",
     "freshness_evaluated_at": "2026-07-17T20:00:00Z",
-    "core_coverage_pct": 91.57,
-    "secondary_coverage_pct": 78.75,
+    "core_coverage_pct": 94.20,
+    "secondary_coverage_pct": 82.50,
     "identity_gaps": 0,
     "sector_gaps": 0,
     "warnings": []

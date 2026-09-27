@@ -81,18 +81,34 @@ class TelegramNotifier:
         )
 
         equity_target = snapshot.macro_regime.equity_exposure_target
+        cash_state_str = getattr(snapshot.macro_regime, "cash_state", snapshot.macro_regime.regime)
+        cash_pct_val = getattr(
+            snapshot.macro_regime, "cash_target_pct", max(0.0, 1.0 - equity_target)
+        )
+
+        pos_lines = []
+        for p in snapshot.positions:
+            tp_str = f" | Hedef: ${p.target_price:.2f}" if p.target_price else ""
+            sl_str = f" | Stop: ${p.stop_price:.2f}" if p.stop_price else ""
+            pos_lines.append(
+                f"  • *{p.ticker}* ({p.weight_pct:.1f}%): ${p.current_price:.2f}{tp_str}{sl_str}"
+            )
+        pos_block = "\n".join(pos_lines) if pos_lines else "  _Portföy boş._"
+
         msg = (
             f"🏛 *USInv Decision Pipeline — {snapshot.as_of_session}*\n\n"
-            f"*Portfolio Summary:*\n"
-            f"• NAV: `${snapshot.nav:,.2f}`\n"
-            f"• Cash: `${snapshot.cash:,.2f}`\n"
-            f"• Holdings: `{len(snapshot.positions)} positions`\n"
-            f"• Regime: `{snapshot.macro_regime.regime}` (Target Equity: {equity_target:.0%})\n\n"
-            f"*Orders Scheduled (LOO Cutoff 09:28 ET):*\n"
+            f"*Portföy & Makro Durumu:*\n"
+            f"• Toplam NAV: `${snapshot.nav:,.2f}` | Nakit: `${snapshot.cash:,.2f}`\n"
+            f"• Nakit Rejimi: `{cash_state_str}` "
+            f"(Hedef Nakit: %{cash_pct_val * 100:.0f}, Hisse: %{equity_target * 100:.0f})\n"
+            f"• Sinyal: _{snapshot.macro_regime.signal_summary}_\n\n"
+            f"*Aktif Pozisyonlar ({len(snapshot.positions)} Hisse):*\n"
+            f"{pos_block}\n\n"
+            f"*Planlanan Emirler (Açılış LOO):*\n"
             f"{orders_block}\n\n"
-            f"*Data Health:* `{snapshot.data_health.status}` "
-            f"(Core Cov: {snapshot.data_health.core_coverage_pct:.1f}%)\n"
-            f"Config: `{snapshot.config_hash[:10]}...` | SHA: `{snapshot.code_sha[:8]}`"
+            f"*Sistem Sağlığı:* `{snapshot.data_health.status}` "
+            f"(Kapsam: %{snapshot.data_health.core_coverage_pct:.1f})\n"
+            f"Hash: `{snapshot.config_hash[:10]}...`"
         )
         return self.send_message(msg)
 

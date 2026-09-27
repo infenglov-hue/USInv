@@ -1,5 +1,11 @@
 """Market-regime signals and exposure overlays."""
 
+from usinv.regime.cash_overlay import (
+    CashState,
+    MacroCashConfig,
+    MacroCashDecision,
+    evaluate_macro_cash_overlay,
+)
 from usinv.regime.overlay import OverlayDecision, OverlayError, evaluate_overlay
 from usinv.regime.signals import (
     CreditStressSignal,
@@ -23,7 +29,10 @@ from usinv.regime.weights import (
 )
 
 __all__ = [
+    "CashState",
     "CreditStressSignal",
+    "MacroCashConfig",
+    "MacroCashDecision",
     "MarketRegime",
     "OverlayDecision",
     "OverlayError",
@@ -34,6 +43,7 @@ __all__ = [
     "TrendBand",
     "TrendSignal",
     "classify_market_regime",
+    "evaluate_macro_cash_overlay",
     "evaluate_overlay",
     "high_volatility_signal",
     "hy_oas_credit_stress",

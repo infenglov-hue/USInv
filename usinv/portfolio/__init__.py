@@ -1,6 +1,13 @@
 """Stateful portfolio construction and exits."""
 
 from usinv.portfolio.bands import BandError, BandPolicy
+from usinv.portfolio.concentrated import (
+    ConcentratedConfig,
+    ConcentratedPick,
+    ConcentratedSelectionResult,
+    calculate_stop_and_target,
+    select_concentrated_portfolio,
+)
 from usinv.portfolio.continuity import (
     ContinuityError,
     PositionState,
@@ -46,6 +53,9 @@ __all__ = [
     "BandError",
     "BandPolicy",
     "Candidate",
+    "ConcentratedConfig",
+    "ConcentratedPick",
+    "ConcentratedSelectionResult",
     "ContinuityError",
     "EntryAllocation",
     "ExitError",
@@ -66,12 +76,14 @@ __all__ = [
     "TurnoverError",
     "TurnoverEvent",
     "apply_effective_split",
+    "calculate_stop_and_target",
     "enforce_turnover_budget",
     "evaluate_atr_trailing_stop",
     "evaluate_percent_trailing_stop",
     "evaluate_thesis_break",
     "retain_position",
     "rotation_schedule",
+    "select_concentrated_portfolio",
     "select_portfolio",
     "size_equal_weight_entries",
     "wilder_atr",

@@ -42,6 +42,9 @@ class PositionSummary:
     stop_price: float | None
     high_water_mark: float
     entry_session: str
+    target_price: float | None = None
+    thesis: str | None = None
+    factor_chips: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +59,9 @@ class CandidateSummary:
     factor_ranks: dict[str, float]
     red_flag_status: str
     entry_reference_price: float | None = None
+    target_price: float | None = None
+    stop_price: float | None = None
+    thesis: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +72,10 @@ class MacroRegimeSummary:
     signal_summary: str
     benchmark_dd: float
     as_of_session: str
+    cash_state: str = "NORMAL"
+    cash_target_pct: float = 0.0
+    rotation_cadence: str = "2-Week Bi-Weekly (Mon)"
+    next_rotation_date: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,12 +217,18 @@ def load_snapshot(input_path: Path) -> DeliverySnapshot:
     data = json.loads(input_path.read_text(encoding="utf-8"))
     validate_snapshot_dict(data)
 
-    positions = [PositionSummary(**p) for p in data["positions"]]
-    candidates = [CandidateSummary(**c) for c in data["candidates"]]
-    orders = [OrderSummary(**o) for o in data["orders"]]
-    performance_tail = [PerformancePoint(**pt) for pt in data["performance_tail"]]
-    macro_regime = MacroRegimeSummary(**data["macro_regime"])
-    data_health = DataHealthSummary(**data["data_health"])
+    def _filter(cls: Any, d: dict[str, Any]) -> dict[str, Any]:
+        valid_keys = cls.__dataclass_fields__.keys()
+        return {k: v for k, v in d.items() if k in valid_keys}
+
+    positions = [PositionSummary(**_filter(PositionSummary, p)) for p in data["positions"]]
+    candidates = [CandidateSummary(**_filter(CandidateSummary, c)) for c in data["candidates"]]
+    orders = [OrderSummary(**_filter(OrderSummary, o)) for o in data["orders"]]
+    performance_tail = [
+        PerformancePoint(**_filter(PerformancePoint, pt)) for pt in data["performance_tail"]
+    ]
+    macro_regime = MacroRegimeSummary(**_filter(MacroRegimeSummary, data["macro_regime"]))
+    data_health = DataHealthSummary(**_filter(DataHealthSummary, data["data_health"]))
 
     return DeliverySnapshot(
         schema_version=data["schema_version"],

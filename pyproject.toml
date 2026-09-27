@@ -45,6 +45,7 @@ force-exclude = true
 
 [tool.ruff.lint]
 select = ["B", "C4", "E", "F", "I", "PIE", "RUF", "SIM", "UP"]
+ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.format]
 quote-style = "double"

@@ -1,184 +1,269 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="tr">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>USInv Portfolio Platform</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>USInv — Amerikan Borsası Akıllı Portföy</title>
   <link rel="manifest" href="./manifest.json">
   <link rel="stylesheet" href="./styles.css">
-  <meta name="theme-color" content="#0d1117">
+  <meta name="theme-color" content="#0a0d14">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
-  <!-- Stale / Offline Banner -->
-  <div id="stale-banner" class="stale-banner">
-    ⚠️ <span id="stale-msg">Data is stale — displaying last verified offline snapshot</span>
-    <span id="offline-tag" class="offline-badge">Offline</span>
+  <div class="app-wrapper">
+    <!-- Stale / Offline Banner -->
+    <div id="stale-banner" class="stale-banner">
+      ⚠️ <span id="stale-msg">Veri güncel değil — son doğrulanmış çevrimdışı kopya gösteriliyor</span>
+      <span id="offline-tag" class="offline-badge">Çevrimdışı</span>
+    </div>
+
+    <!-- Header -->
+    <header>
+      <div class="header-top">
+        <div class="brand-wrapper">
+          <div class="brand-icon">US</div>
+          <div>
+            <span class="brand">USInv</span>
+            <span class="brand-sub">Sistematik Odak Portföy</span>
+          </div>
+        </div>
+        <div class="as-of-date" id="as-of-session">Yükleniyor...</div>
+      </div>
+    </header>
+
+    <!-- Executive Decision Card (Top Banner) -->
+    <div class="decision-card" id="executive-decision-banner">
+      <div class="decision-header">
+        <div>
+          <span id="macro-regime-pill" class="regime-pill-large regime-green">
+            ● <span id="header-regime">NORMAL</span>
+          </span>
+          <h2 class="decision-title" id="decision-headline">Piyasa Normal — %100 Hissede</h2>
+          <p class="decision-subtitle" id="macro-signal-summary">SPY > 200 SMA; Kredi spreadleri sakin; Nakit Rejimi: NORMAL</p>
+        </div>
+        <span class="rotation-badge" id="rotation-countdown-badge">2-Haftalık Rotasyon</span>
+      </div>
+
+      <div class="decision-metrics">
+        <div class="d-metric">
+          <div class="d-metric-label">Toplam NAV</div>
+          <div class="d-metric-val" id="header-nav">$--</div>
+        </div>
+        <div class="d-metric">
+          <div class="d-metric-label">Nakit Rezervi</div>
+          <div class="d-metric-val" id="header-cash">$--</div>
+        </div>
+        <div class="d-metric">
+          <div class="d-metric-label">Portföy Yapısı</div>
+          <div class="d-metric-val text-cyan" id="portfolio-count-stat">5 Odak Hisse</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Views -->
+    <main>
+      <!-- View 1: Active 5-Slot Portfolio -->
+      <section id="view-portfolio" class="view-section active">
+        <div class="section-head">
+          <h3 class="section-title">
+            <span>Aktif 5'li Portföy</span>
+            <span class="badge badge-cyan" id="portfolio-count">5 hisse</span>
+          </h3>
+          <span style="font-size:11px; color:var(--text-secondary);" id="next-rotation-text">Sonraki Rotasyon: Pazartesi Açılışı</span>
+        </div>
+
+        <!-- 5 Concentrated Stock Cards Container -->
+        <div id="positions-cards">
+          <!-- Dynamically populated stock cards -->
+        </div>
+
+        <!-- Classic Table View (Collapsible) -->
+        <div class="card" style="margin-top: 18px;">
+          <div class="card-header">
+            <span>Detaylı Pozisyon Tablosu</span>
+            <span style="font-size:11px; color:var(--text-muted);">Eşit Ağırlık (~%20)</span>
+          </div>
+          <div class="table-responsive">
+            <table id="positions-table">
+              <thead>
+                <tr>
+                  <th>Hisse</th>
+                  <th class="text-right">Adet</th>
+                  <th class="text-right">Fiyat</th>
+                  <th class="text-right">Hedef</th>
+                  <th class="text-right">Stop</th>
+                  <th class="text-right">Ağırlık</th>
+                </tr>
+              </thead>
+              <tbody id="positions-body">
+                <tr><td colspan="6" style="text-align:center;">Pozisyonlar yükleniyor...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- View 2: Candidates (Keşfet) -->
+      <section id="view-candidates" class="view-section">
+        <div class="section-head">
+          <h3 class="section-title">
+            <span>Sıralı Aday Havuzu</span>
+            <span class="badge badge-cyan" id="candidates-count">İlk 15</span>
+          </h3>
+        </div>
+
+        <div class="search-wrapper">
+          <input type="text" id="candidates-search" class="search-input" placeholder="Hisse kodu veya şirket adıyla filtrele (örn. NVDA, Apple)..." autocomplete="off">
+        </div>
+
+        <div id="candidates-list">
+          <!-- Dynamically rendered candidate cards -->
+        </div>
+      </section>
+
+      <!-- View 3: Macro & Regime Dashboard -->
+      <section id="view-macro" class="view-section">
+        <div class="section-head">
+          <h3 class="section-title">Makro Rejim & Nakit Modeli</h3>
+        </div>
+
+        <div class="card">
+          <div class="card-header">4 Kademeli Nakit Durumu (MobileInv Mantığı)</div>
+          <div class="card-body">
+            <p><strong>Mevcut Nakit Rejimi:</strong> <span id="macro-regime-name" class="badge badge-green">NORMAL</span></p>
+            <p style="margin-top:8px;"><strong>Aktif Koruma Modeli:</strong> <span id="macro-overlay">4-Kademeli Sticky Rejim</span></p>
+            <p style="margin-top:8px;"><strong>Hedef Hisse Payı:</strong> <span id="macro-equity-target" class="text-cyan font-bold">100%</span></p>
+            <p style="margin-top:8px;"><strong>Hedef Nakit Payı:</strong> <span id="macro-cash-target" class="text-amber font-bold">0%</span></p>
+            <p style="margin-top:10px; font-size:12px; color:var(--text-secondary); line-height:1.5;" id="macro-regime-desc">
+              Piyasa trendi 200 günlük ortalamanın üzerinde ve yüksek getirili kredi marjları dar kaldığı sürece sistem tam riskle (%100 hisse) pozisyonlarını korur. Stres algılandığında %25, %50 veya %75 nakit tamponuna dinamik olarak geçer.
+            </p>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">ABD Piyasa Göstergeleri</div>
+          <div class="card-body">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+              <div class="d-metric">
+                <div class="d-metric-label">S&P 500 (SPY) Trend</div>
+                <div class="d-metric-val text-green" id="metric-spy-trend">> 200 SMA</div>
+              </div>
+              <div class="d-metric">
+                <div class="d-metric-label">HY Kredi Marjı (OAS)</div>
+                <div class="d-metric-val text-cyan" id="metric-hy-oas">320 bps</div>
+              </div>
+              <div class="d-metric">
+                <div class="d-metric-label">CBOE VIX Volatilite</div>
+                <div class="d-metric-val text-green" id="metric-vix">Sakin (&lt; 20)</div>
+              </div>
+              <div class="d-metric">
+                <div class="d-metric-label">Maksimum Drawdown</div>
+                <div class="d-metric-val" id="metric-drawdown">-%2.4</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- View 4: Performance -->
+      <section id="view-performance" class="view-section">
+        <div class="section-head">
+          <h3 class="section-title">Geçmiş Performans & Getiriler</h3>
+        </div>
+
+        <div class="card">
+          <div class="card-header">Son 60 Seans Performans Özeti</div>
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tarih</th>
+                  <th class="text-right">Strateji NAV</th>
+                  <th class="text-right">S&P 500 Benchmark</th>
+                  <th class="text-right">Günlük Fark</th>
+                </tr>
+              </thead>
+              <tbody id="perf-tail-body">
+                <!-- Dynamically rendered rows -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- View 5: Orders & System Health -->
+      <section id="view-orders" class="view-section">
+        <div class="section-head">
+          <h3 class="section-title">
+            <span>Açılış Emirleri (LOO)</span>
+            <span class="badge badge-cyan" id="orders-count">0 emir</span>
+          </h3>
+        </div>
+
+        <div class="card">
+          <div class="card-header">Planlanan Rotasyon Emirleri</div>
+          <div class="table-responsive">
+            <table>
+              <thead>
+                <tr>
+                  <th>Yön</th>
+                  <th>Hisse</th>
+                  <th class="text-right">Adet</th>
+                  <th class="text-right">Limit</th>
+                  <th class="text-right">Yaka</th>
+                  <th>Neden</th>
+                </tr>
+              </thead>
+              <tbody id="orders-body">
+                <tr><td colspan="6" style="text-align:center;">Bekleyen emir bulunmuyor</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-header">Sistem ve Veri Bütünlüğü</div>
+          <div class="card-body">
+            <p><strong>Veri Sağlığı:</strong> <span id="health-status-badge" class="badge badge-green">HEALTHY</span></p>
+            <p style="margin-top:6px;"><strong>Temel Finansal Kapsam:</strong> <span id="health-core-cov">--%</span></p>
+            <p style="margin-top:6px;"><strong>İkincil Veri Kapsamı:</strong> <span id="health-sec-cov">--%</span></p>
+            <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--border-color); font-family:var(--font-mono); font-size:11px; color:var(--text-muted); word-break:break-all;">
+              <p>Config Hash: <span id="provenance-config">--</span></p>
+              <p style="margin-top:4px;">Code SHA: <span id="provenance-sha">--</span></p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Bottom Navigation Bar -->
+    <nav class="bottom-nav">
+      <button type="button" class="nav-item active" data-view="portfolio">
+        <svg fill="none" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
+        <span>Portföy</span>
+      </button>
+      <button type="button" class="nav-item" data-view="candidates">
+        <svg fill="none" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+        <span>Adaylar</span>
+      </button>
+      <button type="button" class="nav-item" data-view="macro">
+        <svg fill="none" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+        <span>Makro</span>
+      </button>
+      <button type="button" class="nav-item" data-view="performance">
+        <svg fill="none" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+        <span>Performans</span>
+      </button>
+      <button type="button" class="nav-item" data-view="orders">
+        <svg fill="none" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+        <span>Emirler</span>
+      </button>
+    </nav>
   </div>
-
-  <!-- Header -->
-  <header>
-    <div class="header-top">
-      <div class="brand">USInv Systematic</div>
-      <div class="as-of-date" id="as-of-session">Loading...</div>
-    </div>
-    <div class="nav-summary">
-      <div class="summary-card">
-        <div class="summary-label">Total NAV</div>
-        <div class="summary-value" id="header-nav">$--</div>
-      </div>
-      <div class="summary-card">
-        <div class="summary-label">Cash</div>
-        <div class="summary-value" id="header-cash">$--</div>
-      </div>
-      <div class="summary-card">
-        <div class="summary-label">Regime</div>
-        <div class="summary-value" id="header-regime">--</div>
-      </div>
-    </div>
-  </header>
-
-  <!-- Views -->
-  <main>
-    <!-- View 1: Portfolio -->
-    <section id="view-portfolio" class="view-section active">
-      <h2>Active Portfolio <span class="badge badge-blue" id="portfolio-count">0 positions</span></h2>
-      <div class="card">
-        <div class="table-responsive">
-          <table id="positions-table">
-            <thead>
-              <tr>
-                <th>Ticker</th>
-                <th>Shares</th>
-                <th>Price</th>
-                <th>Value</th>
-                <th>Weight</th>
-                <th>Stop</th>
-              </tr>
-            </thead>
-            <tbody id="positions-body">
-              <tr><td colspan="6" style="text-align:center;">Loading positions...</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- View 2: Candidates -->
-    <section id="view-candidates" class="view-section">
-      <h2>Ranked Candidates <span class="badge badge-blue" id="candidates-count">Top 15</span></h2>
-      <div id="candidates-list">
-        <!-- Dynamically rendered candidate cards -->
-      </div>
-    </section>
-
-    <!-- View 3: Macro & Performance -->
-    <section id="view-macro" class="view-section">
-      <h2>Macro & Performance</h2>
-      <div class="card">
-        <div class="card-header">Regime Status</div>
-        <div class="card-body">
-          <p><strong>Current Regime:</strong> <span id="macro-regime-name" class="badge badge-green">NORMAL</span></p>
-          <p style="margin-top:6px;"><strong>Active Overlay:</strong> <span id="macro-overlay">O1</span></p>
-          <p style="margin-top:6px;"><strong>Target Equity Exposure:</strong> <span id="macro-equity-target">100%</span></p>
-          <p style="margin-top:6px; color:var(--text-secondary);" id="macro-signal-summary">--</p>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">Recent Performance Tail (60 Sessions)</div>
-        <div class="table-responsive">
-          <table>
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Strategy NAV</th>
-                <th>Benchmark</th>
-                <th>Daily Ret</th>
-              </tr>
-            </thead>
-            <tbody id="perf-tail-body">
-              <!-- Dynamically rendered rows -->
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- View 4: Orders -->
-    <section id="view-orders" class="view-section">
-      <h2>Execution Orders <span class="badge badge-blue" id="orders-count">0 orders</span></h2>
-      <div class="card">
-        <div class="table-responsive">
-          <table>
-            <thead>
-              <tr>
-                <th>Side</th>
-                <th>Ticker</th>
-                <th>Qty</th>
-                <th>Limit Price</th>
-                <th>Collar</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody id="orders-body">
-              <tr><td colspan="6" style="text-align:center;">No pending orders</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- View 5: Data Health -->
-    <section id="view-health" class="view-section">
-      <h2>System & Data Health</h2>
-      <div class="card">
-        <div class="card-header">Health Status</div>
-        <div class="card-body">
-          <p><strong>Pipeline Status:</strong> <span id="health-status-badge" class="badge badge-green">HEALTHY</span></p>
-          <p style="margin-top:6px;"><strong>Core Coverage:</strong> <span id="health-core-cov">--%</span></p>
-          <p style="margin-top:6px;"><strong>Secondary Coverage:</strong> <span id="health-sec-cov">--%</span></p>
-          <p style="margin-top:6px;"><strong>Identity Mapping Gaps:</strong> <span id="health-id-gaps">0</span></p>
-          <p style="margin-top:6px;"><strong>Sector Mapping Gaps:</strong> <span id="health-sector-gaps">0</span></p>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="card-header">Provenance & Hashes</div>
-        <div class="card-body" style="font-family:monospace; font-size:11px; word-break:break-all;">
-          <p><strong>Config Hash:</strong> <span id="provenance-config">--</span></p>
-          <p style="margin-top:6px;"><strong>Code SHA:</strong> <span id="provenance-sha">--</span></p>
-          <p style="margin-top:6px;"><strong>Manifest Hash:</strong> <span id="provenance-manifest">--</span></p>
-          <p style="margin-top:6px;"><strong>Generated At:</strong> <span id="provenance-generated">--</span></p>
-        </div>
-      </div>
-    </section>
-  </main>
-
-  <!-- Bottom Navigation Bar -->
-  <nav class="bottom-nav">
-    <button class="nav-item active" data-view="portfolio">
-      <svg fill="none" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
-      Portfolio
-    </button>
-    <button class="nav-item" data-view="candidates">
-      <svg fill="none" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
-      Candidates
-    </button>
-    <button class="nav-item" data-view="macro">
-      <svg fill="none" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
-      Regime
-    </button>
-    <button class="nav-item" data-view="orders">
-      <svg fill="none" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-      Orders
-    </button>
-    <button class="nav-item" data-view="health">
-      <svg fill="none" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-      Health
-    </button>
-  </nav>
 
   <script src="./app.js"></script>
 </body>
