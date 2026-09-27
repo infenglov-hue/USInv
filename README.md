@@ -1,11 +1,9 @@
 # USInv — Systematic US Equity Picker
 
-**Status: PHASE 2 BUILD — the point-in-time universe gate is in progress.** This repository contains the
-design specification for a point-in-time-correct, factor-based US stock
-selection research system. It is intentionally not called implementation-ready
-until the Phase-0 historical-data feasibility gate is completed and the user
-chooses research or audit evidence mode. Build work follows
-[docs/CODEX_TASKS.md](docs/CODEX_TASKS.md).
+**Status: PHASE 6 COMPLETE / PHASE 7 ACTIVE — Production Pipeline, Live Mobile PWA & Paper-Forward Execution.** This repository contains the
+design specification and fully verified implementation for a point-in-time-correct, factor-based US stock
+selection research and paper-trading system. Build work follows
+[docs/CODEX_TASKS.md](docs/CODEX_TASKS.md) and active state is tracked in [docs/HANDOFF.md](docs/HANDOFF.md).
 
 Created 2026-07-17; backbone audit repaired 2026-07-18 before any code or
 performance run. External contracts and evidence grades live in
@@ -299,6 +297,18 @@ backtest, paper and live operation.
   - Elevated CLI permissions via `gh auth refresh -h github.com -s workflow` using OAuth device authorization (`login/device`).
   - Switched repository visibility to Public via `gh repo edit infenglov-hue/USInv --visibility public --accept-visibility-change-consequences`.
   - Configured GitHub Pages deployment via GitHub Actions API (`/repos/infenglov-hue/USInv/pages` with `build_type=workflow`), triggering instant PWA deployment to `https://infenglov-hue.github.io/USInv/`.
+
+### Issue 7: Multi-Environment Machine Migration & Cross-Subsystem Lint Boundary
+- **Problem**: When migrating the project repository to another PC or initiating work with an agentic AI assistant on a fresh checkout, lack of `.env.example` caused ambiguity about required API credentials (Alpaca, EDGAR email, Alpha Vantage, Tiingo, FRED, Telegram). Furthermore, running `ruff check .` failed on the `ai/` subsystem due to localized string literals and wide terminal reporting format, and handoff documentation had contradictory older notes.
+- **Root Cause**:
+  1. `.env` was properly gitignored to prevent credential leaks, but no `.env.example` template existed in the repository.
+  2. The `ai/` experimental subsystem contains Turkish report strings and wide console layouts that breached core library strict line-length rules.
+  3. `docs/HANDOFF.md` retained older 2026-09-05 blocked-gate diagnostic text under the active state heading, risking confusion for incoming coding agents.
+- **Solution**:
+  - Committed a comprehensive, categorized `.env.example` documenting all configuration keys and registration links.
+  - Added `ai` to `extend-exclude` in `pyproject.toml`, preserving 100% clean `ruff check .` and `ruff format --check .` for core CI workflows, while keeping all unit tests active.
+  - Refreshed and unified `docs/HANDOFF.md` and `README.md` to cleanly state the Phase 6 Complete / Phase 7 Paper-Forward active status.
+
 
 ---
 

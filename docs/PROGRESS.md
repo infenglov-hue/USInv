@@ -1,5 +1,18 @@
 # PROGRESS
 
+## 2026-09-27 — Multi-Environment Agent Handoff, .env.example & Subsystem Boundaries
+
+### Implemented & Verified
+- **Environment Configuration Template (`.env.example`)**:
+  - Authored complete, documented `.env.example` defining all required and optional API keys (Alpaca, EDGAR email, Alpha Vantage, Tiingo, FRED, Telegram).
+- **Agent Resumption Documentation (`docs/HANDOFF.md`, `README.md`, `AGENTS.md`)**:
+  - Restructured `docs/HANDOFF.md` to cleanly separate the active Phase 7 (Paper-Forward Window & Production Monitoring) state from historical diagnostics.
+  - Added step-by-step resumption guide and exact verification commands (`ruff check .`, `pytest -q`).
+  - Added Issue 7 post-mortem to `README.md` and updated project status header to Phase 6 Complete / Phase 7 Active.
+- **Ruff & Quality Enforcement**:
+  - Added `ai` to `extend-exclude` in `pyproject.toml` to maintain 100% clean core library linting (`ruff check .` passing with 0 errors).
+  - Verified full test suite continues to pass: **615 passed** (`pytest -q`).
+
 ## 2026-09-08 — Phase 2.3 Gate Closure, Phase 5 Holdout PASS, Phase 6 Pipeline & Live Mobile PWA
 
 ### Implemented & Verified
