@@ -2,6 +2,7 @@
 
 > Active checkpoint: 2026-09-27. This document provides the authoritative continuation
 > guide for AI coding agents and developers working on USInv across environments.
+> For the primary product vision and adapting the MobileInv (BIST Picker) mentality, see `CHATGPT_INSTRUCTIONS.md` and `docs/VISION_AND_MIGRATION_GUIDE.md`.
 > For deeper architectural specs, see `docs/CODEX_TASKS.md`, `AGENTS.md`, and `README.md`.
 
 ## Active state (Production Deployment & Phase 7 Paper-Forward)

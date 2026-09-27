@@ -5,6 +5,10 @@ design specification and fully verified implementation for a point-in-time-corre
 selection research and paper-trading system. Build work follows
 [docs/CODEX_TASKS.md](docs/CODEX_TASKS.md) and active state is tracked in [docs/HANDOFF.md](docs/HANDOFF.md).
 
+> [!IMPORTANT]
+> **🤖 AI Asistanı & Geliştirici Yönergesi (ChatGPT / Claude / Cursor):**
+> Bu projenin ana vizyonu ve kardeş proje **MobileInv (BIST Picker)** yatırım felsefesini ABD borsasına uyarlama adımları için doğrudan [CHATGPT_INSTRUCTIONS.md](CHATGPT_INSTRUCTIONS.md) ve [docs/VISION_AND_MIGRATION_GUIDE.md](docs/VISION_AND_MIGRATION_GUIDE.md) belgelerini inceleyin.
+
 Created 2026-07-17; backbone audit repaired 2026-07-18 before any code or
 performance run. External contracts and evidence grades live in
 [docs/SOURCE_REGISTER.md](docs/SOURCE_REGISTER.md); re-verify time-sensitive
