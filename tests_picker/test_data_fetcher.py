@@ -298,6 +298,7 @@ def test_pre_coverage_split_is_inferred_and_shares_become_continuous(session):
         "BALANCE": {
             date(2014, 3, 31): balance(861e6, date(2014, 4, 11)),
             date(2014, 6, 30): balance(5.99e9, date(2014, 7, 11)),  # 7:1 split in June 2014
+            date(2014, 9, 30): balance(5.87e9, date(2014, 10, 10)),
         }
     }
     fetcher = DataFetcher(session=session, console=Console(quiet=True))
@@ -310,3 +311,22 @@ def test_pre_coverage_split_is_inferred_and_shares_become_continuous(session):
         for r in session.query(FinancialStatement).order_by(FinancialStatement.period_end)
     ]
     assert shares[1] == pytest.approx(shares[0], rel=0.01)
+
+
+def test_alternating_share_concepts_are_not_splits(session):
+    company = Company(ticker="TSCO", is_active=True)
+    session.add(company)
+    session.commit()
+
+    def balance(value, as_of):
+        return {"period_type": "Q1", "publication_date": as_of, "items": [
+            {"item_code": "2OA", "desc_tr": "", "desc_eng": "", "value": value, "as_of": as_of.isoformat()}]}
+
+    statements = {"BALANCE": {
+        date(2010, 3, 31): balance(36e6, date(2010, 3, 31)),
+        date(2010, 6, 30): balance(72e6, date(2010, 6, 30)),
+        date(2010, 9, 30): balance(36e6, date(2010, 9, 30)),
+        date(2010, 12, 31): balance(72e6, date(2010, 12, 31)),
+    }}
+    fetcher = DataFetcher(session=session, console=Console(quiet=True))
+    assert fetcher._record_inferred_splits(company.id, statements, date(2016, 1, 1)) == 0

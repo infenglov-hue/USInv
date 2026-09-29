@@ -407,9 +407,8 @@ def _share_series(
 
     Priority: dei cover-page count (summed across share classes reported in
     the same filing), balance-sheet ``CommonStockSharesOutstanding``, then the
-    quarter's weighted-average diluted/basic count.  The as-of date matters
-    because a cover-page count can already reflect a split that happened after
-    the period end; the fetcher uses it to normalize into split-free units.
+    quarter's weighted-average diluted/basic count.  The as-of (basis) date is
+    the filing date; the fetcher uses it to normalize into split-free units.
     """
 
     # Filing accession -> calendar period end, learned from the Assets facts.
@@ -429,7 +428,6 @@ def _share_series(
             accn_period[accn] = cal_end  # a filing's own period is its latest balance date
 
     dei: dict[date, tuple[float, date]] = {}
-    dei_as_of: dict[date, date] = {}
     per_accn: dict[tuple[str, date], tuple[float, date]] = {}
     for row in _unit_rows(facts, "dei", DEI_SHARES, "shares"):
         if row.get("form") not in ACCEPTED_FORMS:
@@ -451,7 +449,6 @@ def _share_series(
         current = dei.get(period)
         if current is None or filed < current[1]:
             dei[period] = (value, filed)
-            dei_as_of[period] = cover_end
 
     merged = dict(dei)
     for period, payload in _instant_series(facts, SHARES_INSTANT, unit="shares").items():
@@ -473,7 +470,16 @@ def _share_series(
     for cal_end, (_, value, filed) in weighted.items():
         merged.setdefault(cal_end, (value, filed))
     series = {k: v for k, v in merged.items() if v[0] > 0}
-    as_of = {k: dei_as_of.get(k, k) for k in series}
+    # Scale guard: some filers tag counts "in thousands" by mistake. Drop any
+    # value below 1% of the company's median count.
+    if series:
+        values = sorted(v[0] for v in series.values())
+        median = values[len(values) // 2]
+        series = {k: v for k, v in series.items() if v[0] >= 0.01 * median}
+    # Share counts are stated in the split basis current when the filing was
+    # issued (splits before issuance are applied retroactively, including to
+    # comparatives), so the filing date is each count's basis date.
+    as_of = {k: v[1] for k, v in series.items()}
     return series, as_of
 
 

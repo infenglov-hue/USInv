@@ -617,6 +617,7 @@ class DataFetcher:
                     as_of_raw = item.get("as_of")
                     as_of = date.fromisoformat(as_of_raw) if as_of_raw else period_end
                     observations.append((as_of, float(item["value"])))
+        observations.sort()
         known = {
             a.action_date
             for a in self._session.query(CorporateAction)
@@ -624,11 +625,18 @@ class DataFetcher:
             .all()
         }
         added = 0
-        for (prev_date, prev_shares), (cur_date, cur_shares) in zip(observations, observations[1:]):
+        for i in range(1, len(observations)):
+            prev_date, prev_shares = observations[i - 1]
+            cur_date, cur_shares = observations[i]
             if cur_date > coverage_start or prev_shares <= 0:
                 continue
             ratio = infer_split_ratio(cur_shares / prev_shares)
             if ratio is None or cur_date in known:
+                continue
+            # A real split moves the count to a new level that persists; two
+            # share concepts alternating in the filings (class A only vs total,
+            # cover vs weighted) flip back and are not splits.
+            if not _level_is_stable(observations, i):
                 continue
             self._session.add(
                 CorporateAction(
@@ -1069,6 +1077,20 @@ def infer_split_ratio(share_ratio: float, tolerance: float = 0.04) -> Optional[f
         if abs(share_ratio * ratio - 1.0) <= tolerance:
             return 1.0 / ratio
     return None
+
+
+def _level_is_stable(observations: list[tuple[date, float]], i: int, band: float = 0.15) -> bool:
+    """True when the count before ``i`` and from ``i`` on are both steady."""
+    before = observations[i - 2][1] if i >= 2 else None
+    after = observations[i + 1][1] if i + 1 < len(observations) else None
+    if after is None:
+        return False
+    prev, cur = observations[i - 1][1], observations[i][1]
+    if abs(after / cur - 1.0) > band:
+        return False
+    if before is not None and abs(prev / before - 1.0) > band:
+        return False
+    return True
 
 
 def _normalize_share_units(
