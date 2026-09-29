@@ -25,6 +25,7 @@ logger = logging.getLogger("us_picker.data.sources.alpaca")
 
 _DATA_URL = "https://data.alpaca.markets"
 _DEFAULT_TRADING_URL = "https://paper-api.alpaca.markets"
+_LIVE_TRADING_URL = "https://api.alpaca.markets"
 _NY = "America/New_York"
 _SYMBOLS_PER_REQUEST = 100
 
@@ -231,11 +232,24 @@ class AlpacaClient:
     def fetch_assets(self, status: str = "active") -> list[dict]:
         """US equity assets from the trading API (symbol, name, exchange, ...)."""
 
-        payload = self._get(
-            f"{self._trading_url}/v2/assets",
-            {"status": status, "asset_class": "us_equity"},
-        )
-        return list(payload) if isinstance(payload, list) else []
+        params = {"status": status, "asset_class": "us_equity"}
+        # Paper and live keys authenticate against different trading hosts;
+        # market data accepts either. Try the configured host, then the other.
+        hosts = [self._trading_url]
+        for other in (_DEFAULT_TRADING_URL, _LIVE_TRADING_URL):
+            if other not in hosts:
+                hosts.append(other)
+        last_error: Optional[Exception] = None
+        for host in hosts:
+            try:
+                payload = self._get(f"{host}/v2/assets", params)
+            except requests.HTTPError as exc:
+                if exc.response is not None and exc.response.status_code in (401, 403):
+                    last_error = exc
+                    continue
+                raise
+            return list(payload) if isinstance(payload, list) else []
+        raise RuntimeError(f"Alpaca rejected the credentials on every trading host: {last_error}")
 
     def fetch_snapshots(self, symbols: list[str], feed: str = "iex") -> dict[str, dict]:
         result: dict[str, dict] = {}
