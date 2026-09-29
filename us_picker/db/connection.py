@@ -35,6 +35,7 @@ _RUNTIME_SQLITE_COLUMN_ADDS: dict[tuple[str, str], str] = {
     ("companies", "cik"): "ALTER TABLE companies ADD COLUMN cik INTEGER",
     ("companies", "sic"): "ALTER TABLE companies ADD COLUMN sic VARCHAR(8)",
     ("companies", "exchange"): "ALTER TABLE companies ADD COLUMN exchange VARCHAR(16)",
+    ("companies", "periodic_form"): "ALTER TABLE companies ADD COLUMN periodic_form VARCHAR(8)",
     ("portfolio_selections", "split_applied_through"): (
         "ALTER TABLE portfolio_selections ADD COLUMN split_applied_through DATE"
     ),

@@ -260,6 +260,9 @@ class DataFetcher:
             sic = profile.get("sic") if profile else (company.sic if company else None)
             if sic and is_excluded_sic(sic):
                 continue
+            form = profile.get("periodic_form") if profile else (company.periodic_form if company else None)
+            if form in ("20-F", "40-F"):
+                continue  # foreign private issuer: no us-gaap quarterly statements
             is_member = symbol in sp500_now
             if company is None:
                 company = Company(ticker=symbol, is_active=True)
@@ -274,6 +277,7 @@ class DataFetcher:
             if profile:
                 company.sic = sic
                 company.sector_bist = profile.get("sic_description") or company.sector_bist
+                company.periodic_form = profile.get("periodic_form")
             company.free_float_pct = 100.0  # no free-float concept on US listings
             company.is_bist100 = is_member
             company.is_active = True
@@ -1061,7 +1065,7 @@ def symbol_missing_profile(company: Optional[Company], cik: int) -> bool:
     """True when a company still needs its SEC profile (SIC) fetched."""
     if company is None:
         return True
-    return not company.sic or company.cik != cik
+    return not company.sic or company.cik != cik or not company.periodic_form
 
 
 _SPLIT_RATIOS = (1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 100.0)

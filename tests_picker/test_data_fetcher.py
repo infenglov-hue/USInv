@@ -69,8 +69,11 @@ class _StubAlpaca:
         return pd.DataFrame(rows)
 
 
-def _submissions(name: str, sic: str) -> dict:
-    return {"name": name, "sic": sic, "sicDescription": f"SIC {sic}", "tickers": [], "exchanges": []}
+def _submissions(name: str, sic: str, form: str = "10-K") -> dict:
+    return {
+        "name": name, "sic": sic, "sicDescription": f"SIC {sic}", "tickers": [], "exchanges": [],
+        "filings": {"recent": {"form": ["8-K", form]}},
+    }
 
 
 def _fetcher(session, sec, alpaca):
@@ -87,6 +90,7 @@ def test_fetch_universe_filters_instruments_liquidity_and_sic(session, monkeypat
             {"cik": 4, "name": "Blank Check", "ticker": "SPAC", "exchange": "NYSE"},
             {"cik": 5, "name": "OTC Co", "ticker": "OTCX", "exchange": "OTC"},
             {"cik": 6, "name": "Warrant Co", "ticker": "WRNTW", "exchange": "Nasdaq"},
+            {"cik": 7, "name": "ASML Holding", "ticker": "ASML", "exchange": "Nasdaq"},
         ],
         profiles={
             1: _submissions("Apple Inc.", "3571"),
@@ -94,6 +98,7 @@ def test_fetch_universe_filters_instruments_liquidity_and_sic(session, monkeypat
             3: _submissions("Tiny Co", "7372"),
             4: _submissions("Blank Check Acquisition", "6770"),
             6: _submissions("Warrant Co", "7372"),
+            7: _submissions("ASML Holding", "3559", form="20-F"),
         },
     )
     alpaca = _StubAlpaca(
@@ -103,6 +108,7 @@ def test_fetch_universe_filters_instruments_liquidity_and_sic(session, monkeypat
             {"symbol": "TINY", "name": "Tiny Co Common", "exchange": "NASDAQ", "tradable": True},
             {"symbol": "SPAC", "name": "Blank Check Corp", "exchange": "NYSE", "tradable": True},
             {"symbol": "WRNTW", "name": "Warrant Co Warrants", "exchange": "NASDAQ", "tradable": True},
+            {"symbol": "ASML", "name": "ASML Holding N.V. New York Registry Shares", "exchange": "NASDAQ", "tradable": True},
         ],
         liquidity={
             "AAPL": (230.0, 50_000_000),
@@ -110,6 +116,7 @@ def test_fetch_universe_filters_instruments_liquidity_and_sic(session, monkeypat
             "TINY": (3.0, 10_000_000),  # below the $5 floor
             "SPAC": (10.5, 5_000_000),
             "WRNTW": (1.0, 90_000_000),
+            "ASML": (900.0, 2_000_000),
         },
     )
     monkeypatch.setattr(

@@ -62,6 +62,9 @@ class Company(Base):
     cik: Optional[int] = Column(Integer, index=True)
     sic: Optional[str] = Column(String(8))
     exchange: Optional[str] = Column(String(16))
+    # Newest periodic report type the filer uses: "10-K" (domestic) or
+    # "20-F"/"40-F" (foreign private issuer, no us-gaap quarterlies).
+    periodic_form: Optional[str] = Column(String(8))
     company_type: Optional[str] = Column(String(20))  # OPERATING / HOLDING / BANK / INSURANCE / REIT
     sector_bist: Optional[str] = Column(String(100))
     sector_custom: Optional[str] = Column(String(100))

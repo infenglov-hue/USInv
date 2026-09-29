@@ -179,11 +179,24 @@ def iter_bulk_companyfacts(zip_path: Path, ciks: Iterable[int]) -> Iterator[tupl
                 yield cik, json.load(io.TextIOWrapper(handle, encoding="utf-8"))
 
 
+def periodic_form(forms: list[str]) -> Optional[str]:
+    """Newest periodic report family in a filer's recent filings."""
+    for form in forms:
+        base = form.split("/")[0]
+        if base in ("10-K", "10-Q", "10-KT", "10-QT"):
+            return "10-K"
+        if base in ("20-F", "40-F"):
+            return base
+    return None
+
+
 def company_profile(submissions: dict) -> dict:
     """The submissions fields the pipeline stores on ``companies``."""
 
     former = submissions.get("formerNames") or []
+    forms = ((submissions.get("filings") or {}).get("recent") or {}).get("form") or []
     return {
+        "periodic_form": periodic_form(forms),
         "name": submissions.get("name"),
         "sic": str(submissions.get("sic") or "") or None,
         "sic_description": submissions.get("sicDescription"),
