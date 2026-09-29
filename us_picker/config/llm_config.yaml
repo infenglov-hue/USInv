@@ -50,7 +50,7 @@ prompts:
   macro_headlines: |
     You are a Turkish financial markets macro analyst. Analyze these
     financial headlines from today and classify the overall macro
-    sentiment for Borsa Istanbul. Return ONLY a valid JSON object.
+    sentiment for US equities. Return ONLY a valid JSON object.
 
     Required JSON fields:
     - macro_sentiment: One of [BULLISH, CAUTIOUS, BEARISH, NEUTRAL]
@@ -64,7 +64,7 @@ prompts:
     - confidence: Your confidence 0.0 to 1.0
 
   stock_report: |
-    You are a senior equity analyst covering Borsa Istanbul (BIST).
+    You are a senior equity analyst covering US-listed equities (NYSE / Nasdaq).
     Write a concise investment report for the stock described below.
     The report is for an individual investor using a quantitative
     stock-picking system. Return ONLY a valid JSON object.

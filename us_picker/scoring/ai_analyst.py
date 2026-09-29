@@ -1,4 +1,4 @@
-"""AI Analyst module for BIST Stock Picker.
+"""AI Analyst module for the US picker (BIST Picker port).
 
 Generates natural language insights (Turkish) explaining changes in 
 stock scores and portfolio decisions using Gemini or a rule-based fallback.
@@ -120,7 +120,7 @@ class AiAnalyst:
             return self._rule_based_diff(curr, prev)
 
         prompt = (
-            "Aşağıdaki BIST şirketi için Türkçe dilinde kısa (en fazla 2-3 cümle), "
+            "Aşağıdaki ABD borsa (NYSE/Nasdaq) şirketi için Türkçe dilinde kısa (en fazla 2-3 cümle), "
             "profesyonel ve sade bir yatırım tezi/analiz özeti oluştur. "
             "Kullanıcıya doğrudan yatırım önerisi vermekten kaçın.\n"
             "Önemli kural: 'tavsiye', 'öneri', 'alın', 'satın', 'hedef', 'stop' kelimelerini KESİNLİKLE kullanma.\n\n"

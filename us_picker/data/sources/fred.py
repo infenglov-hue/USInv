@@ -6,8 +6,9 @@ Series used:
 * ``DGS10``        10-year Treasury constant-maturity yield, daily, %
 * ``CPIAUCSL``     CPI-U index, monthly (seasonally adjusted)
 * ``T5YIFR``       5y5y forward breakeven inflation (DCF terminal inflation), %
-* ``BAMLH0A0HYM2`` ICE BofA US high-yield OAS, daily, % (credit-stress leg;
-  the analogue of Turkey's 5y CDS in the BIST cash signal)
+* ``BAA10Y``       Moody's Baa corporate yield minus 10y Treasury, daily, %
+  (credit-stress leg; the analogue of Turkey's 5y CDS in the BIST cash
+  signal).  ``BAMLH0A0HYM2`` (HY OAS) is only published for ~3 years.
 * ``VIXCLS``       CBOE VIX close, daily
 
 Uses the public ``fredgraph.csv`` download, which needs no API key.
@@ -34,7 +35,10 @@ POLICY_RATE = "DFF"
 TEN_YEAR = "DGS10"
 CPI = "CPIAUCSL"
 LONG_RUN_INFLATION = "T5YIFR"
-HIGH_YIELD_OAS = "BAMLH0A0HYM2"
+HIGH_YIELD_OAS = "BAMLH0A0HYM2"  # FRED keeps only ~3 years (ICE licensing)
+# Moody's Baa corporate minus 10y Treasury: continuous daily history since
+# 1986, so the credit-stress leg exists for the whole backtest window.
+CREDIT_SPREAD = "BAA10Y"
 VIX = "VIXCLS"
 
 

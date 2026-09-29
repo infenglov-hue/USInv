@@ -16,8 +16,8 @@ commit `b3935e3`, 2026-08-08 — Gemini'nin 2026-09-18 "V2" değişikliklerinden
 | İş Yatırım/KAP şirket listesi | SEC ticker listesi × Alpaca işlem görebilir hisseler + likidite eleği |
 | BIST 100 üyeliği (`is_bist100`) | S&P 500 üyeliği; seçici tarihe göre (point-in-time) `index_memberships` tablosunu kullanır |
 | XU100 benchmark | SPY (toplam getiri) — kodda ticker `SPY` |
-| TCMB makro | FRED: fed funds, 10y, CPI, 5y5y breakeven, HY OAS |
-| Türkiye CDS (`turkey_cds_5y`) | ABD yüksek getirili tahvil spreadi (bps) — aynı kolon |
+| TCMB makro | FRED: fed funds, 10y, CPI, 5y5y breakeven, Baa−10y spread |
+| Türkiye CDS (`turkey_cds_5y`) | Moody's Baa − 10y kredi spreadi (bps, FRED `BAA10Y`) — aynı kolon |
 | Damodaran Türkiye ERP | Damodaran ABD ERP |
 | KAP bildirimleri | SEC 8-K/10-Q/10-K/13D (`data/sources/sec_feed.py`) |
 | Yahoo canlı fiyat | Alpaca IEX snapshot |

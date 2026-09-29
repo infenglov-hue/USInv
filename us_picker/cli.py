@@ -83,7 +83,7 @@ def _get_engine_and_tables():
 @click.option("--dry-run", is_flag=True, help="Skip all database writes.")
 @click.pass_context
 def cli(ctx: click.Context, verbose: bool, dry_run: bool) -> None:
-    """BIST Stock Picker -- Buffett-style fundamental analysis for Borsa Istanbul."""
+    """US Picker -- BIST Picker port for NYSE/Nasdaq (Buffett-style fundamental analysis)."""
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
     ctx.obj["dry_run"] = dry_run

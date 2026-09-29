@@ -52,7 +52,7 @@ _ALPHA_X_TYPE_MATURITY = {
 }
 _ALPHA_X_MIN_CONFIDENCE = 0.55
 _ALPHA_X_FREE_FLOAT_MIN = 25.0
-_ALPHA_X_AVG_VOLUME_MIN = 10_000_000.0
+_ALPHA_X_AVG_VOLUME_MIN = 20_000_000.0  # USD, mirrors index_aware.min_avg_volume_try
 _ALPHA_X_PEER_TARGET = 40.0
 _ALPHA_X_MARKET_OVERLAY_WEIGHT = 0.25
 _ALPHA_X_BASE_WEIGHT = 0.85
@@ -843,7 +843,7 @@ def _alpha_x_reason(row: pd.Series) -> str:
     if avg_volume_try is None or pd.isna(avg_volume_try):
         return "Likidite verisi yok"
     if float(avg_volume_try) < _ALPHA_X_AVG_VOLUME_MIN:
-        return f"Likidite < {_ALPHA_X_AVG_VOLUME_MIN / 1_000_000:.0f}M TRY"
+        return f"Likidite < ${_ALPHA_X_AVG_VOLUME_MIN / 1_000_000:.0f}M"
 
     completeness = row.get("data_completeness")
     min_data = _alpha_x_min_data(company_type)
@@ -1494,6 +1494,15 @@ def get_adjusted_metrics(ticker: str) -> Optional[dict]:
         if not metric:
             return None
 
+        # US port: EPS is stored in split-free base units; show traded units.
+        from us_picker.utils.splits import cumulative_split_factor
+
+        eps_traded = (
+            metric.eps_adjusted / cumulative_split_factor(session, company.id, date.today())
+            if metric.eps_adjusted is not None
+            else None
+        )
+
         return {
             "period_end": metric.period_end,
             "reported_net_income": metric.reported_net_income,
@@ -1503,7 +1512,7 @@ def get_adjusted_metrics(ticker: str) -> Optional[dict]:
             "free_cash_flow": metric.free_cash_flow,
             "roe_adjusted": metric.roe_adjusted,
             "roa_adjusted": metric.roa_adjusted,
-            "eps_adjusted": metric.eps_adjusted,
+            "eps_adjusted": eps_traded,
             "real_eps_growth_pct": metric.real_eps_growth_pct,
             "related_party_revenue_pct": metric.related_party_revenue_pct,
             "maintenance_capex": metric.maintenance_capex,

@@ -593,7 +593,61 @@ class DataFetcher:
         except Exception as exc:
             logger.warning("Statement build failed for %s: %s", companies[0].ticker, exc)
             return 0
+        coverage_start = date.fromisoformat(
+            str(self._fetch_settings.get("price_history_start", "2016-01-01"))
+        )
+        for company in companies:
+            self._record_inferred_splits(company.id, statements, coverage_start)
         return sum(self._upsert_financials(c.id, statements) for c in companies)
+
+    def _record_inferred_splits(
+        self, company_id: int, statements: dict, coverage_start: date
+    ) -> int:
+        """Add splits that predate the vendor's corporate-action history.
+
+        Alpaca's split records start in 2016, but statements go back to 2009.
+        A pre-2016 split shows up as a quarter-over-quarter share-count jump
+        by an exact split ratio; it is stored as a ``SEC_INFERRED`` split so
+        base-unit share counts (utils/splits.py) stay continuous.
+        """
+        observations = []
+        for period_end, row in sorted((statements.get("BALANCE") or {}).items()):
+            for item in row["items"]:
+                if item.get("item_code") == "2OA" and item.get("value"):
+                    as_of_raw = item.get("as_of")
+                    as_of = date.fromisoformat(as_of_raw) if as_of_raw else period_end
+                    observations.append((as_of, float(item["value"])))
+        known = {
+            a.action_date
+            for a in self._session.query(CorporateAction)
+            .filter(CorporateAction.company_id == company_id, CorporateAction.action_type == "SPLIT")
+            .all()
+        }
+        added = 0
+        for (prev_date, prev_shares), (cur_date, cur_shares) in zip(observations, observations[1:]):
+            if cur_date > coverage_start or prev_shares <= 0:
+                continue
+            ratio = infer_split_ratio(cur_shares / prev_shares)
+            if ratio is None or cur_date in known:
+                continue
+            self._session.add(
+                CorporateAction(
+                    company_id=company_id,
+                    action_date=cur_date,
+                    action_type="SPLIT",
+                    adjustment_factor=ratio,
+                    details_json=json.dumps({"inferred_from": "sec_share_count", "previous_as_of": prev_date.isoformat()}),
+                    source="SEC_INFERRED",
+                )
+            )
+            known.add(cur_date)
+            added += 1
+        if added:
+            self._session.flush()
+            from us_picker.utils.splits import invalidate_split_cache
+
+            invalidate_split_cache()
+        return added
 
     def fetch_recent_financials(self, tickers: Optional[list[str]] = None) -> dict:
         """Refresh only filers with a new 10-K/10-Q in the last ``days``.
@@ -630,7 +684,7 @@ class DataFetcher:
         policy_rate_pct = fed funds, bond_yield_10y_pct = 10y Treasury,
         cpi_yoy_pct = CPI YoY visible from the ~15th of the next month,
         inflation_expectation_24m_pct = 5y5y forward breakeven,
-        turkey_cds_5y = US high-yield OAS in basis points (credit stress),
+        turkey_cds_5y = Baa-10y corporate credit spread in bps (credit stress),
         equity_risk_premium_pct = Damodaran US ERP (today's row only).
         """
         self._console.print("[bold]Fetching macro data...[/bold]")
@@ -640,7 +694,7 @@ class DataFetcher:
             ("policy", fred_series.POLICY_RATE),
             ("ten_year", fred_series.TEN_YEAR),
             ("breakeven", fred_series.LONG_RUN_INFLATION),
-            ("hy_oas", fred_series.HIGH_YIELD_OAS),
+            ("credit_spread", fred_series.CREDIT_SPREAD),
         ):
             try:
                 series[name] = self.fred.fetch_series(series_id, start)
@@ -659,13 +713,16 @@ class DataFetcher:
                 "policy_rate_pct": series["policy"] / 100.0,
                 "bond_yield_10y_pct": series["ten_year"] / 100.0,
                 "inflation_expectation_24m_pct": series["breakeven"] / 100.0,
-                "turkey_cds_5y": series["hy_oas"] * 100.0,
+                "turkey_cds_5y": series["credit_spread"] * 100.0,
             }
         )
         if not cpi_yoy.empty:
             frame = frame.join(cpi_yoy.rename("cpi_yoy_pct"), how="outer")
-        frame = frame.sort_index()
-        frame["cpi_yoy_pct"] = frame.get("cpi_yoy_pct", pd.Series(dtype=float)).ffill()
+        # Series publish on different calendars (fed funds daily incl.
+        # weekends, OAS/10y on trading days, CPI monthly). Carry each last
+        # known value forward so every row is complete; only past values move
+        # forward, so this stays point-in-time.
+        frame = frame.sort_index().ffill()
         frame = frame[frame.index >= start]
 
         existing = {row.date: row for row in self._session.query(MacroRegime).filter(MacroRegime.date >= start).all()}
@@ -690,10 +747,11 @@ class DataFetcher:
         except Exception as exc:
             logger.warning("Damodaran US ERP fetch failed: %s", exc)
         if erp is not None:
-            today = date.today()
-            row = self._session.query(MacroRegime).filter(MacroRegime.date == today).first()
+            # Attach to the newest complete row rather than creating a
+            # today-only row that would lack every other field.
+            row = self._session.query(MacroRegime).order_by(MacroRegime.date.desc()).first()
             if row is None:
-                row = MacroRegime(date=today)
+                row = MacroRegime(date=date.today())
                 self._session.add(row)
             row.equity_risk_premium_pct = erp
             row.erp_source = "damodaran_html"
@@ -996,6 +1054,21 @@ def symbol_missing_profile(company: Optional[Company], cik: int) -> bool:
     if company is None:
         return True
     return not company.sic or company.cik != cik
+
+
+_SPLIT_RATIOS = (1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 10.0, 12.0, 15.0, 20.0, 25.0, 30.0, 40.0, 50.0, 100.0)
+
+
+def infer_split_ratio(share_ratio: float, tolerance: float = 0.04) -> Optional[float]:
+    """Return a split ratio (new/old) if ``share_ratio`` is one, else None."""
+    if share_ratio <= 0:
+        return None
+    for ratio in _SPLIT_RATIOS:
+        if abs(share_ratio / ratio - 1.0) <= tolerance:
+            return ratio
+        if abs(share_ratio * ratio - 1.0) <= tolerance:
+            return 1.0 / ratio
+    return None
 
 
 def _normalize_share_units(

@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 import us_picker.data.fetcher as fetcher_module
-from us_picker.data.fetcher import DataFetcher, _cpi_yoy_by_availability
+from us_picker.data.fetcher import DataFetcher, _cpi_yoy_by_availability, infer_split_ratio
 from us_picker.data.sources.sp500 import MembershipInterval
 from us_picker.db.schema import (
     Base,
@@ -195,7 +195,7 @@ class _StubFRED:
             "DFF": 5.33,
             "DGS10": 4.20,
             "T5YIFR": 2.30,
-            "BAMLH0A0HYM2": 3.10,
+            "BAA10Y": 3.10,
         }
         if series_id == "CPIAUCSL":
             idx = [date(2023, m, 1) for m in range(1, 13)] + [date(2024, m, 1) for m in range(1, 4)]
@@ -214,7 +214,7 @@ def test_fetch_macro_maps_fred_series_to_bist_columns(session, monkeypatch):
     assert row.policy_rate_pct == pytest.approx(0.0533)
     assert row.bond_yield_10y_pct == pytest.approx(0.042)
     assert row.inflation_expectation_24m_pct == pytest.approx(0.023)
-    assert row.turkey_cds_5y == pytest.approx(310.0)  # HY OAS in bps
+    assert row.turkey_cds_5y == pytest.approx(310.0)  # Baa-10y spread in bps
     assert row.cpi_yoy_pct == pytest.approx(0.03)
 
 
@@ -270,3 +270,43 @@ def test_fetch_prices_rewrites_adjusted_history_when_vendor_factor_moves(session
     assert prices[date(2026, 9, 18)].close == 69.0  # raw never touched
     assert prices[date(2026, 9, 18)].adjusted_close == pytest.approx(68.6)
     assert prices[date(2026, 9, 22)].close == 70.5
+
+
+def test_infer_split_ratio_only_accepts_exact_split_factors():
+    assert infer_split_ratio(7.0 * 1.01) == 7.0
+    assert infer_split_ratio(0.1) == pytest.approx(0.1)
+    assert infer_split_ratio(1.2) is None
+    assert infer_split_ratio(2.6) is None
+
+
+def test_pre_coverage_split_is_inferred_and_shares_become_continuous(session):
+    company = Company(ticker="AAPL", is_active=True)
+    session.add(company)
+    session.commit()
+
+    def balance(value, as_of):
+        return {
+            "period_type": "Q2",
+            "publication_date": as_of,
+            "items": [
+                {"item_code": "1BL", "desc_tr": "", "desc_eng": "", "value": 1.0},
+                {"item_code": "2OA", "desc_tr": "", "desc_eng": "", "value": value, "as_of": as_of.isoformat()},
+            ],
+        }
+
+    statements = {
+        "BALANCE": {
+            date(2014, 3, 31): balance(861e6, date(2014, 4, 11)),
+            date(2014, 6, 30): balance(5.99e9, date(2014, 7, 11)),  # 7:1 split in June 2014
+        }
+    }
+    fetcher = DataFetcher(session=session, console=Console(quiet=True))
+    assert fetcher._record_inferred_splits(company.id, statements, date(2016, 1, 1)) == 1
+    fetcher._upsert_financials(company.id, statements)
+    import json
+
+    shares = [
+        next(i["value"] for i in json.loads(r.data_json) if i["item_code"] == "2OA")
+        for r in session.query(FinancialStatement).order_by(FinancialStatement.period_end)
+    ]
+    assert shares[1] == pytest.approx(shares[0], rel=0.01)

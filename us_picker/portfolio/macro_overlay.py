@@ -15,9 +15,11 @@ from us_picker.db.schema import MacroRegime
 
 logger = logging.getLogger(__name__)
 
-# Thresholds
-_CDS_RISK_OFF = 400.0
-_CDS_RISK_ON = 300.0
+# Thresholds. US port: ``turkey_cds_5y`` carries the Moody's Baa-10y credit
+# spread in bps (typically 150-230 calm, 300+ in 2008/2020 stress). Values are
+# a starting point, not validated on US data yet.
+_CDS_RISK_OFF = 260.0
+_CDS_RISK_ON = 190.0
 _REAL_RATE_RISK_OFF = -5.0  # Real rate < -5% is very loose/inflationary -> risk off for currency
 _REAL_RATE_RISK_ON = 0.0    # Positive real rates -> stability -> risk on
 

@@ -541,6 +541,13 @@ def export_mobile_snapshot(output_path: str | Path = DEFAULT_MOBILE_SNAPSHOT_PAT
         companies_by_ticker = {company.ticker: company for company in companies}
         latest_scores = _load_latest_scores(session, latest_scoring_date)
         latest_metrics = _load_latest_adjusted_metrics(session)
+        # US port: EPS is stored in split-free base units; show traded units.
+        from us_picker.utils.splits import cumulative_split_factor
+
+        eps_basis = {
+            company_id: cumulative_split_factor(session, company_id, date.today())
+            for company_id in latest_metrics
+        }
         price_history = _load_price_history(session)
         
         # Get IDs for top 75 companies to fetch history for
@@ -1010,7 +1017,11 @@ def export_mobile_snapshot(output_path: str | Path = DEFAULT_MOBILE_SNAPSHOT_PAT
                     "free_cash_flow": metric.free_cash_flow,
                     "roe_adjusted": metric.roe_adjusted,
                     "roa_adjusted": metric.roa_adjusted,
-                    "eps_adjusted": metric.eps_adjusted,
+                    "eps_adjusted": (
+                        metric.eps_adjusted / eps_basis[company_id]
+                        if metric.eps_adjusted is not None
+                        else None
+                    ),
                     "real_eps_growth_pct": metric.real_eps_growth_pct,
                     "related_party_revenue_pct": metric.related_party_revenue_pct,
                     "maintenance_capex": metric.maintenance_capex,
