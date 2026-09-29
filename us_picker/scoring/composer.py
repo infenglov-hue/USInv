@@ -467,14 +467,12 @@ class ScoreComposer:
         )
 
     def _get_latest_price(self, session: Session, company_id: int, target_date: date) -> Optional[float]:
-        from us_picker.db.schema import DailyPrice
-        row = (
-            session.query(DailyPrice.adjusted_close)
-            .filter(DailyPrice.company_id == company_id, DailyPrice.date <= target_date)
-            .order_by(desc(DailyPrice.date))
-            .first()
-        )
-        return row[0] if row else None
+        # US port: stops/targets are quoted in the traded (raw) price;
+        # adjusted_close is a total-return series here.
+        from us_picker.utils.splits import latest_raw_close
+
+        found = latest_raw_close(session, company_id, target_date)
+        return found[1] if found else None
 
     def _real_rate_alpha_override(
         self, session: Session, scoring_date: date

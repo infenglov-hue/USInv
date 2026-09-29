@@ -113,7 +113,7 @@ class TestScoringUniverse:
 
     def test_index_and_mock_rows_excluded(self, session):
         operating = _add_company(session, "REAL")
-        index = _add_company(session, "XU100", company_type="INDEX", is_active=False)
+        index = _add_company(session, "SPY", company_type="INDEX", is_active=False)
         mock = _add_company(session, "MOCK1", is_active=False)
         test_row = _add_company(session, "TESTMACRO", company_type=None, is_active=False)
         # All of them keep printing prices after AS_OF — the as-of proxy

@@ -57,6 +57,11 @@ class Company(Base):
     id: int = Column(Integer, primary_key=True, autoincrement=True)
     ticker: str = Column(String(10), unique=True, nullable=False, index=True)
     name: Optional[str] = Column(String(255))
+    # US port: SEC identity/classification. ``sector_bist`` carries the SEC
+    # SIC description and ``is_bist100`` means current S&P 500 membership.
+    cik: Optional[int] = Column(Integer, index=True)
+    sic: Optional[str] = Column(String(8))
+    exchange: Optional[str] = Column(String(16))
     company_type: Optional[str] = Column(String(20))  # OPERATING / HOLDING / BANK / INSURANCE / REIT
     sector_bist: Optional[str] = Column(String(100))
     sector_custom: Optional[str] = Column(String(100))
@@ -331,6 +336,9 @@ class PortfolioSelection(Base):
     # Highest close seen since entry — the trailing-stop ratchet anchor,
     # updated by the daily check-exits pass. Stops only ever move UP.
     highest_close: Optional[float] = Column(Float)
+    # US port: last split ex-date already folded into this row's stored
+    # prices (entry/stop/target/high-water/cycle ref). NULL = selection_date.
+    split_applied_through: Optional[date] = Column(Date)
     created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
     updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
 
@@ -477,6 +485,28 @@ class CompanyActivePeriod(Base):
     notes: Optional[str] = Column(Text)
     created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
     updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+
+class IndexMembership(Base):
+    """US port: point-in-time index membership intervals by ticker.
+
+    ``is_bist100`` on ``companies`` only reflects *current* S&P 500
+    membership; historical selection must use these intervals instead so a
+    backtest never treats a later index addition as an index name.
+    ``end_date`` is exclusive; NULL means still a member.
+    """
+
+    __tablename__ = "index_memberships"
+    __table_args__ = (
+        UniqueConstraint("index_name", "ticker", "start_date", name="uq_index_membership"),
+    )
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    index_name: str = Column(String(16), nullable=False, index=True)
+    ticker: str = Column(String(10), nullable=False, index=True)
+    start_date: date = Column(Date, nullable=False)
+    end_date: Optional[date] = Column(Date, nullable=True)
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
 
 
 class CashAllocationState(Base):

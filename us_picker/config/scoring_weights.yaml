@@ -92,7 +92,9 @@ regime_weights:
 # rule self-reverts to the base alpha block whenever the real rate goes
 # non-positive — it is conditional, not a permanent tilt.
 real_rate_regime:
-  enabled: true
+  # US port: BIST-validated only. Off until a US walk-forward shows the
+  # conditional block helps here too (BIST weights do not transfer).
+  enabled: false
   threshold: 0.0
   weights:
     quality_buffett: 0.25

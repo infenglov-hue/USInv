@@ -38,6 +38,12 @@ sub_sectors:
   - holding_diversified
   - holding_industrial
   - financial_services
+  # US port additions (SIC-derived, see classification/sic.py)
+  - technology_semis
+  - healthcare_devices
+  - restaurants
+  - wholesale
+  - business_services
   - other
 
 # Manual ticker → sub-sector mapping (at least BIST 100 tickers)

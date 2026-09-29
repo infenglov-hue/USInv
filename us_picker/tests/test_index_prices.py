@@ -20,7 +20,7 @@ def test_xu100_price_splices_large_source_scale_jump(tmp_path):
     session = Session()
     clear_index_price_cache()
     try:
-        xu100 = Company(ticker="XU100", name="BIST 100", company_type="INDEX")
+        xu100 = Company(ticker="SPY", name="BIST 100", company_type="INDEX")
         stock = Company(ticker="TEST", name="Test", company_type="OPERATING")
         session.add_all([xu100, stock])
         session.flush()
@@ -47,10 +47,10 @@ def test_xu100_price_splices_large_source_scale_jump(tmp_path):
         session.commit()
 
         assert get_spliced_price_by_ticker(
-            session, "XU100", date(2023, 6, 1)
+            session, "SPY", date(2023, 6, 1)
         ) == pytest.approx(5100.0)
         assert get_spliced_price_by_ticker(
-            session, "XU100", date(2023, 6, 2)
+            session, "SPY", date(2023, 6, 2)
         ) == pytest.approx(5100.0)
         assert get_spliced_price_by_ticker(
             session, "TEST", date(2023, 6, 1)

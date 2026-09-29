@@ -375,7 +375,7 @@ class BacktestEngine:
         strategy_nav = float(initial_strategy_nav)
         bist100_nav = float(initial_benchmark_nav)
 
-        previous_bist_price = self._get_price("XU100", rebalance_dates[0])
+        previous_bist_price = self._get_price("SPY", rebalance_dates[0])
 
         # Record initial point
         results.append({
@@ -656,7 +656,7 @@ class BacktestEngine:
             # Update benchmark NAV multiplicatively from the previous point.
             # This keeps incremental runs continuous instead of resetting the
             # benchmark to 100 whenever only the newest weeks are recomputed.
-            curr_bist_price = self._get_price("XU100", next_d)
+            curr_bist_price = self._get_price("SPY", next_d)
             if previous_bist_price > 0 and curr_bist_price > 0:
                 weekly_benchmark_return = curr_bist_price / previous_bist_price
                 # Expense scales with the actual period length so multi-week

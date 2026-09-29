@@ -2,10 +2,9 @@
 
 import json
 from datetime import date, datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-import requests
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -17,104 +16,66 @@ from us_picker.live_prices import (
 )
 
 
-def _response_payload() -> dict:
+class _FakeAlpaca:
+    """Stands in for AlpacaClient.fetch_snapshots."""
+
+    def __init__(self, responses):
+        self._responses = list(responses)
+        self.calls = []
+
+    def fetch_snapshots(self, symbols, feed="iex"):
+        self.calls.append((list(symbols), feed))
+        result = self._responses.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+def _snapshots() -> dict:
     return {
-        "spark": {
-            "result": [
-                {
-                    "symbol": "ASELS.IS",
-                    "response": [
-                        {
-                            "meta": {
-                                "regularMarketPrice": 393.75,
-                                "regularMarketTime": 1_782_225_826,
-                                "currency": "TRY",
-                                "exchangeName": "IST",
-                            }
-                        }
-                    ],
-                },
-                {
-                    "symbol": "XU100.IS",
-                    "response": [
-                        {
-                            "meta": {
-                                "regularMarketPrice": 14_516.32,
-                                "regularMarketTime": 1_782_225_826,
-                                "currency": "TRY",
-                                "exchangeName": "IST",
-                            }
-                        }
-                    ],
-                },
-            ],
-            "error": None,
-        }
+        "AAPL": {"latestTrade": {"p": 228.5, "t": "2026-06-23T14:59:58.123456Z"}},
+        "SPY": {"latestTrade": {"p": 612.25, "t": "2026-06-23T14:59:59Z"}},
     }
 
 
 def test_build_live_price_feed_normalizes_symbols_and_metadata():
-    response = MagicMock()
-    response.raise_for_status.return_value = None
-    response.json.return_value = _response_payload()
-    http = MagicMock()
-    http.get.return_value = response
-
+    client = _FakeAlpaca([_snapshots()])
     generated_at = datetime(2026, 6, 23, 15, 0, tzinfo=timezone.utc)
-    payload = build_live_price_feed(
-        ["ASELS", "XU100"],
-        http=http,
-        generated_at=generated_at,
-    )
+    payload = build_live_price_feed(["AAPL", "SPY"], client=client, generated_at=generated_at)
 
     assert payload["generated_at"] == "2026-06-23T15:00:00+00:00"
     assert payload["success_count"] == 2
     assert payload["failed_tickers"] == []
-    assert payload["prices"]["ASELS"]["price"] == pytest.approx(393.75)
-    assert payload["prices"]["XU100"]["price"] == pytest.approx(14_516.32)
-    params = http.get.call_args.kwargs["params"]
-    assert params["symbols"] == "ASELS.IS,XU100.IS"
-    assert params["interval"] == "1d"
+    assert payload["prices"]["AAPL"]["price"] == pytest.approx(228.5)
+    assert payload["prices"]["AAPL"]["currency"] == "USD"
+    assert payload["prices"]["SPY"]["quote_time"] == "2026-06-23T14:59:59+00:00"
+    assert client.calls == [(["AAPL", "SPY"], "iex")]
 
 
 def test_build_live_price_feed_ignores_blank_and_none_tickers():
-    response = MagicMock()
-    response.raise_for_status.return_value = None
-    response.json.return_value = _response_payload()
-    http = MagicMock()
-    http.get.return_value = response
-
-    payload = build_live_price_feed(["ASELS", None, " ", "asels", "XU100"], http=http)
+    client = _FakeAlpaca([_snapshots()])
+    payload = build_live_price_feed(["AAPL", None, " ", "aapl", "SPY"], client=client)
 
     assert payload["requested_count"] == 2
-    params = http.get.call_args.kwargs["params"]
-    assert params["symbols"] == "ASELS.IS,XU100.IS"
+    assert client.calls[0][0] == ["AAPL", "SPY"]
 
 
 @patch("us_picker.live_prices.time.sleep")
 def test_build_live_price_feed_retries_transient_failure(mock_sleep):
-    response = MagicMock()
-    response.raise_for_status.return_value = None
-    response.json.return_value = _response_payload()
-    http = MagicMock()
-    http.get.side_effect = [requests.ConnectionError("temporary"), response]
+    client = _FakeAlpaca([ConnectionError("temporary"), _snapshots()])
 
-    payload = build_live_price_feed(["ASELS", "XU100"], http=http)
+    payload = build_live_price_feed(["AAPL", "SPY"], client=client)
 
     assert payload["success_count"] == 2
-    assert http.get.call_count == 2
+    assert len(client.calls) == 2
     mock_sleep.assert_called_once_with(1)
 
 
 def test_build_live_price_feed_rejects_mostly_empty_result():
-    response = MagicMock()
-    response.raise_for_status.return_value = None
-    response.json.return_value = {"spark": {"result": [], "error": None}}
-    http = MagicMock()
-    http.get.return_value = response
+    client = _FakeAlpaca([{}])
 
     with pytest.raises(RuntimeError, match="0/2 quotes succeeded"):
-        build_live_price_feed(["ASELS", "XU100"], http=http)
+        build_live_price_feed(["AAPL", "SPY"], client=client)
 
 
 def test_live_ticker_universe_excludes_unpriced_kap_rows_but_keeps_open_position():
@@ -148,7 +109,7 @@ def test_live_ticker_universe_excludes_unpriced_kap_rows_but_keeps_open_position
     payload = build_live_ticker_universe(session)
 
     assert payload["latest_price_date"] == "2026-07-10"
-    assert payload["tickers"] == ["OPENOLD", "RECENT", "XU100"]
+    assert payload["tickers"] == ["OPENOLD", "RECENT", "SPY"]
     assert "KAPONLY" not in payload["tickers"]
 
 
@@ -158,10 +119,10 @@ def test_load_live_tickers_validates_and_normalizes(tmp_path):
         json.dumps(
             {
                 "schema_version": 1,
-                "tickers": ["asels", " XU100 ", "ASELS"],
+                "tickers": ["aapl", " SPY ", "AAPL"],
             }
         ),
         encoding="utf-8",
     )
 
-    assert load_live_tickers(path) == ["ASELS", "XU100"]
+    assert load_live_tickers(path) == ["AAPL", "SPY"]

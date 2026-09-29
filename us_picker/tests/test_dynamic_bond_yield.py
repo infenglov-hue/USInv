@@ -17,7 +17,6 @@ from sqlalchemy.orm import sessionmaker
 
 from us_picker.db.connection import _RUNTIME_SQLITE_COLUMN_ADDS
 from us_picker.db.schema import Base, MacroRegime, Company, DailyPrice, AdjustedMetric, ScoringResult
-from us_picker.data.sources.tcmb import TCMBClient
 from us_picker.data.fetcher import DataFetcher
 from us_picker.scoring.factors.graham import GrahamScorer
 from us_picker.scoring.composer import ScoreComposer
@@ -41,50 +40,6 @@ def session():
     sess = SessionFactory()
     yield sess
     sess.close()
-
-
-def test_tcmb_client_fetch_bist_tlref():
-    """TCMBClient correctly queries and parses BIST-TLREF from EVDS."""
-    client = TCMBClient(api_key="dummy-key")
-    fake_response = [
-        {"Tarih": "2026-05-26", "TP_BISTTLREF_ORAN": "45.50"}
-    ]
-    with patch.object(client, "_fetch_evds", return_value=fake_response) as mock_fetch:
-        val = client.fetch_bist_tlref()
-        
-    assert val == pytest.approx(0.455)
-    mock_fetch.assert_called_once_with("TP.BISTTLREF.ORAN", ANY, ANY)
-
-
-def test_fetch_macro_persists_bist_tlref(session):
-    """DataFetcher.fetch_macro stores bond_yield_10y_pct in macro_regime."""
-    tcmb = MagicMock()
-    tcmb.fetch_cpi_index.return_value = pd.Series(dtype=float)
-    tcmb.fetch_exchange_rates.return_value = pd.DataFrame(columns=["date", "usd_try", "eur_try"])
-    tcmb.fetch_policy_rate.return_value = 0.40
-    tcmb.fetch_bist_tlref.return_value = 0.455
-    tcmb.get_inflation_rate.return_value = 0.60
-    tcmb.fetch_inflation_expectations_24m.return_value = 0.30
-
-    fetcher = DataFetcher(session, console=MagicMock())
-    fetcher._tcmb = tcmb
-    fetcher._upsert_cpi_history = MagicMock()
-
-    # Keep the unit test offline and prevent fetch_macro from rewriting the
-    # repository's real macro.yaml through its best-effort Damodaran refresh.
-    with patch(
-        "us_picker.data.sources.damodaran.fetch_turkey_erp",
-        return_value=None,
-    ):
-        stats = fetcher.fetch_macro()
-    
-    assert stats["bond_yield_10y"] == 0.455
-
-    # Check database persistence
-    row = session.query(MacroRegime).filter(MacroRegime.date == date.today()).first()
-    assert row is not None
-    assert row.policy_rate_pct == pytest.approx(0.40)
-    assert row.bond_yield_10y_pct == pytest.approx(0.455)
 
 
 def test_graham_scorer_resolves_bond_yield_precedence(session):

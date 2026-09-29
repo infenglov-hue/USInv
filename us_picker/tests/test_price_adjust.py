@@ -150,7 +150,7 @@ def test_rebuild_writes_only_changed_rows_and_is_idempotent(session):
 
 
 def test_rebuild_skips_index_companies(session):
-    _seed(session, "XU100", [10000.0, 4000.0, 4100.0], ctype="INDEX")
+    _seed(session, "SPY", [10000.0, 4000.0, 4100.0], ctype="INDEX")
     stats = rebuild_adjusted_closes(session, config=CFG)
     assert stats["companies_with_events"] == 0
 

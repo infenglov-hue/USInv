@@ -18,6 +18,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from us_picker.classification.sic import company_type_for_sic
 from us_picker.db.schema import Company
 
 logger = logging.getLogger("us_picker.classification.company_type")
@@ -176,11 +177,14 @@ class CompanyClassifier:
         }
 
         for company in companies:
-            company_type = self.classify(
-                ticker=company.ticker,
-                company_name=company.name or "",
-                sector=company.sector_bist or "",
-            )
+            if getattr(company, "sic", None):
+                company_type = company_type_for_sic(company.sic)
+            else:
+                company_type = self.classify(
+                    ticker=company.ticker,
+                    company_name=company.name or "",
+                    sector=company.sector_bist or "",
+                )
 
             if company.company_type != company_type:
                 company.company_type = company_type

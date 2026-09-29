@@ -1186,6 +1186,18 @@ def check_exits(ctx: click.Context, apply: bool, yes: bool) -> None:
     with session_scope(engine) as session:
         checker = ExitRuleChecker(session)
 
+        # US port: restate open positions for splits first, otherwise a
+        # 10:1 split reads as a -90% day and fires every stop.
+        if apply:
+            from us_picker.portfolio.split_positions import apply_splits_to_open_positions
+
+            for event in apply_splits_to_open_positions(session):
+                console.print(
+                    f"[cyan]Split {event['ratio']:g}:1 applied to {event['ticker']} "
+                    f"(ex {event['action_date']}).[/cyan]"
+                )
+            session.commit()
+
         # B1: ratchet trailing stops daily BEFORE evaluating exits, so a
         # position that fell through today's raised stop exits this run.
         # Only persisted in --apply mode (advisory runs stay read-only).
@@ -2461,11 +2473,11 @@ def _setup_menu() -> None:
 @click.pass_context
 def menu(ctx: click.Context) -> None:
     """Interactive menu for setup, pipeline runs, and daily operations."""
-    console.print("[bold blue]BIST Stock Picker - Interactive Menu[/bold blue]")
+    console.print("[bold blue]US Picker - Interactive Menu[/bold blue]")
     if ctx.obj.get("dry_run", False):
         console.print("[yellow]Global --dry-run is active.[/yellow]")
 
-    _ensure_tcmb_api_key()
+    # (US port: no interactive API key is needed; FRED CSV is keyless.)
 
     while True:
         console.print("\n[bold]Main Menu[/bold]")

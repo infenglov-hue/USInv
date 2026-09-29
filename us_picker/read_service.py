@@ -145,8 +145,13 @@ def _load_latest_macro(session: Session) -> Optional[dict]:
         session, row, "turkey_cds_5y"
     )
     regime, regime_date = _resolve_macro_value(session, row, "regime")
+    bond_yield_10y_pct, bond_yield_10y_date = _resolve_macro_value(
+        session, row, "bond_yield_10y_pct"
+    )
 
     return {
+        "bond_yield_10y_pct": bond_yield_10y_pct,
+        "bond_yield_10y_date": bond_yield_10y_date,
         "date": row.date,
         "policy_rate_pct": policy_rate_pct,
         "policy_rate_date": policy_rate_date,
@@ -1105,8 +1110,8 @@ def _load_avg_volume_try_map(
     """Return average daily TRY turnover for the selected snapshot window."""
     cutoff = scoring_date - timedelta(days=lookback_days)
     turnover_expr = case(
-        (DailyPrice.source.ilike("YAHOO%"), DailyPrice.close * DailyPrice.volume),
-        else_=DailyPrice.volume,
+        (DailyPrice.source.ilike("ISYATIRIM%"), DailyPrice.volume),
+        else_=DailyPrice.close * DailyPrice.volume,
     )
     rows = (
         session.query(

@@ -1,9 +1,8 @@
 """Build the public near-live price feed consumed by the PWA.
 
-GitHub Pages cannot safely call Yahoo Finance from the browser because the
-quote endpoints do not allow cross-origin requests. The scheduled workflow
-runs this module server-side and publishes the resulting JSON on a separate
-public branch.
+The PWA cannot hold market-data credentials, so a scheduled workflow fetches
+quotes server-side (Alpaca, free IEX feed) and publishes the JSON on a
+separate public branch.
 """
 
 from __future__ import annotations
@@ -15,15 +14,12 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
 
-import requests
-
 from us_picker.db.connection import get_session
 from us_picker.db.schema import Company, DailyPrice, PortfolioSelection
 
 logger = logging.getLogger(__name__)
 
-YAHOO_SPARK_URL = "https://query1.finance.yahoo.com/v7/finance/spark"
-DEFAULT_BATCH_SIZE = 20
+DEFAULT_BATCH_SIZE = 100
 MIN_SUCCESS_RATIO = 0.60
 MAX_ATTEMPTS = 3
 LIVE_TICKER_SCHEMA_VERSION = 1
@@ -34,9 +30,9 @@ def build_live_ticker_universe(session=None) -> dict:
     """Return a compact, auditable near-live ticker universe.
 
     KAP discovery can leave active company records with no tradable price
-    history. They remain useful for audit, but querying them from Yahoo every
+    history. They remain useful for audit, but querying them from the quote API every
     30 minutes wastes runtime. Keep active names with a recent print, always
-    retain open positions, and add XU100.
+    retain open positions, and add the SPY benchmark.
     """
     owns_session = session is None
     session = session or get_session()
@@ -47,7 +43,7 @@ def build_live_ticker_universe(session=None) -> dict:
             session.query(DailyPrice.date)
             .join(Company, Company.id == DailyPrice.company_id)
             .filter(
-                Company.ticker != "XU100",
+                Company.ticker != "SPY",
                 DailyPrice.close.isnot(None),
                 DailyPrice.close > 0,
             )
@@ -101,7 +97,7 @@ def build_live_ticker_universe(session=None) -> dict:
                 str(row.ticker).strip().upper()
                 for row in rows
                 if row.ticker
-                and row.ticker != "XU100"
+                and row.ticker != "SPY"
                 and row.id in include_ids
                 and (bool(row.is_active) or row.id in open_ids)
             ]
@@ -109,7 +105,7 @@ def build_live_ticker_universe(session=None) -> dict:
         if owns_session:
             session.close()
 
-    tickers = list(dict.fromkeys([*tickers, "XU100"]))
+    tickers = list(dict.fromkeys([*tickers, "SPY"]))
     return {
         "schema_version": LIVE_TICKER_SCHEMA_VERSION,
         "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
@@ -125,7 +121,7 @@ def build_live_ticker_universe(session=None) -> dict:
 
 
 def get_active_tickers() -> list[str]:
-    """Return the compact tradable/recent ticker universe plus XU100."""
+    """Return the compact tradable/recent ticker universe plus SPY."""
     return list(build_live_ticker_universe()["tickers"])
 
 
@@ -169,59 +165,35 @@ def load_live_tickers(path: str | Path) -> list[str]:
     return list(dict.fromkeys(normalized))
 
 
-def _yahoo_symbol(ticker: str) -> str:
-    ticker = ticker.strip().upper()
-    return "XU100.IS" if ticker == "XU100" else f"{ticker}.IS"
-
-
-def _local_ticker(symbol: str) -> str:
-    symbol = symbol.strip().upper()
-    return "XU100" if symbol == "XU100.IS" else symbol.removesuffix(".IS")
-
-
 def _chunks(values: list[str], size: int) -> Iterable[list[str]]:
     for index in range(0, len(values), size):
         yield values[index : index + size]
 
 
-def _request_batch(
-    http: requests.Session,
-    symbols: list[str],
-) -> dict:
-    params = {
-        "symbols": ",".join(symbols),
-        "range": "1d",
-        "interval": "1d",
-    }
-    last_error: Exception | None = None
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        try:
-            response = http.get(
-                YAHOO_SPARK_URL,
-                params=params,
-                headers={"User-Agent": "Mozilla/5.0 MobileInv/1.0"},
-                timeout=20,
-            )
-            response.raise_for_status()
-            payload = response.json()
-            if not isinstance(payload, dict):
-                raise ValueError("Yahoo response is not a JSON object")
-            return payload
-        except (requests.RequestException, ValueError) as exc:
-            last_error = exc
-            if attempt < MAX_ATTEMPTS:
-                time.sleep(attempt)
-    raise RuntimeError(f"Yahoo batch request failed: {last_error}") from last_error
+def _parse_quote_time(raw) -> tuple[str | None, int | None]:
+    if not raw:
+        return None, None
+    try:
+        ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+        return None, None
+    ts = ts.astimezone(timezone.utc)
+    return ts.isoformat(), int(ts.timestamp())
 
 
 def build_live_price_feed(
     tickers: Iterable[str],
     *,
-    http: requests.Session | None = None,
+    client=None,
     batch_size: int = DEFAULT_BATCH_SIZE,
     generated_at: datetime | None = None,
 ) -> dict:
-    """Fetch and normalize Yahoo prices for the requested local tickers."""
+    """Fetch latest trades from Alpaca (free IEX feed) for the tickers.
+
+    ``client`` is anything with ``fetch_snapshots(symbols, feed=...)``;
+    defaults to :class:`AlpacaClient`.  The JSON contract is unchanged from
+    BIST Picker so the PWA reads it the same way.
+    """
     normalized_values: list[str] = []
     for ticker in tickers:
         if ticker is None:
@@ -235,65 +207,46 @@ def build_live_price_feed(
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
 
-    client = http or requests.Session()
-    symbols = [_yahoo_symbol(ticker) for ticker in normalized]
+    if client is None:
+        from us_picker.data.sources.alpaca import AlpacaClient
+
+        client = AlpacaClient(feed="iex")
+
     prices: dict[str, dict] = {}
     failures: list[str] = []
-
-    for symbol_batch in _chunks(symbols, batch_size):
-        try:
-            payload = _request_batch(client, symbol_batch)
-            results = payload.get("spark", {}).get("result", [])
-            if not isinstance(results, list):
-                results = []
-        except RuntimeError as exc:
-            logger.error("Live price batch failed for %s: %s", symbol_batch, exc)
-            failures.extend(_local_ticker(symbol) for symbol in symbol_batch)
+    for batch in _chunks(normalized, batch_size):
+        snapshots = None
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            try:
+                snapshots = client.fetch_snapshots(batch, feed="iex")
+                break
+            except Exception as exc:  # transport errors retry, then give up
+                logger.error("Live price batch failed (%s) for %s: %s", attempt, batch[0], exc)
+                if attempt < MAX_ATTEMPTS:
+                    time.sleep(attempt)
+        if snapshots is None:
+            failures.extend(batch)
             continue
-
-        returned_symbols: set[str] = set()
-        for item in results:
-            if not isinstance(item, dict):
-                continue
-            symbol = str(item.get("symbol") or "").upper()
-            returned_symbols.add(symbol)
-            responses = item.get("response")
-            if not isinstance(responses, list) or not responses:
-                continue
-            first = responses[0] if isinstance(responses[0], dict) else {}
-            meta = first.get("meta") if isinstance(first.get("meta"), dict) else {}
-            price = meta.get("regularMarketPrice")
-            quote_epoch = meta.get("regularMarketTime")
+        for ticker in batch:
+            snap = snapshots.get(ticker) or {}
+            trade = snap.get("latestTrade") or {}
+            price = trade.get("p")
             try:
                 price = float(price)
             except (TypeError, ValueError):
+                failures.append(ticker)
                 continue
             if price <= 0:
+                failures.append(ticker)
                 continue
-            try:
-                quote_epoch = int(quote_epoch)
-                quote_time = datetime.fromtimestamp(
-                    quote_epoch,
-                    tz=timezone.utc,
-                ).isoformat()
-            except (TypeError, ValueError, OSError):
-                quote_epoch = None
-                quote_time = None
-
-            ticker = _local_ticker(symbol)
+            quote_time, quote_epoch = _parse_quote_time(trade.get("t"))
             prices[ticker] = {
                 "price": price,
                 "quote_time": quote_time,
                 "quote_epoch": quote_epoch,
-                "currency": meta.get("currency") or "TRY",
-                "exchange": meta.get("exchangeName") or "IST",
+                "currency": "USD",
+                "exchange": "IEX",
             }
-
-        failures.extend(
-            _local_ticker(symbol)
-            for symbol in symbol_batch
-            if symbol not in returned_symbols or _local_ticker(symbol) not in prices
-        )
 
     success_ratio = len(prices) / len(normalized)
     if success_ratio < MIN_SUCCESS_RATIO:
@@ -306,8 +259,8 @@ def build_live_price_feed(
     return {
         "schema_version": 1,
         "generated_at": generated.astimezone(timezone.utc).isoformat(),
-        "source": "Yahoo Finance",
-        "delay_notice": "BIST quotes may be delayed by approximately 15 minutes.",
+        "source": "Alpaca (IEX)",
+        "delay_notice": "Last IEX trade; thin names can lag the consolidated tape.",
         "requested_count": len(normalized),
         "success_count": len(prices),
         "failed_tickers": sorted(set(failures)),

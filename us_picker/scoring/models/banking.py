@@ -589,7 +589,10 @@ class BankingScorer:
         )
         if price_row is None:
             return None
-        close = price_row[0]
+        # US port: base-unit price to match split-normalized EPS/shares.
+        from us_picker.utils.splits import valuation_price
+
+        close = valuation_price(session, company_id, cutoff_date) or price_row[0]
 
         metric = (
             session.query(AdjustedMetric)

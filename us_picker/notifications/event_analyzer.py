@@ -60,11 +60,12 @@ class EventAnalyzer:
             logger.warning("No Gemini API key found. Using fallback analysis.")
             return {
                 'sentiment': 'NEUTRAL',
-                'summary': f"{ticker} için KAP bildirimi yayınlandı: {title}"
+                'summary': f"{ticker} için SEC bildirimi yayınlandı: {title}"
             }
 
         prompt = (
-            "Aşağıda bir BIST şirketi için yayınlanan KAP (Kamuyu Aydınlatma Platformu) bildirimi yer almaktadır.\n"
+            "Aşağıda bir ABD borsa şirketinin SEC'e verdiği bir bildirim (8-K, 10-Q, 10-K veya 13D) "
+            "yer almaktadır; metin İngilizcedir.\n"
             "Bu bildirimi analiz et ve iki şey üret:\n"
             "1. Sentiment (Etki): POSITIVE, NEGATIVE veya NEUTRAL (Sadece bu üçünden biri).\n"
             "2. Özet: Bildirimin şirket finansalları ve geleceğine etkisini açıklayan, "
@@ -86,7 +87,7 @@ class EventAnalyzer:
             text = response.text.strip()
 
             sentiment = "NEUTRAL"
-            summary = f"{ticker} için KAP bildirimi: {title}"
+            summary = f"{ticker} için SEC bildirimi: {title}"
 
             # Parse response
             sentiment_match = re.search(r'SENTIMENT:\s*(POSITIVE|NEGATIVE|NEUTRAL)', text, re.IGNORECASE)
@@ -127,19 +128,19 @@ class EventAnalyzer:
         """
         if not self.api_key:
             action = "Stop-Loss (Zarar Durdur)" if trigger_type == 'STOP_LOSS' else "Take-Profit (Kar Al)"
-            return f"🚨 {ticker} için {action} tetiklendi! Güncel Fiyat: {price:.2f} TL (Limit: {limit_price:.2f} TL)."
+            return f"🚨 {ticker} için {action} tetiklendi! Güncel Fiyat: ${price:.2f} (Limit: ${limit_price:.2f})."
 
         action_desc = "zarar kes (stop-loss) seviyesine" if trigger_type == 'STOP_LOSS' else "kar al (take-profit) seviyesine"
         action_name = "Stop-Loss" if trigger_type == 'STOP_LOSS' else "Take-Profit"
 
         prompt = (
-            f"Aşağıdaki BIST hissesi {action_desc} ulaştı ve portföyden çıkış sinyali verdi.\n"
+            f"Aşağıdaki ABD hissesi {action_desc} ulaştı ve portföyden çıkış sinyali verdi.\n"
             "Bu durumla ilgili kısa (en fazla 2-3 cümle), profesyonel, sade ve Türkçe bir bildirim metni yaz.\n"
             "Metinde yatırımcı psikolojisini rahatlatacak rasyonel ve disiplinli bir üslup kullan.\n\n"
             f"Hisse: {ticker}\n"
             f"Tetikleyici: {action_name}\n"
-            f"Güncel Fiyat: {price:.2f} TL\n"
-            f"Tetikleme Limiti: {limit_price:.2f} TL\n"
+            f"Güncel Fiyat: ${price:.2f}\n"
+            f"Tetikleme Limiti: ${limit_price:.2f}\n"
             f"Hisse Seçim Nedenleri: {reason_top_factors or 'Bilinmiyor'}\n\n"
             "Açıklama:"
         )
@@ -154,4 +155,4 @@ class EventAnalyzer:
         except Exception as e:
             logger.error("Gemini exit alert generation failed: %s", e)
             action = "Stop-Loss (Zarar Durdur)" if trigger_type == 'STOP_LOSS' else "Take-Profit (Kar Al)"
-            return f"🚨 {ticker} için {action} tetiklendi! Güncel Fiyat: {price:.2f} TL (Limit: {limit_price:.2f} TL)."
+            return f"🚨 {ticker} için {action} tetiklendi! Güncel Fiyat: ${price:.2f} (Limit: ${limit_price:.2f})."

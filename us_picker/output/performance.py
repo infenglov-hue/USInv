@@ -28,7 +28,7 @@ class PerformanceTracker:
     def fetch_benchmark_performance(self) -> float:
         """Calculates XU100 YTD return (from Jan 1 of current year)."""
         try:
-            xu100 = self.session.query(Company).filter(Company.ticker == "XU100").first()
+            xu100 = self.session.query(Company).filter(Company.ticker == "SPY").first()
             if not xu100:
                 return 0.0
 

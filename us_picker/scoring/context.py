@@ -267,15 +267,23 @@ class ScoringContext:
         max_date_sq = max_date_sq.group_by(DailyPrice.company_id).subquery()
         
         prices = (
-            self.session.query(DailyPrice.company_id, DailyPrice.close)
+            self.session.query(DailyPrice.company_id, DailyPrice.close, DailyPrice.date)
             .join(max_date_sq, 
                   (DailyPrice.company_id == max_date_sq.c.company_id) & 
                   (DailyPrice.date == max_date_sq.c.max_date))
             .all()
         )
-        
-        for cid, close_price in prices:
-            self._prices[cid] = close_price
+
+        # US port: valuation prices are in base units (split-normalized) so
+        # they match the share counts in the statements.
+        from us_picker.utils.splits import cumulative_split_factor
+
+        for cid, close_price, price_date in prices:
+            self._prices[cid] = (
+                close_price * cumulative_split_factor(self.session, cid, price_date)
+                if close_price is not None
+                else None
+            )
 
         self._loaded_ids.update(ids_to_load)
 

@@ -51,7 +51,7 @@ _CODES_EQUITY = ["2N"]
 _CODES_SHARE_CAPITAL = ["2OA"]   # par value 1 TRY -> value == shares outstanding
 
 # BIST-100 benchmark ticker as stored in the companies table.
-_BIST100_TICKER = "XU100"
+_BIST100_TICKER = "SPY"
 
 # Minimum observations required for statistics to be meaningful.
 _MIN_PRICE_OBSERVATIONS = 20
@@ -357,7 +357,10 @@ class RiskClassifier:
         )
         if price_row is None:
             return None
-        latest_price = price_row[0]
+        # US port: base-unit price to match split-normalized share counts.
+        from us_picker.utils.splits import valuation_price
+
+        latest_price = valuation_price(session, company_id, scoring_date) or price_row[0]
 
         share_capital = self._get_balance_item(
             company_id, session, _CODES_SHARE_CAPITAL, scoring_date=scoring_date
@@ -397,12 +400,14 @@ class RiskClassifier:
         for close_price, volume_value, source in rows:
             if volume_value is None:
                 continue
-            if (source or "").upper().startswith("YAHOO"):
+            # IsYatirim stored currency turnover; every other source (Yahoo,
+            # Alpaca) stores share volume.
+            if (source or "").upper().startswith("ISYATIRIM"):
+                turnovers.append(float(volume_value))
+            else:
                 if close_price is None:
                     continue
                 turnovers.append(float(close_price * volume_value))
-            else:
-                turnovers.append(float(volume_value))
         if not turnovers:
             return None
         return float(sum(turnovers) / len(turnovers))

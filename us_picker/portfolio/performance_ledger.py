@@ -123,7 +123,7 @@ def _latest_price_date(session: Session, company_ids: list[int]) -> Optional[dat
 
 
 def _benchmark_company_id(session: Session) -> Optional[int]:
-    row = session.query(Company.id).filter(Company.ticker == "XU100").first()
+    row = session.query(Company.id).filter(Company.ticker == "SPY").first()
     return int(row[0]) if row else None
 
 

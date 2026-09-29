@@ -23,12 +23,11 @@ from typing import Optional
 from urllib.parse import urlparse
 
 import yaml
-import yfinance as yf
 
 from us_picker.read_service import get_open_positions
 from us_picker.notifications.telegram import TelegramNotifier
 from us_picker.notifications.event_analyzer import EventAnalyzer
-from us_picker.data.sources.kap_feed import KAPFeed
+from us_picker.data.sources.sec_feed import SECFilingFeed
 
 logger = logging.getLogger("us_picker.notifications.monitor_alerts")
 
@@ -185,7 +184,7 @@ def send_weekly_report_if_monday(
             pnl_part = ""
 
         open_lines.append(
-            f"• <b>{ticker}</b>: Giriş: {entry:.2f} TL | Güncel: {current:.2f} TL {pnl_part}"
+            f"• <b>{ticker}</b>: Giriş: ${entry:.2f} | Güncel: ${current:.2f} {pnl_part}"
         )
 
     # 2. Rebalance Actions (Zeki İşlemler)
@@ -345,8 +344,8 @@ def _notify_applied_exits(notifier: TelegramNotifier, state: dict) -> None:
         entry_price = selection.entry_price
         ret_pct = selection.return_pct
         safe_ticker = _html(str(ticker), 30)
-        exit_str = f"{exit_price:.2f} TL" if exit_price is not None else "—"
-        entry_str = f"{entry_price:.2f} TL" if entry_price is not None else "—"
+        exit_str = f"${exit_price:.2f}" if exit_price is not None else "—"
+        entry_str = f"${entry_price:.2f}" if entry_price is not None else "—"
         ret_str = f"{ret_pct:+.1f}%" if ret_pct is not None else "—"
 
         message = (
@@ -359,6 +358,19 @@ def _notify_applied_exits(notifier: TelegramNotifier, state: dict) -> None:
         if notifier.send_message(message):
             markers.append("EXIT_APPLIED")
             logger.info("Applied-exit alert sent for %s (%s).", ticker, selection.exit_reason)
+
+
+def fetch_live_price(ticker: str) -> Optional[float]:
+    """Latest trade price for one ticker (Alpaca IEX snapshot)."""
+    from us_picker.data.sources.alpaca import AlpacaClient
+
+    snapshot = AlpacaClient(feed="iex").fetch_snapshots([ticker], feed="iex").get(ticker) or {}
+    price = (snapshot.get("latestTrade") or {}).get("p")
+    try:
+        price = float(price)
+    except (TypeError, ValueError):
+        return None
+    return price if price > 0 else None
 
 
 def monitor_portfolio() -> None:
@@ -380,7 +392,7 @@ def monitor_portfolio() -> None:
         notifier = TelegramNotifier(bot_token=bot_token, chat_id=chat_id, enabled=enabled)
 
     analyzer = EventAnalyzer()
-    kap_feed = KAPFeed()
+    kap_feed = SECFilingFeed()
     state = load_state()
 
     # 2. Load open positions
@@ -428,15 +440,13 @@ def monitor_portfolio() -> None:
             logger.info("%s has no stop-loss or take-profit targets set. Skipping price check.", ticker)
             continue
 
-        # Fetch live price from Yahoo Finance
+        # Latest trade from Alpaca (free IEX feed)
         try:
-            t = yf.Ticker(f"{ticker}.IS")
-            hist = t.history(period="5d")
-            if hist.empty:
-                logger.warning("No price history returned for %s.IS", ticker)
+            current_price = fetch_live_price(ticker)
+            if current_price is None:
+                logger.warning("No live price returned for %s", ticker)
                 continue
-            current_price = float(hist["Close"].iloc[-1])
-            logger.info("Current price for %s: %.2f TL", ticker, current_price)
+            logger.info("Current price for %s: $%.2f", ticker, current_price)
         except Exception as e:
             logger.error("Failed to fetch live price for %s: %s", ticker, e)
             continue
@@ -463,12 +473,12 @@ def monitor_portfolio() -> None:
 
             safe_ticker = _html(ticker, 30)
             safe_alert_text = _html(alert_text, 1500)
-            entry_str = f"{entry_price:.2f} TL" if entry_price is not None else "—"
+            entry_str = f"${entry_price:.2f}" if entry_price is not None else "—"
             message = (
                 f"🚨 <b>Zarar Kes (Stop-Loss) Tetiklendi: {safe_ticker}</b>\n\n"
                 f"💰 <b>Giriş Fiyatı:</b> {entry_str}\n"
-                f"📉 <b>Güncel Fiyat:</b> {current_price:.2f} TL\n"
-                f"🛑 <b>Stop-Loss Limiti:</b> {stop_loss:.2f} TL\n\n"
+                f"📉 <b>Güncel Fiyat:</b> ${current_price:.2f}\n"
+                f"🛑 <b>Stop-Loss Limiti:</b> ${stop_loss:.2f}\n\n"
                 f"🤖 <b>Yapay Zeka Analizi:</b>\n"
                 f"<i>{safe_alert_text}</i>"
             )
@@ -497,12 +507,12 @@ def monitor_portfolio() -> None:
 
             safe_ticker = _html(ticker, 30)
             safe_alert_text = _html(alert_text, 1500)
-            entry_str = f"{entry_price:.2f} TL" if entry_price is not None else "—"
+            entry_str = f"${entry_price:.2f}" if entry_price is not None else "—"
             message = (
                 f"🟢 <b>Kar Al (Take-Profit) Tetiklendi: {safe_ticker}</b>\n\n"
                 f"💰 <b>Giriş Fiyatı:</b> {entry_str}\n"
-                f"📈 <b>Güncel Fiyat:</b> {current_price:.2f} TL\n"
-                f"🎯 <b>Kar Al Limiti:</b> {target_price:.2f} TL\n\n"
+                f"📈 <b>Güncel Fiyat:</b> ${current_price:.2f}\n"
+                f"🎯 <b>Kar Al Limiti:</b> ${target_price:.2f}\n\n"
                 f"🤖 <b>Yapay Zeka Analizi:</b>\n"
                 f"<i>{safe_alert_text}</i>"
             )
@@ -538,7 +548,7 @@ def monitor_portfolio() -> None:
             if disc_id in state["processed_kap_ids"]:
                 continue
 
-            title = str(disc.get("title") or "Başlıksız KAP bildirimi").strip()
+            title = str(disc.get("title") or "Başlıksız SEC bildirimi").strip()
             logger.info("Analyzing KAP disclosure for %s: %s (ID: %s)", ticker, title, disc_id)
 
             # Fetch full text
@@ -584,12 +594,12 @@ def monitor_portfolio() -> None:
             safe_summary = _html(summary, 2200)
             safe_url = _safe_http_url(disc.get("url"))
             detail_line = (
-                f"\n\n🔗 <a href=\"{safe_url}\">KAP Bildirim Detayı</a>"
+                f"\n\n🔗 <a href=\"{safe_url}\">SEC Bildirim Detayı</a>"
                 if safe_url
                 else ""
             )
             message = (
-                f"📢 <b>Yeni KAP Açıklaması: {safe_ticker}</b>\n"
+                f"📢 <b>Yeni SEC Bildirimi: {safe_ticker}</b>\n"
                 f"📝 <b>Konu:</b> {safe_title}\n"
                 f"⚖️ <b>Etki Derecesi:</b> {sentiment_emoji} {sentiment}\n\n"
                 f"🤖 <b>Yapay Zeka Özeti:</b>\n"

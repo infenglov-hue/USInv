@@ -152,6 +152,15 @@ class DCFScorer:
             raw_mos = (intrinsic - current_price) / intrinsic * 100.0
             mos_pct = max(-100.0, min(200.0, raw_mos))
 
+        # Base units -> traded price basis for everything shown to users.
+        from us_picker.utils.splits import cumulative_split_factor
+
+        basis = cumulative_split_factor(session, company_id, scoring_date or date.today())
+        intrinsic = intrinsic / basis
+        base_oe = base_oe / basis
+        if current_price:
+            current_price = current_price / basis
+
         return {
             "intrinsic_value_per_share": round(intrinsic, 2),
             "base_oe_per_share": round(base_oe, 4),
@@ -201,20 +210,31 @@ class DCFScorer:
             self._rate_cache = (scoring_date, static_r, "static_config")
             return static_r, "static_config"
 
+        # US port: the risk-free leg is the 10y Treasury (the USD cost-of-
+        # equity convention); the policy rate is only a fallback.
+        from sqlalchemy import or_
+
         query = session.query(MacroRegime).filter(
-            MacroRegime.policy_rate_pct.isnot(None),
+            or_(
+                MacroRegime.bond_yield_10y_pct.isnot(None),
+                MacroRegime.policy_rate_pct.isnot(None),
+            )
         )
         if scoring_date is not None:
             query = query.filter(MacroRegime.date <= scoring_date)
         latest = query.order_by(MacroRegime.date.desc()).first()
 
-        if latest is None or latest.policy_rate_pct is None:
+        if latest is None:
             logger.info("No MacroRegime policy rate found; using static %.2f%%", static_r * 100)
             self._rate_cache = (scoring_date, static_r, "static_fallback_no_macro")
             return static_r, "static_fallback_no_macro"
 
-        policy = float(latest.policy_rate_pct)
-        # policy_rate stored as fraction (e.g., 0.425 = 42.5%)
+        policy = float(
+            latest.bond_yield_10y_pct
+            if latest.bond_yield_10y_pct is not None
+            else latest.policy_rate_pct
+        )
+        # rates stored as fraction (e.g., 0.0517 = 5.17%)
         dyn_r = policy + erp
 
         if dyn_r - g_terminal < min_spread:
@@ -361,28 +381,12 @@ class DCFScorer:
         scoring_date: Optional[date] = None,
     ) -> Optional[float]:
         """Return the most recent adjusted_close (or close) for a company."""
-        query = session.query(DailyPrice).filter(
-            DailyPrice.company_id == company_id,
-            DailyPrice.adjusted_close.isnot(None),
-        )
+        # US port: base-unit price so it matches split-normalized share counts.
+        # (adjusted_close is total-return in the US port, so it cannot be used
+        # as a valuation price.)
+        from us_picker.utils.splits import valuation_price
 
-        if scoring_date:
-            query = query.filter(DailyPrice.date <= scoring_date)
-
-        row = query.order_by(DailyPrice.date.desc()).first()
-        if row:
-            return row.adjusted_close
-
-        query = session.query(DailyPrice).filter(
-            DailyPrice.company_id == company_id,
-            DailyPrice.close.isnot(None),
-        )
-
-        if scoring_date:
-            query = query.filter(DailyPrice.date <= scoring_date)
-
-        row = query.order_by(DailyPrice.date.desc()).first()
-        return row.close if row else None
+        return valuation_price(session, company_id, scoring_date)
 
     def _load_config(self) -> None:
         """Load DCF parameters from thresholds.yaml and macro.yaml."""

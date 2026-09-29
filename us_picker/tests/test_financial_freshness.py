@@ -184,71 +184,51 @@ def test_score_input_freshness_accepts_audited_q1_ttm(session):
 
 # ── fetch_recent_financials wiring ──────────────────────────────────────────
 
-class _FakeIsy:
-    """Returns a current-year Q1 populated + older-year all-null payload."""
+class _FakeSEC:
+    """EDGAR stub: one recent 10-Q filer and a tiny companyfacts payload."""
 
-    def __init__(self):
-        self.calls = []
+    def __init__(self, filers):
+        self.filers = filers
+        self.facts_calls = []
 
-    def fetch_financials_deep(
-        self, ticker, financial_group="1", num_years=1, start_year=None
-    ):
-        self.calls.append((ticker, num_years, start_year))
-        current_year = start_year - 1
-        income = pd.DataFrame(
-            {
-                "item_code": ["1A"],
-                "desc_tr": ["Satışlar"],
-                "desc_eng": ["Sales"],
-                f"{current_year}/3": [1234.5],
-                f"{current_year - 1}/12": [None],  # null → must be skipped
-            }
-        )
-        return {
-            "income": income,
-            "balance": pd.DataFrame(),
-            "cashflow": pd.DataFrame(),
-            "raw": [{"itemCode": "1A"}],
-            "financial_group": "XI_29",
-        }
+    def recent_periodic_filers(self, since, until=None):
+        return set(self.filers)
+
+    def fetch_companyfacts(self, cik):
+        self.facts_calls.append(cik)
+        q1 = {"start": "2026-01-01", "end": "2026-03-31", "val": 1234.5,
+              "filed": "2026-05-01", "form": "10-Q", "accn": "x"}
+        return {"facts": {"us-gaap": {
+            "Revenues": {"units": {"USD": [q1]}},
+            "NetIncomeLoss": {"units": {"USD": [dict(q1, val=100.0)]}},
+        }}}
 
 
-def _bare_fetcher(session):
-    # Bypass DataFetcher.__init__ (it builds real network clients and probes
-    # isyatirim.com.tr); wire only what fetch_recent_financials touches.
-    fetcher = DataFetcher.__new__(DataFetcher)
-    fetcher._session = session
-    fetcher._console = Console(quiet=True)
-    fetcher._isy = _FakeIsy()
-    return fetcher
+def _bare_fetcher(session, filers):
+    return DataFetcher(session=session, console=Console(quiet=True), sec_client=_FakeSEC(filers))
 
 
-def test_fetch_recent_financials_requests_current_year_plus_one(session):
-    company = Company(
-        ticker="YUNSA", name="Yünsa", company_type="OPERATING", is_active=True
-    )
-    session.add(company)
+def test_fetch_recent_financials_only_refreshes_recent_filers(session):
+    session.add_all([
+        Company(ticker="FILED", cik=111, company_type="OPERATING", is_active=True),
+        Company(ticker="QUIET", cik=222, company_type="OPERATING", is_active=True),
+    ])
     session.flush()
 
-    fetcher = _bare_fetcher(session)
-    stats = fetcher.fetch_recent_financials(tickers=["YUNSA"])
+    fetcher = _bare_fetcher(session, filers={111, 999})
+    stats = fetcher.fetch_recent_financials()
 
-    current_year = date.today().year
-    # The +1 anchor is the whole point: template starts at the current year.
-    assert fetcher._isy.calls == [("YUNSA", 1, current_year + 1)]
+    assert fetcher.sec.facts_calls == [111]
     assert stats["tickers_processed"] == 1
-    assert stats["failed"] == []
-
     rows = session.query(FinancialStatement).all()
-    # Only the populated current-year Q1 lands; the all-null 12M is skipped.
     assert len(rows) == 1
-    assert rows[0].period_end == date(current_year, 3, 31)
+    assert rows[0].period_end == date(2026, 3, 31)
     assert rows[0].period_type == "Q1"
+    assert rows[0].publication_date == date(2026, 5, 2)
 
 
-def test_fetch_recent_financials_unknown_ticker_no_rows(session):
-    fetcher = _bare_fetcher(session)
-    stats = fetcher.fetch_recent_financials(tickers=["GHOST"])
-    # Fetch succeeds but no matching company → nothing written, no crash.
-    assert stats["tickers_processed"] == 1
+def test_fetch_recent_financials_no_universe_filers_is_a_noop(session):
+    fetcher = _bare_fetcher(session, filers={999})
+    stats = fetcher.fetch_recent_financials()
+    assert stats["tickers_processed"] == 0
     assert session.query(FinancialStatement).count() == 0

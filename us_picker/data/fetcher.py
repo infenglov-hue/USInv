@@ -1,21 +1,31 @@
-"""Data fetcher orchestrator for BIST Stock Picker.
+"""Data fetcher orchestrator for the US picker.
 
-Coordinates all data sources (IsYatirim, KAP, TCMB, Yahoo) and writes
-fetched data into the SQLite database. Used by the `bist fetch` CLI command.
+Same contract as BIST Picker's fetcher (the CLI, cleaning, scoring and
+backtest stages are unchanged); only the sources differ:
+
+| BIST Picker        | US picker                                        |
+|--------------------|--------------------------------------------------|
+| IsYatirim prices   | Alpaca daily bars (raw + total-return adjusted)  |
+| IsYatirim/KAP list | SEC ticker list x Alpaca tradable assets         |
+| IsYatirim tables   | SEC companyfacts -> IsYatirim-shaped statements  |
+| BIST 100 list      | S&P 500 membership intervals                     |
+| TCMB macro         | FRED (fed funds, 10y, CPI, breakevens, HY OAS)   |
+| XU100 benchmark    | SPY total return                                 |
 """
 
+from __future__ import annotations
+
+import concurrent.futures
 import json
 import logging
 import os
-import random
-from contextlib import contextmanager
+import re
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 import yaml
-import concurrent.futures
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -28,15 +38,17 @@ from rich.progress import (
 from rich.table import Table
 from sqlalchemy.orm import Session
 
-from us_picker.data.sources.isyatirim import IsYatirimClient
-from us_picker.data.sources.kap import KAPClient
-from us_picker.data.sources.tcmb import TCMBClient
-from us_picker.data.sources.yahoo import YahooClient
+from us_picker.classification.sic import is_excluded_sic
+from us_picker.data.sources import fred as fred_series
+from us_picker.data.sources.sec_statements import build_statements
+from us_picker.data.sources.sp500 import members_on, normalize_ticker
 from us_picker.db.schema import (
     Company,
+    CorporateAction,
     CpiHistory,
     DailyPrice,
     FinancialStatement,
+    IndexMembership,
     MacroRegime,
 )
 from us_picker.utils.rate_limiter import RateLimiter
@@ -44,8 +56,17 @@ from us_picker.utils.rate_limiter import RateLimiter
 logger = logging.getLogger("us_picker.data.fetcher")
 
 _SETTINGS_PATH = Path(__file__).resolve().parent.parent / "config" / "settings.yaml"
-_BENCHMARK_TICKER = "XU100"
-_BENCHMARK_NAME = "BIST 100"
+_BENCHMARK_TICKER = "SPY"
+_BENCHMARK_NAME = "SPDR S&P 500 ETF (total return)"
+_INDEX_NAME = "SP500"
+_LISTING_EXCHANGES = {"NYSE", "Nasdaq"}
+_ALPACA_EXCHANGES = {"NYSE", "NASDAQ", "AMEX", "ARCA", "BATS"}
+# Instruments that are not common stock of an operating company.
+_NON_COMMON_NAME = re.compile(
+    r"\b(warrants?|units?|rights?|preferred|depositary|notes due|debentures|"
+    r"trust preferred|acquisition corp|% )\b",
+    re.IGNORECASE,
+)
 
 
 def _load_settings() -> dict:
@@ -57,12 +78,7 @@ def _load_settings() -> dict:
 
 
 class _PipeProgress:
-    """Minimal Progress-like wrapper for pipe/subprocess mode.
-
-    Uses print()+flush instead of Rich progress bars, which don't render
-    correctly when stdout is piped on Windows. Output goes directly to
-    stdout so the parent process (dashboard) can read it in real-time.
-    """
+    """Minimal Progress-like wrapper for pipe/subprocess mode."""
 
     def __init__(self, description: str) -> None:
         self._description = description
@@ -70,10 +86,7 @@ class _PipeProgress:
         self._next_id = 0
 
     def _emit(self, msg: str) -> None:
-        """Print a line and immediately flush stdout."""
-        import sys
         print(msg, flush=True)
-        sys.stdout.flush()
 
     def __enter__(self) -> "_PipeProgress":
         return self
@@ -82,7 +95,6 @@ class _PipeProgress:
         pass
 
     def add_task(self, name: str, total: int = 0) -> int:
-        """Register a new task and return its ID."""
         task_id = self._next_id
         self._next_id += 1
         self._tasks[task_id] = {"name": name, "completed": 0, "total": total}
@@ -90,73 +102,100 @@ class _PipeProgress:
         return task_id
 
     def advance(self, task_id: int, advance: int = 1) -> None:
-        """Advance a task's completed count."""
         task = self._tasks.get(task_id)
         if task is None:
             return
         task["completed"] += advance
         done, total = task["completed"], task["total"]
-        # Emit every ~10% or at completion
         if done == total or done % max(total // 10, 1) == 0:
             pct = int(done * 100 / total) if total else 0
             self._emit(f"{self._description} — {task['name']}: {done}/{total} ({pct}%)")
 
     def update(self, task_id: int, **kwargs) -> None:
-        """Update task attributes (for compatibility)."""
         task = self._tasks.get(task_id)
         if task is None:
             return
-        if "completed" in kwargs:
-            task["completed"] = kwargs["completed"]
-        if "total" in kwargs:
-            task["total"] = kwargs["total"]
+        for key in ("completed", "total"):
+            if key in kwargs:
+                task[key] = kwargs[key]
+
+
+def _alpaca_symbol(sec_ticker: str) -> str:
+    return normalize_ticker(sec_ticker)
 
 
 class DataFetcher:
     """Orchestrates data fetching from all sources into the database.
 
-    Args:
-        session: SQLAlchemy database session.
-        console: Rich Console for output. Creates one if not provided.
+    Network clients are created lazily so constructing a fetcher (tests,
+    dry runs) never requires credentials.
     """
 
     def __init__(
         self,
         session: Session,
         console: Optional[Console] = None,
+        *,
+        sec_client=None,
+        alpaca_client=None,
+        fred_client=None,
     ) -> None:
         self._session = session
         self._console = console or Console()
         settings = _load_settings()
-
-        rate_limits = settings.get("rate_limits", {})
-        isy_delay = rate_limits.get("isyatirim_delay_sec", 1.0)
-        kap_delay = rate_limits.get("kap_delay_sec", 2.0)
-        tcmb_delay = rate_limits.get("tcmb_delay_sec", 1.0)
-        yahoo_delay = rate_limits.get("yahoo_delay_sec", 0.5)
-
-        self._isy = IsYatirimClient(
-            rate_limiter=RateLimiter(min_delay=isy_delay, name="isyatirim")
-        )
-        self._kap = KAPClient(
-            rate_limiter=RateLimiter(min_delay=kap_delay, name="kap")
-        )
-        self._tcmb = TCMBClient(
-            rate_limiter=RateLimiter(min_delay=tcmb_delay, name="tcmb")
-        )
-        self._yahoo = YahooClient(
-            rate_limiter=RateLimiter(min_delay=yahoo_delay, name="yahoo")
-        )
-
+        self._rate_limits = settings.get("rate_limits", {})
         self._fetch_settings = settings.get("fetch", {})
+        self._universe_settings = settings.get("universe", {})
+        self._sec = sec_client
+        self._alpaca = alpaca_client
+        self._fred = fred_client
+
+    # -- lazy clients --------------------------------------------------------
+
+    @property
+    def sec(self):
+        if self._sec is None:
+            from us_picker.data.sources.sec import SECClient
+
+            self._sec = SECClient(
+                rate_limiter=RateLimiter(
+                    min_delay=float(self._rate_limits.get("sec_delay_sec", 0.12)), name="sec"
+                )
+            )
+        return self._sec
+
+    @property
+    def alpaca(self):
+        if self._alpaca is None:
+            from us_picker.data.sources.alpaca import AlpacaClient
+
+            self._alpaca = AlpacaClient(
+                rate_limiter=RateLimiter(
+                    min_delay=float(self._rate_limits.get("alpaca_delay_sec", 0.31)),
+                    name="alpaca",
+                )
+            )
+        return self._alpaca
+
+    @property
+    def fred(self):
+        if self._fred is None:
+            from us_picker.data.sources.fred import FREDClient
+
+            self._fred = FREDClient()
+        return self._fred
+
+    # -- universe ------------------------------------------------------------
 
     def fetch_universe(self) -> dict:
-        """Fetch company universe and update the companies table.
+        """Refresh the investable universe on ``companies``.
 
-        Builds the union of the IsYatirim and KAP company lists so the
-        database is not limited to whichever upstream source is smaller.
-        IsYatirim remains the primary source for sector/free-float data,
-        while KAP contributes additional listed tickers and company names.
+        Candidates are SEC registrants listed on NYSE/Nasdaq that Alpaca can
+        trade, minus non-common instruments and non-operating SIC codes.  A
+        liquidity screen over the last month keeps the pool to names a
+        five-stock portfolio can actually trade; current S&P 500 members are
+        always kept.  Names already in the pool stay unless their liquidity
+        falls below ``keep_ratio`` of the entry bar (hysteresis).
 
         Returns:
             Stats dict: {total, new, updated, delisted, bist100_count}.
@@ -164,774 +203,540 @@ class DataFetcher:
         self._console.print("[bold]Fetching company universe...[/bold]")
         stats = {"total": 0, "new": 0, "updated": 0, "delisted": 0, "bist100_count": 0}
 
-        # Fetch from IsYatirim
-        overview_df = self._isy.fetch_company_overview()
-        bist100_tickers = set(self._isy.fetch_bist100_tickers())
-        if not bist100_tickers:
-            message = (
-                "BIST 100 constituent fetch returned no tickers; refusing to "
-                "overwrite the last-known-good index membership"
-            )
-            logger.error(message)
-            self._console.print(f"[red]{message}[/red]")
-            raise RuntimeError(message)
+        cfg = self._universe_settings
+        min_price = float(cfg.get("min_price_usd", 5.0))
+        min_adv = float(cfg.get("min_avg_dollar_volume_usd", 20_000_000))
+        keep_ratio = float(cfg.get("keep_ratio", 0.5))
+        lookback = int(cfg.get("liquidity_lookback_days", 30))
 
-        # Fetch from KAP for enrichment
-        kap_df = self._kap.fetch_company_list()
-        kap_lookup: dict[str, dict] = {}
-        if not kap_df.empty:
-            for _, row in kap_df.iterrows():
-                kap_lookup[row["ticker"]] = row.to_dict()
+        from us_picker.data.sources.sp500 import fetch_intervals
 
-        overview_lookup: dict[str, dict] = {}
-        if not overview_df.empty:
-            for _, row in overview_df.iterrows():
-                ticker = (row.get("ticker") or "").strip().upper()
-                if ticker:
-                    overview_lookup[ticker] = row.to_dict()
+        intervals = fetch_intervals()
+        sp500_now = members_on(intervals, date.today())
+        self._store_index_intervals(intervals)
 
-        all_tickers = sorted(set(overview_lookup) | set(kap_lookup))
-        if not all_tickers:
-            self._console.print(
-                "[red]Failed to fetch company universe from both IsYatirim and KAP[/red]"
-            )
-            return stats
+        sec_df = self.sec.fetch_company_tickers()
+        if sec_df.empty:
+            raise RuntimeError("SEC ticker list came back empty; refusing to rebuild universe")
+        sec_df = sec_df[sec_df["exchange"].isin(_LISTING_EXCHANGES)].copy()
+        sec_df["symbol"] = sec_df["ticker"].map(_alpaca_symbol)
+        sec_df = sec_df.drop_duplicates("symbol")
 
-        # Get existing companies from DB
-        existing = {
-            c.ticker: c
-            for c in self._session.query(Company).all()
+        assets = {
+            a["symbol"]: a
+            for a in self.alpaca.fetch_assets(status="active")
+            if a.get("tradable") and a.get("exchange") in _ALPACA_EXCHANGES
         }
-        seen_tickers: set[str] = set()
+        candidates = sec_df[sec_df["symbol"].isin(assets)]
+        candidates = candidates[
+            ~candidates["symbol"].map(lambda s: bool(_NON_COMMON_NAME.search(assets[s].get("name") or "")))
+        ]
 
-        for ticker in all_tickers:
-            seen_tickers.add(ticker)
+        existing = {c.ticker: c for c in self._session.query(Company).all()}
+        liquidity = self._recent_liquidity(list(candidates["symbol"]), lookback)
 
-            row = overview_lookup.get(ticker, {})
-            kap_data = kap_lookup.get(ticker, {})
-            is_bist100 = ticker in bist100_tickers
-            free_float_pct = row.get("free_float_pct")
-            sector_bist = row.get("sector")
-            company_name = kap_data.get("name") or row.get("name", "")
+        kept: list[tuple[pd.Series, dict]] = []
+        for row in candidates.itertuples(index=False):
+            symbol = row.symbol
+            liq = liquidity.get(symbol)
+            in_pool = symbol in existing and existing[symbol].is_active
+            bar = min_adv * (keep_ratio if in_pool else 1.0)
+            liquid = liq is not None and liq["price"] >= min_price and liq["adv"] >= bar
+            if liquid or symbol in sp500_now:
+                kept.append((row, liq or {}))
 
-            if ticker in existing:
-                # Update existing company
-                company = existing[ticker]
-                company.name = company_name or company.name
-                company.sector_bist = sector_bist or company.sector_bist
-                if free_float_pct is not None:
-                    company.free_float_pct = free_float_pct
-                company.is_bist100 = is_bist100
-                company.is_active = True
-                stats["updated"] += 1
-            else:
-                # Insert new company
-                company = Company(
-                    ticker=ticker,
-                    name=company_name,
-                    sector_bist=sector_bist or "",
-                    free_float_pct=free_float_pct,
-                    is_bist100=is_bist100,
-                    is_active=True,
-                )
+        # SIC / profile for names we have not classified yet.
+        need_profile = [
+            row for row, _ in kept
+            if symbol_missing_profile(existing.get(row.symbol), int(row.cik))
+        ]
+        profiles = self._fetch_profiles([int(r.cik) for r in need_profile])
+
+        seen: set[str] = set()
+        for row, _liq in kept:
+            symbol = row.symbol
+            company = existing.get(symbol)
+            profile = profiles.get(int(row.cik), {})
+            sic = profile.get("sic") if profile else (company.sic if company else None)
+            if sic and is_excluded_sic(sic):
+                continue
+            is_member = symbol in sp500_now
+            if company is None:
+                company = Company(ticker=symbol, is_active=True)
                 self._session.add(company)
+                existing[symbol] = company
                 stats["new"] += 1
-
-            if is_bist100:
+            else:
+                stats["updated"] += 1
+            company.cik = int(row.cik)
+            company.exchange = row.exchange
+            company.name = (profile.get("name") if profile else None) or company.name or row.name
+            if profile:
+                company.sic = sic
+                company.sector_bist = profile.get("sic_description") or company.sector_bist
+            company.free_float_pct = 100.0  # no free-float concept on US listings
+            company.is_bist100 = is_member
+            company.is_active = True
+            seen.add(symbol)
+            if is_member:
                 stats["bist100_count"] += 1
 
-        # Mark delisted companies
-        for ticker, company in existing.items():
-            if ticker not in seen_tickers and company.is_active:
+        for symbol, company in existing.items():
+            if symbol == _BENCHMARK_TICKER:
+                continue
+            if symbol not in seen and company.is_active:
                 company.is_active = False
+                company.is_bist100 = False
                 stats["delisted"] += 1
 
         self._session.flush()
-        stats["total"] = len(seen_tickers)
-
+        stats["total"] = len(seen)
         self._console.print(
             f"  Universe: {stats['total']} companies "
             f"({stats['new']} new, {stats['updated']} updated, "
-            f"{stats['delisted']} delisted, {stats['bist100_count']} in BIST 100)"
+            f"{stats['delisted']} dropped, {stats['bist100_count']} in S&P 500)"
         )
         return stats
+
+    def _recent_liquidity(self, symbols: list[str], lookback_days: int) -> dict[str, dict]:
+        end = date.today()
+        start = end - timedelta(days=lookback_days + 10)
+        bars = self.alpaca.fetch_daily_bars(symbols, start, end, adjustment="raw")
+        result: dict[str, dict] = {}
+        if bars.empty:
+            return result
+        bars = bars.dropna(subset=["close", "volume"])
+        for symbol, group in bars.groupby("symbol"):
+            tail = group.sort_values("date").tail(20)
+            if tail.empty:
+                continue
+            result[symbol] = {
+                "price": float(tail["close"].iloc[-1]),
+                "adv": float((tail["close"] * tail["volume"]).mean()),
+            }
+        return result
+
+    def _fetch_profiles(self, ciks: list[int]) -> dict[int, dict]:
+        from us_picker.data.sources.sec import company_profile
+
+        profiles: dict[int, dict] = {}
+        if not ciks:
+            return profiles
+        with self._progress_bar("SEC company profiles") as progress:
+            task = progress.add_task("Profiles", total=len(ciks))
+            for cik in ciks:
+                try:
+                    payload = self.sec.fetch_submissions(cik)
+                    if payload:
+                        profiles[cik] = company_profile(payload)
+                except Exception as exc:  # one bad profile must not sink the run
+                    logger.warning("SEC submissions failed for CIK %s: %s", cik, exc)
+                progress.advance(task)
+        return profiles
+
+    def _store_index_intervals(self, intervals) -> None:
+        self._session.query(IndexMembership).filter(
+            IndexMembership.index_name == _INDEX_NAME
+        ).delete(synchronize_session=False)
+        self._session.add_all(
+            IndexMembership(
+                index_name=_INDEX_NAME,
+                ticker=i.ticker,
+                start_date=i.start_date,
+                end_date=i.end_date,
+            )
+            for i in intervals
+        )
+        self._session.flush()
+
+    # -- prices --------------------------------------------------------------
 
     def fetch_prices(
         self,
         tickers: Optional[list[str]] = None,
         days_back: int = 1500,
     ) -> dict:
-        """Fetch historical price data and store in daily_prices table.
-        Uses ThreadPoolExecutor for parallel fetching.
+        """Fetch daily bars into ``daily_prices`` (raw close + total-return
+        adjusted close) and refresh corporate actions for the same window.
+
+        Alpaca back-adjusts the whole history whenever a split or dividend
+        goes ex.  A symbol whose stored adjusted/raw ratio no longer matches
+        the vendor's on the overlap day gets its full adjusted history
+        rewritten; raw ``close`` is never modified.
         """
         ticker_list = tickers or self._get_active_tickers()
+        stats = {"tickers_processed": 0, "rows_inserted": 0, "rows_skipped": 0,
+                 "failed": [], "readjusted": 0}
         if not ticker_list:
             self._console.print("[yellow]No tickers to fetch prices for[/yellow]")
-            return {"tickers_processed": 0, "rows_inserted": 0, "rows_skipped": 0, "failed": []}
+            return stats
 
-        end_date = date.today()
+        end_date = _last_complete_session_day()
         start_date = end_date - timedelta(days=days_back)
-        stats = {"tickers_processed": 0, "rows_inserted": 0, "rows_skipped": 0, "failed": []}
-
-        # Max workers for IsYatirim 
-        max_workers = 8 
-        
-        # Pre-fetch existing companies to avoid DB lookups in threads
-        # We need company IDs.
+        history_start = date.fromisoformat(
+            str(self._fetch_settings.get("price_history_start", "2016-01-01"))
+        )
+        start_date = max(start_date, history_start)
         companies = {
-            c.ticker: c.id 
+            c.ticker: c.id
             for c in self._session.query(Company).filter(Company.ticker.in_(ticker_list)).all()
         }
-        
-        # Helper for thread execution
-        def fetch_one(tsk_ticker):
-            try:
-                # If company missing (shouldn't happen if we fetched universe), skip or handle
-                cid = companies.get(tsk_ticker)
-                if not cid:
-                    # Try to get or create inside thread (careful with session)
-                    # For safety, skipping concurrent creation here. 
-                    return tsk_ticker, None, "No Company ID"
-                
-                df = self._isy.fetch_price_data(tsk_ticker, start_date, end_date)
-                if df is None or df.empty:
-                    df = self._yahoo.fetch_price_data(tsk_ticker, start_date, end_date)
-                return tsk_ticker, df, None
-            except Exception as e:
-                return tsk_ticker, None, str(e)
 
-        with self._progress_bar("Fetching prices (Parallel)") as progress:
+        chunk = 100
+        with self._progress_bar("Fetching prices") as progress:
             task = progress.add_task("Prices", total=len(ticker_list))
-            
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all tasks
-                future_to_ticker = {
-                    executor.submit(fetch_one, t): t for t in ticker_list
-                }
-                
-                batch_data = []
-                BATCH_SIZE = 50  # Number of tickers to batch before insert
-
-                for future in concurrent.futures.as_completed(future_to_ticker):
-                    ticker, df, error = future.result()
-                    
-                    if error:
-                        logger.warning("Failed to fetch prices for %s: %s", ticker, error)
-                        stats["failed"].append(ticker)
-                    elif df is not None and not df.empty:
-                        # Prepare data for batch insert
-                        count = self._prepare_prices_batch(companies[ticker], df, batch_data)
-                        stats["rows_inserted"] += count
-                    else:
-                        stats["failed"].append(ticker)
-                    
-                    stats["tickers_processed"] += 1
-                    progress.advance(task)
-                    
-                    # Periodic flush to keep memory low
-                    if len(batch_data) >= 500:
-                        self._bulk_insert_prices(batch_data)
-                        batch_data.clear()
-
-                # Final flush
-                if batch_data:
-                    self._bulk_insert_prices(batch_data)
+            for i in range(0, len(ticker_list), chunk):
+                batch = [t for t in ticker_list[i : i + chunk] if t in companies]
+                if not batch:
+                    progress.advance(task, len(ticker_list[i : i + chunk]))
+                    continue
+                try:
+                    df = self.alpaca.fetch_price_history(batch, start_date, end_date)
+                except Exception as exc:
+                    logger.warning("Price fetch failed for %s..: %s", batch[0], exc)
+                    stats["failed"].extend(batch)
+                    progress.advance(task, len(batch))
+                    continue
+                got = set(df["symbol"]) if not df.empty else set()
+                stats["failed"].extend(sorted(set(batch) - got))
+                stale = self._stale_adjustment_symbols(df, companies)
+                rows: list[dict] = []
+                for symbol, group in df.groupby("symbol") if not df.empty else []:
+                    stats["rows_inserted"] += self._prepare_prices_batch(
+                        companies[symbol], group, rows
+                    )
+                self._bulk_insert_prices(rows)
+                for symbol in stale:
+                    self._rewrite_adjusted_history(companies[symbol], symbol, history_start, end_date)
+                    stats["readjusted"] += 1
+                stats["tickers_processed"] += len(batch)
+                progress.advance(task, len(batch))
 
         self._console.print(
             f"  Prices: {stats['tickers_processed']} tickers, "
-            f"{stats['rows_inserted']} rows fetched"
+            f"{stats['rows_inserted']} rows fetched, {stats['readjusted']} re-adjusted"
         )
         if stats["failed"]:
-            self._console.print(
-                f"  [yellow]Failed: {len(stats['failed'])} tickers[/yellow]"
+            self._console.print(f"  [yellow]No bars: {len(stats['failed'])} tickers[/yellow]")
+
+        try:
+            stats["corporate_actions"] = self.fetch_corporate_actions(
+                ticker_list, start=start_date - timedelta(days=7), end=end_date
             )
+        except Exception as exc:
+            logger.warning("Corporate action refresh failed: %s", exc)
 
         benchmark_stats = self.fetch_benchmark_prices(days_back=days_back)
         if benchmark_stats.get("rows_inserted"):
             stats["benchmark_rows_inserted"] = benchmark_stats["rows_inserted"]
         return stats
 
-    def fetch_financials(
-        self, tickers: Optional[list[str]] = None
-    ) -> dict:
-        """Fetch financial statements and store in financial_statements table.
-        Uses ThreadPoolExecutor for parallel fetching.
-        """
-        ticker_list = tickers or self._get_active_tickers()
-        if not ticker_list:
-            self._console.print("[yellow]No tickers to fetch financials for[/yellow]")
-            return {"tickers_processed": 0, "statements_inserted": 0, "failed": []}
+    def _stale_adjustment_symbols(self, df: pd.DataFrame, companies: dict[str, int]) -> set[str]:
+        """Symbols whose stored adjustment factor diverged from the vendor's."""
 
-        stats = {"tickers_processed": 0, "statements_inserted": 0, "failed": []}
-        max_workers = 8
-        
-        companies = {
-            c.ticker: c.id 
-            for c in self._session.query(Company).filter(Company.ticker.in_(ticker_list)).all()
-        }
-
-        def fetch_one(tsk_ticker):
-            try:
-                fin_data = self._isy.fetch_financials(tsk_ticker)
-                return tsk_ticker, fin_data, None
-            except Exception as e:
-                return tsk_ticker, None, str(e)
-
-        with self._progress_bar("Fetching financials (Parallel)") as progress:
-            task = progress.add_task("Financials", total=len(ticker_list))
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_ticker = {
-                    executor.submit(fetch_one, t): t for t in ticker_list
-                }
-                
-                for future in concurrent.futures.as_completed(future_to_ticker):
-                    ticker, fin_data, error = future.result()
-                    
-                    if error:
-                        logger.warning("Failed to fetch financials for %s: %s", ticker, error)
-                        stats["failed"].append(ticker)
-                    elif fin_data:
-                        # Still inserting sequentially here as financial parsing is complex 
-                        # and involves multiple inserts (income, balance, cashflow)
-                        # We could batch this too but parsing logic is heavy.
-                        # Optimization: We removed network wait, so this is CPU bound now.
-                        cid = companies.get(ticker)
-                        if cid:
-                            inserted = self._upsert_financials(cid, fin_data)
-                            stats["statements_inserted"] += inserted
-                    
-                    stats["tickers_processed"] += 1
-                    progress.advance(task)
-
-        # self._session.flush() # upsert_financials flushes internally if needed, or we do it at end 
-        self._session.commit() # Commit batch of financials
-
-        self._console.print(
-            f"  Financials: {stats['tickers_processed']} tickers, "
-            f"{stats['statements_inserted']} statements inserted"
-        )
-        if stats["failed"]:
-            self._console.print(
-                f"  [yellow]Failed: {len(stats['failed'])} tickers[/yellow]"
-            )
-        return stats
-
-    def fetch_recent_financials(
-        self, tickers: Optional[list[str]] = None
-    ) -> dict:
-        """Fetch the current calendar year's quarterly statements.
-
-        IsYatirim's MaliTablo period template is anchored at
-        ``current_year - 1`` (see ``_fetch_mali_tablo_raw``: requesting
-        ``start_year=Y`` yields periods starting at ``Y-1``), so no other
-        fetch path ever *requests* the year-in-progress interim quarters —
-        e.g. 2026/3 while in 2026 stays invisible until the calendar rolls
-        over (the 2026-07 staleness incident). This method requests
-        ``start_year = current_year + 1`` so the quarterly template starts
-        at the current year and pulls freshly filed interim quarters.
-
-        Older-year slots come back null under XI_29 (first-year-only quirk)
-        and are skipped by ``_upsert_financials``'s all-null guard, so
-        existing history is never overwritten with empty data. One MaliTablo
-        request per ticker — cheap enough for a scheduled workflow.
-        """
-        ticker_list = tickers or self._get_active_tickers()
-        if not ticker_list:
-            self._console.print(
-                "[yellow]No tickers to fetch recent financials for[/yellow]"
-            )
-            return {"tickers_processed": 0, "statements_inserted": 0, "failed": []}
-
-        stats = {"tickers_processed": 0, "statements_inserted": 0, "failed": []}
-        max_workers = 8
-        target_start_year = date.today().year + 1
-
-        companies = {
-            c.ticker: c.id
-            for c in self._session.query(Company)
-            .filter(Company.ticker.in_(ticker_list))
-            .all()
-        }
-
-        def fetch_one(tsk_ticker):
-            try:
-                fin_data = self._isy.fetch_financials_deep(
-                    tsk_ticker, num_years=1, start_year=target_start_year
-                )
-                return tsk_ticker, fin_data, None
-            except Exception as e:
-                return tsk_ticker, None, str(e)
-
-        with self._progress_bar("Fetching recent financials (Parallel)") as progress:
-            task = progress.add_task("Recent financials", total=len(ticker_list))
-
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=max_workers
-            ) as executor:
-                future_to_ticker = {
-                    executor.submit(fetch_one, t): t for t in ticker_list
-                }
-
-                for future in concurrent.futures.as_completed(future_to_ticker):
-                    ticker, fin_data, error = future.result()
-
-                    if error:
-                        logger.warning(
-                            "Failed to fetch recent financials for %s: %s",
-                            ticker,
-                            error,
-                        )
-                        stats["failed"].append(ticker)
-                    elif fin_data:
-                        cid = companies.get(ticker)
-                        if cid:
-                            inserted = self._upsert_financials(cid, fin_data)
-                            stats["statements_inserted"] += inserted
-
-                    stats["tickers_processed"] += 1
-                    if stats["tickers_processed"] % 50 == 0:
-                        self._session.commit()
-                    progress.advance(task)
-
-        self._session.commit()
-
-        self._console.print(
-            f"  Recent financials: {stats['tickers_processed']} tickers, "
-            f"{stats['statements_inserted']} new statements"
-        )
-        if stats["failed"]:
-            self._console.print(
-                f"  [yellow]Failed: {len(stats['failed'])} tickers[/yellow]"
-            )
-        return stats
-
-    def fetch_history(
-        self, tickers: Optional[list[str]] = None, num_years: int = 10
-    ) -> dict:
-        """Fetch deep historical financial data (10-year quarterly) year-by-year.
-
-        This is a one-time backfill operation. It fetches quarterly periods
-        year-by-year from IsYatirim's MaliTablo endpoint to bypass the API's
-        limitation (which only returns data for the first requested year under XI_29).
-        """
-        ticker_list = tickers or self._get_active_tickers()
-        if not ticker_list:
-            self._console.print("[yellow]No tickers to backfill[/yellow]")
-            return {"tickers_processed": 0, "statements_inserted": 0, "failed": [], "skipped": 0}
-
-        num_years = min(num_years, 10)
-        stats = {"tickers_processed": 0, "statements_inserted": 0, "failed": [], "skipped": 0}
-        max_workers = 6
-
-        companies = {
-            c.ticker: c.id
-            for c in self._session.query(Company).filter(Company.ticker.in_(ticker_list)).all()
-        }
-
-        current_yr = date.today().year
-        start_years = list(range(current_yr, current_yr - num_years, -1))
-
-        # Check existing statements to build a map of years that actually need backfilling
-        all_stmts = (
-            self._session.query(
-                FinancialStatement.company_id,
-                FinancialStatement.period_end,
-                FinancialStatement.data_json
-            )
-            .filter(
-                FinancialStatement.company_id.in_(companies.values()),
-                FinancialStatement.period_end.between(date(current_yr - num_years - 1, 1, 1), date(current_yr + 1, 12, 31))
-            )
-            .all()
-        )
-
-        non_empty_counts = {}
-        for cid in companies.values():
-            non_empty_counts[cid] = {yr - 1: 0 for yr in start_years}
-
-        for cid, period_end, data_json in all_stmts:
-            if not period_end or not data_json:
+        stale: set[str] = set()
+        if df.empty:
+            return stale
+        for symbol, group in df.groupby("symbol"):
+            first = group.sort_values("date").iloc[0]
+            if not first["close"] or pd.isna(first.get("adjusted_close")):
                 continue
-            yr_stmt = period_end.year
-            if yr_stmt in non_empty_counts.get(cid, {}):
-                try:
-                    data = json.loads(data_json)
-                    if any(x.get("value") is not None for x in data):
-                        non_empty_counts[cid][yr_stmt] += 1
-                except Exception:
-                    pass
-
-        # Build task list: (ticker, start_year)
-        tasks = []
-        for ticker, cid in companies.items():
-            for yr in start_years:
-                target_year = yr - 1
-                if non_empty_counts[cid].get(target_year, 0) < 3:
-                    tasks.append((ticker, yr))
-
-        self._console.print(
-            f"  [bold]Historical backfill:[/bold] {len(ticker_list)} tickers, checking {num_years} years. "
-            f"Queueing {len(tasks)} annual segments to fetch (bypassing XI_29 limit)."
-        )
-
-        if not tasks:
-            self._console.print("  [green]All requested historical quarterly segments are already present and non-empty in DB.[/green]")
-            return stats
-
-        import threading
-        resolved_fg_cache = {}
-        fg_lock = threading.Lock()
-
-        def fetch_one(task_item):
-            tsk_ticker, tsk_start_year = task_item
-            try:
-                with fg_lock:
-                    resolved_fg = resolved_fg_cache.get(tsk_ticker)
-                
-                if not resolved_fg:
-                    # Probe correct financial group label dynamically
-                    _, resolved_fg, _ = self._isy._fetch_mali_tablo_raw(tsk_ticker, "XI_29", date.today().year)
-                    with fg_lock:
-                        resolved_fg_cache[tsk_ticker] = resolved_fg
-
-                fin_data = self._isy.fetch_financials_deep(
-                    tsk_ticker, financial_group=resolved_fg, start_year=tsk_start_year
-                )
-                return tsk_ticker, tsk_start_year, fin_data, None
-            except Exception as e:
-                return tsk_ticker, tsk_start_year, None, str(e)
-
-        with self._progress_bar("Fetching history (Deep)") as progress:
-            task = progress.add_task("History", total=len(tasks))
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-                future_to_task = {
-                    executor.submit(fetch_one, tsk): tsk for tsk in tasks
-                }
-
-                for future in concurrent.futures.as_completed(future_to_task):
-                    ticker, start_year, fin_data, error = future.result()
-
-                    if error:
-                        logger.warning("Failed to fetch history for %s (start_year=%d): %s", ticker, start_year, error)
-                        stats["failed"].append(f"{ticker}:{start_year}")
-                    elif fin_data:
-                        cid = companies.get(ticker)
-                        if cid:
-                            inserted = self._upsert_financials(cid, fin_data)
-                            stats["statements_inserted"] += inserted
-                            if inserted == 0:
-                                stats["skipped"] += 1
-                        else:
-                            stats["skipped"] += 1
-                    else:
-                        stats["skipped"] += 1
-
-                    stats["tickers_processed"] += 1
-                    progress.advance(task)
-
-                    if stats["tickers_processed"] % 50 == 0:
-                        self._session.commit()
-
-        self._session.commit()
-
-        self._console.print(
-            f"  History: {stats['tickers_processed']} segments processed, "
-            f"{stats['statements_inserted']} new statement rows inserted/updated, "
-            f"{stats['skipped']} skipped"
-        )
-        if stats["failed"]:
-            self._console.print(
-                f"  [yellow]Failed: {len(stats['failed'])} segments[/yellow]"
-            )
-        return stats
-
-    def fetch_macro(self) -> dict:
-        """Fetch macro data (CPI, FX, policy rate) from TCMB.
-
-        Falls back to Yahoo Finance for FX rates when TCMB EVDS is
-        unavailable (e.g., EVDS2 decommission).
-
-        Returns:
-            Stats dict: {cpi_points, fx_points, policy_rate, inflation_rate}.
-        """
-        self._console.print("[bold]Fetching macro data...[/bold]")
-        stats: dict = {
-            "cpi_points": 0,
-            "fx_points": 0,
-            "policy_rate": None,
-            "inflation_rate": None,
-        }
-
-        end = date.today()
-        start = date(end.year - 2, 1, 1)
-
-        # CPI: keep the 2-year window for the YoY scalar (used elsewhere),
-        # but fetch a deeper 8-year window separately for cpi_history so
-        # downstream real-growth calcs over 5+ years of financials have
-        # full coverage. fetch_cpi_index is cached for 24h, so the extra
-        # range only hits the wire on a stale cache.
-        cpi = self._tcmb.fetch_cpi_index(start, end)
-        stats["cpi_points"] = len(cpi)
-        cpi_history_start = date(end.year - 11, 1, 1)
-        cpi_history_series = self._tcmb.fetch_cpi_index(cpi_history_start, end)
-        stats["cpi_history_points"] = len(cpi_history_series)
-
-        # Exchange rates — try TCMB first, fall back to Yahoo
-        fx = self._tcmb.fetch_exchange_rates(start, end)
-        fx_source = "TCMB"
-        if fx.empty:
-            self._console.print(
-                "  [yellow]TCMB FX data unavailable — "
-                "falling back to Yahoo Finance[/yellow]"
-            )
-            fx = self._yahoo.fetch_fx_rates(start, end)
-            fx_source = "Yahoo"
-        stats["fx_points"] = len(fx)
-
-        # Policy rate
-        policy_rate = self._tcmb.fetch_policy_rate()
-        stats["policy_rate"] = policy_rate
-
-        # BIST-TLREF (dynamic interest rate proxy)
-        bond_yield_10y = self._tcmb.fetch_bist_tlref()
-        stats["bond_yield_10y"] = bond_yield_10y
-
-        # Inflation
-        inflation = self._tcmb.get_inflation_rate(months_back=12)
-        stats["inflation_rate"] = inflation
-
-        # 24-month-ahead CPI expectation (feeds DCF terminal growth)
-        inflation_exp_24m = self._tcmb.fetch_inflation_expectations_24m()
-        stats["inflation_expectation_24m"] = inflation_exp_24m
-
-        # Damodaran Turkey ERP — auto-fetch (replaces manual macro.yaml entry,
-        # 2026-05-07). Best-effort; falls back to YAML at scoring time on any
-        # error, so a Damodaran outage cannot break the cron.
-        try:
-            from us_picker.data.sources.damodaran import fetch_turkey_erp
-            erp_payload = fetch_turkey_erp()
-            damodaran_erp = (
-                erp_payload.equity_risk_premium_pct if erp_payload else None
-            )
-            if erp_payload:
-                try:
-                    import re
-                    from pathlib import Path
-                    macro_path = Path(__file__).resolve().parent.parent / "config" / "macro.yaml"
-                    if macro_path.exists():
-                        content = macro_path.read_text(encoding="utf-8")
-                        content = re.sub(
-                            r"(equity_risk_premium_try\s*:\s*)\d+\.\d+",
-                            rf"\g<1>{erp_payload.equity_risk_premium_pct:.4f}",
-                            content
-                        )
-                        today_str = date.today().strftime("%Y-%m-%d")
-                        content = re.sub(
-                            r"(last_updated\s*:\s*[\"']).*?([\"'])",
-                            rf"\g<1>{today_str}\g<2>",
-                            content
-                        )
-                        macro_path.write_text(content, encoding="utf-8")
-                        self._console.print(
-                            f"  [green]Auto-updated macro.yaml with ERP {erp_payload.equity_risk_premium_pct:.2%} and last_updated {today_str}[/green]"
-                        )
-                except Exception as e:
-                    self._console.print(f"  [yellow]Failed to auto-update macro.yaml: {e}[/yellow]")
-        except Exception as exc:
-            self._console.print(
-                f"  [yellow]Damodaran ERP fetch failed: {exc}[/yellow]"
-            )
-            damodaran_erp = None
-        stats["damodaran_erp"] = damodaran_erp
-
-        # Store in macro_regime table
-        if not fx.empty:
-            for _, row in fx.iterrows():
-                row_date = pd.Timestamp(row["date"]).date()
-                # Convert pandas NaT/NaN to Python None for SQLAlchemy
-                usd_val = row.get("usd_try")
-                if pd.isna(usd_val):
-                    usd_val = None
-                else:
-                    usd_val = float(usd_val)
-                existing = (
-                    self._session.query(MacroRegime)
-                    .filter(MacroRegime.date == row_date)
-                    .first()
-                )
-                if existing:
-                    existing.usdtry_rate = usd_val
-                else:
-                    regime = MacroRegime(
-                        date=row_date,
-                        usdtry_rate=usd_val,
-                    )
-                    self._session.add(regime)
-
-            self._session.flush()
-
-        # Update latest macro_regime with CPI, policy rate, BIST-TLREF, 24m inflation
-        # expectation and Damodaran ERP.
-        if (
-            policy_rate is not None
-            or bond_yield_10y is not None
-            or inflation is not None
-            or inflation_exp_24m is not None
-            or damodaran_erp is not None
-        ):
-            today = date.today()
-            existing = (
-                self._session.query(MacroRegime)
-                .filter(MacroRegime.date == today)
+            stored = (
+                self._session.query(DailyPrice.close, DailyPrice.adjusted_close)
+                .filter(DailyPrice.company_id == companies[symbol], DailyPrice.date == first["date"])
                 .first()
             )
-            if existing:
-                if policy_rate is not None:
-                    existing.policy_rate_pct = policy_rate
-                if bond_yield_10y is not None:
-                    existing.bond_yield_10y_pct = bond_yield_10y
-                if inflation is not None:
-                    existing.cpi_yoy_pct = inflation
-                if inflation_exp_24m is not None:
-                    existing.inflation_expectation_24m_pct = inflation_exp_24m
-                if damodaran_erp is not None:
-                    existing.equity_risk_premium_pct = damodaran_erp
-                    existing.erp_source = "damodaran_html"
-            else:
-                regime = MacroRegime(
-                    date=today,
-                    policy_rate_pct=policy_rate,
-                    bond_yield_10y_pct=bond_yield_10y,
-                    cpi_yoy_pct=inflation,
-                    inflation_expectation_24m_pct=inflation_exp_24m,
-                    equity_risk_premium_pct=damodaran_erp,
-                    erp_source=("damodaran_html" if damodaran_erp is not None else None),
+            if stored is None or not stored[0] or stored[1] is None:
+                continue
+            vendor_ratio = float(first["adjusted_close"]) / float(first["close"])
+            stored_ratio = float(stored[1]) / float(stored[0])
+            if abs(vendor_ratio / stored_ratio - 1.0) > 1e-4:
+                stale.add(symbol)
+        return stale
+
+    def _rewrite_adjusted_history(self, company_id: int, symbol: str, start: date, end: date) -> None:
+        adjusted = self.alpaca.fetch_daily_bars([symbol], start, end, adjustment="all")
+        if adjusted.empty:
+            return
+        mapping = {row.date: row.close for row in adjusted.itertuples(index=False)}
+        rows = (
+            self._session.query(DailyPrice)
+            .filter(DailyPrice.company_id == company_id, DailyPrice.date >= start)
+            .all()
+        )
+        for price in rows:
+            value = mapping.get(price.date)
+            if value is not None:
+                price.adjusted_close = float(value)
+        self._session.commit()
+
+    def fetch_corporate_actions(
+        self, tickers: list[str], start: date, end: date
+    ) -> dict:
+        """Upsert splits and cash dividends into ``corporate_actions``."""
+
+        actions = self.alpaca.fetch_corporate_actions(tickers, start, end)
+        stats = {"actions": 0}
+        if actions.empty:
+            return stats
+        companies = {
+            c.ticker: c.id
+            for c in self._session.query(Company).filter(Company.ticker.in_(tickers)).all()
+        }
+        existing = {
+            (a.company_id, a.action_date, a.action_type)
+            for a in self._session.query(CorporateAction)
+            .filter(CorporateAction.action_date >= start)
+            .all()
+        }
+        for row in actions.itertuples(index=False):
+            cid = companies.get(row.symbol)
+            if cid is None:
+                continue
+            key = (cid, row.action_date, row.action_type)
+            if key in existing:
+                continue
+            self._session.add(
+                CorporateAction(
+                    company_id=cid,
+                    action_date=row.action_date,
+                    action_type=row.action_type,
+                    adjustment_factor=row.adjustment_factor,
+                    details_json=json.dumps(row.details, ensure_ascii=False),
+                    source="ALPACA",
                 )
-                self._session.add(regime)
+            )
+            existing.add(key)
+            stats["actions"] += 1
+        self._session.commit()
+        if stats["actions"]:
+            from us_picker.utils.splits import invalidate_split_cache
+
+            invalidate_split_cache()
+        return stats
+
+    # -- financials ----------------------------------------------------------
+
+    def fetch_financials(self, tickers: Optional[list[str]] = None) -> dict:
+        """Fetch SEC companyfacts and store IsYatirim-shaped statements.
+
+        When ``US_PICKER_COMPANYFACTS_ZIP`` points at EDGAR's bulk
+        companyfacts.zip, payloads are read from it instead of the API.
+        """
+        ticker_list = tickers or self._get_active_tickers()
+        stats = {"tickers_processed": 0, "statements_inserted": 0, "failed": []}
+        companies = [
+            c
+            for c in self._session.query(Company).filter(Company.ticker.in_(ticker_list)).all()
+            if c.cik
+        ]
+        if not companies:
+            self._console.print("[yellow]No tickers with a CIK to fetch financials for[/yellow]")
+            return stats
+        by_cik: dict[int, list[Company]] = {}
+        for company in companies:
+            by_cik.setdefault(int(company.cik), []).append(company)
+
+        bulk_zip = os.environ.get("US_PICKER_COMPANYFACTS_ZIP", "").strip()
+        with self._progress_bar("Fetching financials") as progress:
+            task = progress.add_task("Financials", total=len(by_cik))
+            if bulk_zip:
+                from us_picker.data.sources.sec import iter_bulk_companyfacts
+
+                done: set[int] = set()
+                for cik, payload in iter_bulk_companyfacts(Path(bulk_zip), by_cik):
+                    stats["statements_inserted"] += self._store_companyfacts(by_cik[cik], payload)
+                    done.add(cik)
+                    stats["tickers_processed"] += 1
+                    progress.advance(task)
+                    if stats["tickers_processed"] % 100 == 0:
+                        self._session.commit()
+                stats["failed"].extend(
+                    c.ticker for cik in set(by_cik) - done for c in by_cik[cik]
+                )
+            else:
+                def fetch_one(cik: int):
+                    try:
+                        return cik, self.sec.fetch_companyfacts(cik), None
+                    except Exception as exc:
+                        return cik, None, str(exc)
+
+                workers = int(self._fetch_settings.get("sec_workers", 4))
+                with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+                    futures = [executor.submit(fetch_one, cik) for cik in by_cik]
+                    for future in concurrent.futures.as_completed(futures):
+                        cik, payload, error = future.result()
+                        if error or not payload:
+                            if error:
+                                logger.warning("companyfacts failed for CIK %s: %s", cik, error)
+                            stats["failed"].extend(c.ticker for c in by_cik[cik])
+                        else:
+                            stats["statements_inserted"] += self._store_companyfacts(
+                                by_cik[cik], payload
+                            )
+                        stats["tickers_processed"] += 1
+                        progress.advance(task)
+                        if stats["tickers_processed"] % 50 == 0:
+                            self._session.commit()
+        self._session.commit()
+        self._console.print(
+            f"  Financials: {stats['tickers_processed']} filers, "
+            f"{stats['statements_inserted']} statements inserted/updated"
+        )
+        if stats["failed"]:
+            self._console.print(f"  [yellow]Failed: {len(stats['failed'])} tickers[/yellow]")
+        return stats
+
+    def _store_companyfacts(self, companies: list[Company], payload: dict) -> int:
+        try:
+            statements = build_statements(payload)
+        except Exception as exc:
+            logger.warning("Statement build failed for %s: %s", companies[0].ticker, exc)
+            return 0
+        return sum(self._upsert_financials(c.id, statements) for c in companies)
+
+    def fetch_recent_financials(self, tickers: Optional[list[str]] = None) -> dict:
+        """Refresh only filers with a new 10-K/10-Q in the last ``days``.
+
+        Cheap enough for the scheduled financial-refresh workflow: EDGAR's
+        daily form index tells us who filed, and only those companyfacts are
+        re-downloaded.
+        """
+        days = int(self._fetch_settings.get("recent_filing_days", 10))
+        since = date.today() - timedelta(days=days)
+        filers = self.sec.recent_periodic_filers(since)
+        query = self._session.query(Company).filter(Company.is_active.is_(True))
+        if tickers:
+            query = query.filter(Company.ticker.in_(tickers))
+        targets = [c.ticker for c in query.all() if c.cik and int(c.cik) in filers]
+        self._console.print(
+            f"  EDGAR: {len(filers)} periodic filers since {since}; "
+            f"{len(targets)} in the universe"
+        )
+        if not targets:
+            return {"tickers_processed": 0, "statements_inserted": 0, "failed": []}
+        return self.fetch_financials(targets)
+
+    def fetch_history(self, tickers: Optional[list[str]] = None, num_years: int = 10) -> dict:
+        """companyfacts already carries the full filing history."""
+        return self.fetch_financials(tickers)
+
+    # -- macro ---------------------------------------------------------------
+
+    def fetch_macro(self) -> dict:
+        """FRED macro history into ``macro_regime`` / ``cpi_history``.
+
+        Column mapping (units follow BIST Picker: decimals, except CDS bps):
+        policy_rate_pct = fed funds, bond_yield_10y_pct = 10y Treasury,
+        cpi_yoy_pct = CPI YoY visible from the ~15th of the next month,
+        inflation_expectation_24m_pct = 5y5y forward breakeven,
+        turkey_cds_5y = US high-yield OAS in basis points (credit stress),
+        equity_risk_premium_pct = Damodaran US ERP (today's row only).
+        """
+        self._console.print("[bold]Fetching macro data...[/bold]")
+        start = date.fromisoformat(str(self._fetch_settings.get("macro_history_start", "2014-01-01")))
+        series = {}
+        for name, series_id in (
+            ("policy", fred_series.POLICY_RATE),
+            ("ten_year", fred_series.TEN_YEAR),
+            ("breakeven", fred_series.LONG_RUN_INFLATION),
+            ("hy_oas", fred_series.HIGH_YIELD_OAS),
+        ):
+            try:
+                series[name] = self.fred.fetch_series(series_id, start)
+            except Exception as exc:
+                logger.warning("FRED %s failed: %s", series_id, exc)
+                series[name] = pd.Series(dtype=float)
+        try:
+            cpi = self.fred.fetch_series(fred_series.CPI, start - timedelta(days=400))
+        except Exception as exc:
+            logger.warning("FRED CPI failed: %s", exc)
+            cpi = pd.Series(dtype=float)
+
+        cpi_yoy = _cpi_yoy_by_availability(cpi)
+        frame = pd.DataFrame(
+            {
+                "policy_rate_pct": series["policy"] / 100.0,
+                "bond_yield_10y_pct": series["ten_year"] / 100.0,
+                "inflation_expectation_24m_pct": series["breakeven"] / 100.0,
+                "turkey_cds_5y": series["hy_oas"] * 100.0,
+            }
+        )
+        if not cpi_yoy.empty:
+            frame = frame.join(cpi_yoy.rename("cpi_yoy_pct"), how="outer")
+        frame = frame.sort_index()
+        frame["cpi_yoy_pct"] = frame.get("cpi_yoy_pct", pd.Series(dtype=float)).ffill()
+        frame = frame[frame.index >= start]
+
+        existing = {row.date: row for row in self._session.query(MacroRegime).filter(MacroRegime.date >= start).all()}
+        written = 0
+        for day, values in frame.iterrows():
+            row = existing.get(day)
+            if row is None:
+                row = MacroRegime(date=day)
+                self._session.add(row)
+            for column, value in values.items():
+                if pd.notna(value):
+                    setattr(row, column, float(value))
+            written += 1
+        self._session.flush()
+
+        erp = None
+        try:
+            from us_picker.data.sources.damodaran import fetch_us_erp
+
+            payload = fetch_us_erp()
+            erp = payload.equity_risk_premium_pct if payload else None
+        except Exception as exc:
+            logger.warning("Damodaran US ERP fetch failed: %s", exc)
+        if erp is not None:
+            today = date.today()
+            row = self._session.query(MacroRegime).filter(MacroRegime.date == today).first()
+            if row is None:
+                row = MacroRegime(date=today)
+                self._session.add(row)
+            row.equity_risk_premium_pct = erp
+            row.erp_source = "damodaran_html"
             self._session.flush()
 
-        # Persist the full CPI index series into cpi_history. Idempotent
-        # upsert by date — required so cleaning.inflation.calculate_real_growth
-        # has access to actual index levels, not just YoY scalars.
-        self._upsert_cpi_history(cpi_history_series)
+        self._upsert_cpi_history(cpi)
 
-        policy_str = f"{policy_rate:.1%}" if policy_rate else "N/A"
-        bond_yield_str = f"{bond_yield_10y:.1%}" if bond_yield_10y else "N/A"
+        latest = frame.iloc[-1] if not frame.empty else pd.Series(dtype=float)
+        stats = {
+            "cpi_points": int(len(cpi)),
+            "fx_points": 0,
+            "macro_rows": written,
+            "policy_rate": _float_or_none(latest.get("policy_rate_pct")),
+            "inflation_rate": _float_or_none(frame["cpi_yoy_pct"].dropna().iloc[-1]) if "cpi_yoy_pct" in frame and frame["cpi_yoy_pct"].notna().any() else None,
+            "damodaran_erp": erp,
+        }
+        pr = f"{stats['policy_rate']:.2%}" if stats["policy_rate"] is not None else "N/A"
+        ir = f"{stats['inflation_rate']:.2%}" if stats["inflation_rate"] is not None else "N/A"
+        er = f"{erp:.2%}" if erp is not None else "N/A (YAML fallback)"
         self._console.print(
-            f"  Policy rate: [green]{policy_str}[/green]\n"
-            f"  BIST-TLREF: [green]{bond_yield_str}[/green]"
-        )
-        inflation_str = f"{inflation:.1%}" if inflation else "N/A"
-        exp24_str = f"{inflation_exp_24m:.1%}" if inflation_exp_24m else "N/A"
-        erp_str = f"{damodaran_erp:.2%}" if damodaran_erp is not None else "N/A (YAML fallback)"
-        self._console.print(
-            f"  Macro: {stats['cpi_points']} CPI points, "
-            f"{stats['fx_points']} FX points (source: {fx_source}), "
-            f"policy rate={policy_str}, inflation={inflation_str}, "
-            f"24m CPI exp={exp24_str}, Damodaran ERP={erp_str}, "
-            f"cpi_history rows persisted={stats.get('cpi_history_points', 0)}"
+            f"  Macro: {written} daily rows, fed funds={pr}, CPI YoY={ir}, ERP={er}"
         )
         return stats
 
     def _upsert_cpi_history(self, cpi_series: "pd.Series") -> None:
-        """Idempotently upsert a CPI index series into the cpi_history table.
-
-        Args:
-            cpi_series: pandas Series with date index and CPI index level
-                values (TCMB TP.FG.J0, base 2003=100). May be empty.
-        """
+        """Idempotently upsert a CPI index series into cpi_history."""
         if cpi_series is None or cpi_series.empty:
             return
-
-        # Single bulk read of existing rows in the date range, then in-memory diff.
-        # Avoids N round-trips per fetch.
-        dates_to_upsert: list[date] = []
-        for raw_date in cpi_series.index:
-            try:
-                d = pd.Timestamp(raw_date).date()
-            except Exception:
-                continue
-            dates_to_upsert.append(d)
-
-        if not dates_to_upsert:
-            return
-
-        existing_rows = (
-            self._session.query(CpiHistory)
-            .filter(CpiHistory.date.in_(dates_to_upsert))
-            .all()
-        )
-        existing_by_date = {row.date: row for row in existing_rows}
-
+        existing = {row.date: row for row in self._session.query(CpiHistory).all()}
         for raw_date, raw_val in cpi_series.items():
-            try:
-                d = pd.Timestamp(raw_date).date()
-            except Exception:
+            if pd.isna(raw_val) or float(raw_val) <= 0:
                 continue
-            if pd.isna(raw_val):
-                continue
-            try:
-                val = float(raw_val)
-            except (TypeError, ValueError):
-                continue
-            if val <= 0:
-                continue
-
-            row = existing_by_date.get(d)
+            d = pd.Timestamp(raw_date).date()
+            row = existing.get(d)
             if row is None:
-                self._session.add(CpiHistory(date=d, cpi_index=val))
+                self._session.add(CpiHistory(date=d, cpi_index=float(raw_val)))
             else:
-                row.cpi_index = val
-
+                row.cpi_index = float(raw_val)
         self._session.flush()
 
-    def fetch_insiders(
-        self,
-        tickers: Optional[list[str]] = None,
-        days_back: int = 180,
-    ) -> dict:
-        """Fetch insider/document data from KAP.
-
-        Note: Real insider transaction data is not available via KAP scraping.
-        This fetches company document metadata as the closest available data.
-
-        Args:
-            tickers: Specific tickers. If None, fetches all active.
-            days_back: Look-back period in days.
-
-        Returns:
-            Stats dict: {tickers_processed, documents_found, failed}.
-        """
-        ticker_list = tickers or self._get_active_tickers()
-        if not ticker_list:
-            return {"tickers_processed": 0, "documents_found": 0, "failed": []}
-
-        stats = {"tickers_processed": 0, "documents_found": 0, "failed": []}
-
-        with self._progress_bar("Fetching insiders") as progress:
-            task = progress.add_task("Insiders", total=len(ticker_list))
-
-            for ticker in ticker_list:
-                try:
-                    docs = self._kap.fetch_insider_transactions(
-                        ticker, days_back=days_back
-                    )
-                    if not docs.empty:
-                        stats["documents_found"] += len(docs)
-                    stats["tickers_processed"] += 1
-                except Exception as e:
-                    logger.warning("Failed to fetch insiders for %s: %s", ticker, e)
-                    stats["failed"].append(ticker)
-
-                progress.advance(task)
-
-        self._console.print(
-            f"  Insiders: {stats['tickers_processed']} tickers, "
-            f"{stats['documents_found']} documents found"
-        )
-        return stats
+    def fetch_insiders(self, tickers: Optional[list[str]] = None, days_back: int = 180) -> dict:
+        """No insider feed in the US port yet (Form 4 parsing is future work)."""
+        return {"tickers_processed": 0, "documents_found": 0, "failed": []}
 
     def fetch_all(
         self,
@@ -939,114 +744,57 @@ class DataFetcher:
         limit: int = 0,
         price_days: Optional[int] = None,
     ) -> dict:
-        """Run all fetch stages in order.
-
-        Args:
-            tickers: If specified, only fetch these tickers.
-            limit: If > 0, limit to this many tickers for prices/financials.
-            price_days: Optional price lookback override.
-
-        Returns:
-            Combined stats from all stages.
-        """
+        """Run all fetch stages in order."""
         all_stats: dict = {}
-
-        # Stage 1: Universe
         all_stats["universe"] = self.fetch_universe()
         self._session.commit()
 
-        # Determine ticker list for subsequent stages
         fetch_tickers = tickers
         if not fetch_tickers and limit > 0:
-            active = self._get_active_tickers()
-            fetch_tickers = active[:limit]
+            fetch_tickers = self._get_active_tickers()[:limit]
 
-        # Stage 2: Prices
-        days_back = price_days or self._fetch_settings.get("price_history_days", 730)
+        days_back = price_days or int(self._fetch_settings.get("price_history_days", 3800))
         all_stats["prices"] = self.fetch_prices(fetch_tickers, days_back=days_back)
         self._session.commit()
 
-        # Stage 3: Financials
         all_stats["financials"] = self.fetch_financials(fetch_tickers)
         self._session.commit()
 
-        # Stage 4: Macro
         all_stats["macro"] = self.fetch_macro()
         self._session.commit()
 
-        # Stage 5: Insiders — DISABLED
-        # KAP insider data is not accessible via scraping (JS-only API).
-        # IsYatirim has no insider endpoint either. Skipping to save ~10 min.
-        # Re-enable when a real insider data source becomes available.
-
-        # Print summary table
         self._print_summary(all_stats)
         return all_stats
 
     def validate_prices(self, sample_pct: float = 0.10) -> dict:
-        """Validate a random sample of prices against Yahoo Finance.
+        """Single-vendor setup: nothing to cross-validate against yet."""
+        return {}
 
-        Args:
-            sample_pct: Fraction of active tickers to validate.
-
-        Returns:
-            Dict with validation results per ticker.
-        """
-        active = self._get_active_tickers()
-        sample_size = max(1, int(len(active) * sample_pct))
-        sample = random.sample(active, min(sample_size, len(active)))
-
-        self._console.print(
-            f"[bold]Validating prices for {len(sample)} tickers...[/bold]"
-        )
-        results = {}
-
-        end = date.today()
-        start = end - timedelta(days=30)
-
-        for ticker in sample:
-            isy_df = self._isy.fetch_price_data(ticker, start, end)
-            if isy_df.empty:
-                continue
-            result = self._yahoo.validate_prices(isy_df, ticker)
-            results[ticker] = result
-            self._console.print(
-                f"  {ticker}: {result['match_pct']:.0%} match, "
-                f"max div={result['max_divergence']:.2%}"
-            )
-
-        return results
-
-    # --- Private helpers ---
+    # -- benchmark / helpers -------------------------------------------------
 
     def fetch_benchmark_prices(self, days_back: int = 730) -> dict:
-        """Fetch finalized BIST 100 daily bars used by beta/risk scoring.
+        """Refresh SPY daily bars (full history each run).
 
-        Yahoo exposes the current session as a partial daily candle. Persisting
-        it before the close and then using INSERT OR IGNORE permanently froze
-        the partial value. We therefore stop at yesterday (the last *possible*
-        completed session; weekends naturally return no row) and UPSERT every
-        fetched benchmark date so legacy partial rows heal on the next run.
+        The total-return adjusted close changes every time SPY goes
+        ex-dividend, so the whole (small) history is upserted.  Stops at
+        yesterday so a partial session bar is never stored as final.
         """
         company = self._ensure_benchmark_company()
         end_date = date.today() - timedelta(days=1)
-        start_date = end_date - timedelta(days=days_back)
-        df = self._yahoo.fetch_index_data(start_date=start_date, end_date=end_date)
-
+        start_date = date.fromisoformat(
+            str(self._fetch_settings.get("price_history_start", "2016-01-01"))
+        )
+        df = self.alpaca.fetch_price_history([_BENCHMARK_TICKER], start_date, end_date)
         if df.empty:
             logger.warning("Failed to refresh benchmark prices for %s", _BENCHMARK_TICKER)
             return {"rows_inserted": 0}
-
         batch_data: list[dict] = []
         count = self._prepare_prices_batch(company.id, df, batch_data)
         self._bulk_insert_prices(batch_data, update_existing=True)
-        self._console.print(
-            f"  Benchmark: {_BENCHMARK_TICKER} refreshed ({count} rows)"
-        )
+        self._console.print(f"  Benchmark: {_BENCHMARK_TICKER} refreshed ({count} rows)")
         return {"rows_inserted": count}
 
     def _get_active_tickers(self) -> list[str]:
-        """Get list of active tickers from the database."""
         companies = (
             self._session.query(Company.ticker)
             .filter(Company.is_active.is_(True))
@@ -1056,265 +804,148 @@ class DataFetcher:
         return [c.ticker for c in companies]
 
     def _get_or_create_company(self, ticker: str) -> Company:
-        """Find a company by ticker, creating a minimal record if needed.
-
-        Args:
-            ticker: BIST ticker code.
-
-        Returns:
-            Company ORM instance.
-        """
-        company = (
-            self._session.query(Company)
-            .filter(Company.ticker == ticker.upper())
-            .first()
-        )
+        company = self._session.query(Company).filter(Company.ticker == ticker.upper()).first()
         if company:
             return company
-
         company = Company(ticker=ticker.upper(), is_active=True)
         self._session.add(company)
         self._session.flush()
         return company
 
     def _ensure_benchmark_company(self) -> Company:
-        """Ensure the XU100 benchmark exists for beta/regime calculations."""
-        company = (
-            self._session.query(Company)
-            .filter(Company.ticker == _BENCHMARK_TICKER)
-            .first()
-        )
-        if company:
-            company.name = company.name or _BENCHMARK_NAME
-            company.company_type = "INDEX"
-            company.is_active = False
-            self._session.flush()
-            return company
-
-        company = Company(
-            ticker=_BENCHMARK_TICKER,
-            name=_BENCHMARK_NAME,
-            company_type="INDEX",
-            is_active=False,
-        )
-        self._session.add(company)
+        company = self._session.query(Company).filter(Company.ticker == _BENCHMARK_TICKER).first()
+        if company is None:
+            company = Company(ticker=_BENCHMARK_TICKER)
+            self._session.add(company)
+        company.name = _BENCHMARK_NAME
+        company.company_type = "INDEX"
+        company.is_active = False
         self._session.flush()
         return company
 
     def _prepare_prices_batch(self, company_id: int, price_df: pd.DataFrame, batch_list: list) -> int:
-        """Prepare price rows for bulk insert.
-        Returns number of rows added to batch.
-        """
         if price_df.empty:
             return 0
-        
         count = 0
-        for _, row in price_df.iterrows():
-            row_date = pd.Timestamp(row["date"]).date()
+        for row in price_df.itertuples(index=False):
+            row_date = pd.Timestamp(row.date).date()
+            volume = getattr(row, "volume", None)
+            adjusted = getattr(row, "adjusted_close", None)
             batch_list.append({
                 "company_id": company_id,
                 "date": row_date,
-                "open": row.get("open"),
-                "high": row.get("high"),
-                "low": row.get("low"),
-                "close": row.get("close"),
-                "volume": int(row["volume"]) if pd.notna(row.get("volume")) else None,
-                "adjusted_close": row.get("adjusted_close"),
-                "source": row.get("source", "ISYATIRIM"),
+                "open": _float_or_none(getattr(row, "open", None)),
+                "high": _float_or_none(getattr(row, "high", None)),
+                "low": _float_or_none(getattr(row, "low", None)),
+                "close": _float_or_none(getattr(row, "close", None)),
+                "volume": int(volume) if volume is not None and pd.notna(volume) else None,
+                "adjusted_close": _float_or_none(adjusted),
+                "source": getattr(row, "source", "ALPACA"),
             })
             count += 1
         return count
 
     def _bulk_insert_prices(self, batch_data: list, update_existing: bool = False):
-        """Perform bulk price insert, optionally healing existing daily rows.
-
-        ``update_existing`` is intentionally opt-in. Equity adjusted_close may
-        contain the clean stage's corporate-action back-adjustment and must not
-        be overwritten casually by a raw source. The benchmark has no such
-        corporate actions and is safe to refresh in place.
-        """
+        """Insert-or-ignore price rows; ``update_existing`` upserts instead."""
         if not batch_data:
             return
-            
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
         try:
-            if update_existing and self._session.bind.dialect.name == "sqlite":
-                from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-                stmt = sqlite_insert(DailyPrice).values(batch_data)
-                stmt = stmt.on_conflict_do_update(
-                    index_elements=["company_id", "date"],
-                    set_={
-                        "open": stmt.excluded.open,
-                        "high": stmt.excluded.high,
-                        "low": stmt.excluded.low,
-                        "close": stmt.excluded.close,
-                        "volume": stmt.excluded.volume,
-                        "adjusted_close": stmt.excluded.adjusted_close,
-                        "source": stmt.excluded.source,
-                    },
-                )
-            else:
-                # Default equity behavior remains insert-only. The subsequent
-                # clean stage owns corporate-action-adjusted history.
-                from sqlalchemy import insert
-                stmt = insert(DailyPrice).values(batch_data).prefix_with("OR IGNORE")
-            self._session.execute(stmt)
+            for i in range(0, len(batch_data), 2000):
+                chunk = batch_data[i : i + 2000]
+                stmt = sqlite_insert(DailyPrice).values(chunk)
+                if update_existing:
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=["company_id", "date"],
+                        set_={
+                            "open": stmt.excluded.open,
+                            "high": stmt.excluded.high,
+                            "low": stmt.excluded.low,
+                            "close": stmt.excluded.close,
+                            "volume": stmt.excluded.volume,
+                            "adjusted_close": stmt.excluded.adjusted_close,
+                            "source": stmt.excluded.source,
+                        },
+                    )
+                else:
+                    stmt = stmt.on_conflict_do_nothing(index_elements=["company_id", "date"])
+                self._session.execute(stmt)
             self._session.commit()
         except Exception as e:
             logger.error(f"Bulk insert failed: {e}", exc_info=True)
             self._session.rollback()
-            raise e
+            raise
 
-    def _upsert_prices(
-        self, company_id: int, price_df: pd.DataFrame
-    ) -> tuple[int, int]:
-        """Legacy method retained but unused in new parallel flow."""
-        return 0, 0
+    def _upsert_financials(self, company_id: int, fin_data: dict) -> int:
+        """Upsert statements from ``build_statements`` output.
 
-    def _upsert_financials(
-        self, company_id: int, fin_data: dict
-    ) -> int:
-        """Insert financial statement data into the database.
-
-        Args:
-            company_id: Company database ID.
-            fin_data: Dict from IsYatirimClient.fetch_financials() with
-                keys 'income', 'balance', 'cashflow', 'raw', 'financial_group'.
-
-        Returns:
-            Number of statement rows inserted.
+        ``fin_data`` maps statement type -> {period_end: {period_type,
+        publication_date, items}}.  Values are as-first-filed, so an existing
+        row only changes when a previously unknown item became visible; its
+        publication date is never moved earlier.
         """
-        raw_items = fin_data.get("raw", [])
-        if not raw_items:
-            return 0
-
-        # Determine periods from the raw data
-        # raw items have value1..value4 corresponding to periods
-        # The financial_group and periods info is in fin_data
-        fg = fin_data.get("financial_group", "XI_29")
-        is_consolidated = fg != "UFRS_K"
-
-        # Map statement types to their DataFrames
-        stmt_map = {
-            "INCOME": fin_data.get("income"),
-            "BALANCE": fin_data.get("balance"),
-            "CASHFLOW": fin_data.get("cashflow"),
-        }
-
         inserted = 0
-
-        for stmt_type, df in stmt_map.items():
-            if df is None or df.empty:
-                continue
-
-            # Extract period columns (format: "YYYY/PP" like "2024/12")
-            period_cols = [
-                c for c in df.columns
-                if c not in ("item_code", "desc_tr", "desc_eng")
-            ]
-
-            for period_col in period_cols:
-                period_end, period_type = self._parse_period(period_col)
-                if period_end is None:
+        existing = {
+            (s.period_end, s.statement_type): s
+            for s in self._session.query(FinancialStatement)
+            .filter(FinancialStatement.company_id == company_id, FinancialStatement.version == 1)
+            .all()
+        }
+        for stmt_type in ("INCOME", "BALANCE", "CASHFLOW"):
+            for period_end, row in (fin_data.get(stmt_type) or {}).items():
+                items = row["items"]
+                if not any(item["value"] is not None for item in items):
                     continue
-
-                # Check if this statement already exists
-                existing = (
-                    self._session.query(FinancialStatement)
-                    .filter(
-                        FinancialStatement.company_id == company_id,
-                        FinancialStatement.period_end == period_end,
-                        FinancialStatement.period_type == period_type,
-                        FinancialStatement.statement_type == stmt_type,
-                        FinancialStatement.version == 1,
-                    )
-                    .first()
-                )
-
-                # Build JSON data from the DataFrame column
-                data_rows = []
-                for _, row in df.iterrows():
-                    val = row.get(period_col)
-                    data_rows.append({
-                        "item_code": row.get("item_code", ""),
-                        "desc_tr": row.get("desc_tr", ""),
-                        "desc_eng": row.get("desc_eng", ""),
-                        "value": val if pd.notna(val) else None,
-                    })
-
-                # Skip writing if the statement has no non-null values to avoid corrupting/overwriting DB
-                if not any(r["value"] is not None for r in data_rows):
+                if stmt_type == "BALANCE":
+                    items = _normalize_share_units(self._session, company_id, items, period_end)
+                data_json = json.dumps(items, ensure_ascii=False)
+                current = existing.get((period_end, stmt_type))
+                if current is not None:
+                    if current.data_json != data_json:
+                        current.data_json = data_json
+                    if current.publication_date is None or row["publication_date"] > current.publication_date:
+                        current.publication_date = row["publication_date"]
                     continue
-
-                data_json = json.dumps(data_rows, ensure_ascii=False)
-
-                if existing:
-                    existing.data_json = data_json
-                    existing.is_consolidated = is_consolidated
-                else:
-                    stmt = FinancialStatement(
+                self._session.add(
+                    FinancialStatement(
                         company_id=company_id,
                         period_end=period_end,
-                        period_type=period_type,
+                        period_type=row["period_type"],
                         statement_type=stmt_type,
-                        is_consolidated=is_consolidated,
-                        is_inflation_adj=(fg == "XI_29"),
+                        is_consolidated=True,
+                        is_inflation_adj=False,
+                        publication_date=row["publication_date"],
                         version=1,
                         data_json=data_json,
                     )
-                    self._session.add(stmt)
-                    inserted += 1
-
-        if inserted > 0:
+                )
+                inserted += 1
+        if inserted:
             self._session.flush()
-
         return inserted
 
     @staticmethod
     def _parse_period(period_str: str) -> tuple[Optional[date], Optional[str]]:
-        """Parse a period string like '2024/12' into (date, period_type).
-
-        Args:
-            period_str: Format 'YYYY/PP' where PP is 3, 6, 9, or 12.
-
-        Returns:
-            Tuple of (period_end_date, period_type_str) or (None, None).
-        """
+        """Parse 'YYYY/PP' (PP in 3/6/9/12) into (period_end, period_type)."""
         try:
-            parts = period_str.split("/")
-            if len(parts) != 2:
-                return None, None
-            year = int(parts[0])
-            period = int(parts[1])
-
-            period_map = {
-                3: ("Q1", date(year, 3, 31)),
-                6: ("Q2", date(year, 6, 30)),
-                9: ("Q3", date(year, 9, 30)),
-                12: ("ANNUAL", date(year, 12, 31)),
-            }
-
-            if period in period_map:
-                ptype, pend = period_map[period]
-                return pend, ptype
-        except (ValueError, TypeError):
-            pass
-
-        return None, None
+            year_raw, period_raw = period_str.split("/")
+            year, period = int(year_raw), int(period_raw)
+        except (ValueError, AttributeError):
+            return None, None
+        mapping = {
+            3: ("Q1", date(year, 3, 31)),
+            6: ("Q2", date(year, 6, 30)),
+            9: ("Q3", date(year, 9, 30)),
+            12: ("ANNUAL", date(year, 12, 31)),
+        }
+        if period not in mapping:
+            return None, None
+        ptype, pend = mapping[period]
+        return pend, ptype
 
     def _progress_bar(self, description: str) -> Progress:
-        """Create a Rich progress bar, or a pipe-friendly fallback.
-
-        When PIPE_MODE=1 (set by dashboard subprocess), uses a simple
-        wrapper that prints 'description N/M' lines instead of Rich
-        progress bars (which don't work in pipe mode on Windows).
-
-        Args:
-            description: Description shown above the progress bar.
-
-        Returns:
-            Progress-like context manager.
-        """
-        if os.environ.get("PIPE_MODE") == "1":
+        if os.environ.get("PIPE_MODE") == "1" or os.environ.get("CI"):
             return _PipeProgress(description)
         return Progress(
             SpinnerColumn(),
@@ -1326,56 +957,92 @@ class DataFetcher:
         )
 
     def _print_summary(self, all_stats: dict) -> None:
-        """Print a summary table of all fetch results.
-
-        Args:
-            all_stats: Combined stats from fetch_all().
-        """
         table = Table(title="Fetch Summary")
         table.add_column("Stage", style="bold")
         table.add_column("Detail")
-
         if "universe" in all_stats:
             u = all_stats["universe"]
-            table.add_row(
-                "Universe",
-                f"{u['total']} companies ({u['new']} new, "
-                f"{u['bist100_count']} BIST 100)",
-            )
-
+            table.add_row("Universe", f"{u['total']} companies ({u['new']} new, {u['bist100_count']} S&P 500)")
         if "prices" in all_stats:
             p = all_stats["prices"]
-            table.add_row(
-                "Prices",
-                f"{p['tickers_processed']} tickers, "
-                f"{p['rows_inserted']} rows inserted",
-            )
-
+            table.add_row("Prices", f"{p['tickers_processed']} tickers, {p['rows_inserted']} rows")
         if "financials" in all_stats:
             f = all_stats["financials"]
-            table.add_row(
-                "Financials",
-                f"{f['tickers_processed']} tickers, "
-                f"{f['statements_inserted']} statements",
-            )
-
+            table.add_row("Financials", f"{f['tickers_processed']} filers, {f['statements_inserted']} statements")
         if "macro" in all_stats:
             m = all_stats["macro"]
-            pr = f"{m['policy_rate']:.1%}" if m.get("policy_rate") else "N/A"
-            ir = f"{m['inflation_rate']:.1%}" if m.get("inflation_rate") else "N/A"
-            table.add_row(
-                "Macro",
-                f"{m['cpi_points']} CPI, {m['fx_points']} FX, "
-                f"rate={pr}, CPI YoY={ir}",
-            )
-
-        if "insiders" in all_stats:
-            i = all_stats["insiders"]
-            table.add_row(
-                "Insiders",
-                f"{i['tickers_processed']} tickers, "
-                f"{i['documents_found']} documents",
-            )
-
+            pr = f"{m['policy_rate']:.2%}" if m.get("policy_rate") is not None else "N/A"
+            table.add_row("Macro", f"{m.get('macro_rows', 0)} rows, fed funds={pr}")
         self._console.print()
         self._console.print(table)
+
+
+def _last_complete_session_day() -> date:
+    """Today once the New York close is final (16:20 ET), else yesterday.
+
+    Rows are insert-only, so a partial intraday bar must never be stored.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    now = datetime.now(ZoneInfo("America/New_York"))
+    if (now.hour, now.minute) >= (16, 20):
+        return now.date()
+    return now.date() - timedelta(days=1)
+
+
+def symbol_missing_profile(company: Optional[Company], cik: int) -> bool:
+    """True when a company still needs its SEC profile (SIC) fetched."""
+    if company is None:
+        return True
+    return not company.sic or company.cik != cik
+
+
+def _normalize_share_units(
+    session: Session, company_id: int, items: list[dict], period_end: date
+) -> list[dict]:
+    """Store ``2OA`` in split-free base units (see utils/splits.py)."""
+    from us_picker.utils.splits import to_base_shares
+
+    out = []
+    for item in items:
+        if item.get("item_code") == "2OA" and item.get("value") is not None:
+            as_of_raw = item.get("as_of")
+            as_of = date.fromisoformat(as_of_raw) if as_of_raw else period_end
+            item = dict(item)
+            item["value"] = to_base_shares(session, company_id, float(item["value"]), as_of)
+            item["unit"] = "split_base_shares"
+        out.append(item)
+    return out
+
+
+def _float_or_none(value) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _cpi_yoy_by_availability(cpi: pd.Series) -> pd.Series:
+    """CPI YoY indexed by the date the print became public.
+
+    BLS publishes month M's CPI around the middle of month M+1; the value is
+    stamped on the 15th of M+1 so no scoring date sees it early.
+    """
+    if cpi is None or cpi.empty:
+        return pd.Series(dtype=float)
+    monthly = cpi.copy()
+    monthly.index = pd.to_datetime(monthly.index)
+    yoy = monthly / monthly.shift(12) - 1.0
+    yoy = yoy.dropna()
+    visible = [
+        (ts + pd.offsets.MonthBegin(1) + pd.Timedelta(days=14)).date() for ts in yoy.index
+    ]
+    return pd.Series(yoy.values, index=visible, dtype=float)

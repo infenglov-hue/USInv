@@ -91,7 +91,7 @@ def tradable_company_ids(
         .join(Company, Company.id == DailyPrice.company_id)
         .filter(
             Company.is_active.is_(True),
-            Company.ticker != "XU100",
+            Company.ticker != "SPY",
             or_(Company.company_type.is_(None), Company.company_type != "INDEX"),
             DailyPrice.date >= cutoff,
             DailyPrice.date <= as_of_date,
@@ -127,7 +127,7 @@ def latest_completed_session_date(
             DailyPrice.date >= start,
             DailyPrice.date < effective_date,
             Company.is_active.is_(True),
-            Company.ticker != "XU100",
+            Company.ticker != "SPY",
             or_(Company.company_type.is_(None), Company.company_type != "INDEX"),
             or_(DailyPrice.adjusted_close > 0, DailyPrice.close > 0),
         )
@@ -146,7 +146,7 @@ def latest_completed_session_date(
         session.query(func.max(DailyPrice.date))
         .join(Company, Company.id == DailyPrice.company_id)
         .filter(
-            Company.ticker == "XU100",
+            Company.ticker == "SPY",
             DailyPrice.date < effective_date,
             or_(DailyPrice.adjusted_close > 0, DailyPrice.close > 0),
         )

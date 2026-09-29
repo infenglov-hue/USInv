@@ -12,7 +12,7 @@ from click.testing import CliRunner
 from us_picker.cli import cli
 from us_picker.notifications.telegram import TelegramNotifier
 from us_picker.notifications.event_analyzer import EventAnalyzer
-from us_picker.data.sources.kap_feed import KAPFeed
+from us_picker.data.sources.sec_feed import SECFilingFeed, filing_title, document_text
 from us_picker.notifications.monitor_alerts import monitor_portfolio
 
 
@@ -194,33 +194,44 @@ def test_event_analyzer_exit_alert(mock_genai_client):
     assert "cıkış yapılıyor" in res.lower() or "çıkış yapılıyor" in res.lower()
 
 
-@patch("us_picker.data.sources.kap_feed.get_kap_provider")
-def test_kap_feed(mock_get_kap):
-    mock_provider = MagicMock()
-    mock_get_kap.return_value = mock_provider
+class _StubSECClient:
+    def fetch_submissions(self, cik):
+        return {"filings": {"recent": {
+            "form": ["4", "8-K", "10-Q"],
+            "accessionNumber": ["0000-26-1", "0000320193-26-000031", "0000320193-26-000020"],
+            "primaryDocument": ["x.xml", "aapl-8k.htm", "aapl-10q.htm"],
+            "items": ["", "2.02,9.01", ""],
+            "acceptanceDateTime": ["2026-09-01T16:05:00.000Z", "2026-07-31T16:30:12.000Z",
+                                   "2026-07-31T18:01:02.000Z"],
+        }}}
 
-    df = pd.DataFrame([
-        {"Date": "29.05.2026 13:00:00", "Title": "Kap Bildirimi", "URL": "https://kap.org.tr/tr/Bildirim/123456"}
-    ])
-    mock_provider.get_disclosures.return_value = df
-    mock_provider.get_disclosure_content.return_value = "<div class='content-tr'>Türkçe metin</div><div class='content-en'>English text</div>"
+    def _get(self, url):
+        class _Response:
+            text = "<html><body><p>Apple reports record quarter</p><script>x()</script></body></html>"
+        return _Response()
 
-    feed = KAPFeed()
-    discs = feed.get_latest_disclosures("THYAO")
 
-    assert len(discs) == 1
-    assert discs[0]["id"] == "123456"
-    assert discs[0]["ticker"] == "THYAO"
+def test_sec_filing_feed_lists_material_filings_and_extracts_text():
+    feed = SECFilingFeed(client=_StubSECClient(), cik_lookup=lambda ticker: 320193)
+    discs = feed.get_latest_disclosures("AAPL", limit=2)
 
-    cleaned_text = feed.get_disclosure_text("123456")
-    assert "Türkçe metin" in cleaned_text
-    assert "English text" not in cleaned_text
+    assert [d["id"] for d in discs] == ["0000320193-26-000031", "0000320193-26-000020"]
+    assert discs[0]["title"] == "8-K: Results of operations, Item 9.01"
+    assert discs[0]["url"].endswith("/320193/000032019326000031/aapl-8k.htm")
+    text = feed.get_disclosure_text(discs[0]["id"])
+    assert "Apple reports record quarter" in text
+    assert "x()" not in text
+
+
+def test_sec_feed_helpers():
+    assert filing_title("10-K", "") == "10-K"
+    assert document_text("<p>a</p><p>b</p>") == "a" + chr(10) + "b"
 
 
 @patch("us_picker.notifications.monitor_alerts.send_weekly_report_if_monday")
 @patch("us_picker.notifications.monitor_alerts.get_open_positions")
-@patch("us_picker.notifications.monitor_alerts.yf.Ticker")
-@patch("us_picker.notifications.monitor_alerts.KAPFeed")
+@patch("us_picker.notifications.monitor_alerts.fetch_live_price")
+@patch("us_picker.notifications.monitor_alerts.SECFilingFeed")
 @patch("us_picker.notifications.monitor_alerts.EventAnalyzer")
 @patch("us_picker.notifications.monitor_alerts.TelegramNotifier")
 @patch("us_picker.notifications.monitor_alerts.load_state")
@@ -255,17 +266,7 @@ def test_monitor_portfolio_flow(
     ])
     mock_get_open_positions.return_value = open_pos
 
-    mock_t_thy = MagicMock()
-    mock_t_thy.history.return_value = pd.DataFrame([{"Close": 85.0}], index=[datetime.now()])
-
-    mock_t_asels = MagicMock()
-    mock_t_asels.history.return_value = pd.DataFrame([{"Close": 65.0}], index=[datetime.now()])
-
-    def yf_side_effect(ticker):
-        if "THYAO" in ticker:
-            return mock_t_thy
-        return mock_t_asels
-    mock_yf_ticker.side_effect = yf_side_effect
+    mock_yf_ticker.side_effect = lambda ticker: 85.0 if ticker == "THYAO" else 65.0
 
     mock_load_state.return_value = {
         "processed_kap_ids": [],
@@ -307,7 +308,7 @@ def test_monitor_portfolio_flow(
 
 @patch("us_picker.notifications.monitor_alerts.send_weekly_report_if_monday")
 @patch("us_picker.notifications.monitor_alerts.get_open_positions")
-@patch("us_picker.notifications.monitor_alerts.KAPFeed")
+@patch("us_picker.notifications.monitor_alerts.SECFilingFeed")
 @patch("us_picker.notifications.monitor_alerts.EventAnalyzer")
 @patch("us_picker.notifications.monitor_alerts.TelegramNotifier")
 @patch("us_picker.notifications.monitor_alerts.load_state")
@@ -361,8 +362,8 @@ def test_monitor_skips_kap_when_no_open_positions(
 
 @patch("us_picker.notifications.monitor_alerts.send_weekly_report_if_monday")
 @patch("us_picker.notifications.monitor_alerts.get_open_positions")
-@patch("us_picker.notifications.monitor_alerts.yf.Ticker")
-@patch("us_picker.notifications.monitor_alerts.KAPFeed")
+@patch("us_picker.notifications.monitor_alerts.fetch_live_price")
+@patch("us_picker.notifications.monitor_alerts.SECFilingFeed")
 @patch("us_picker.notifications.monitor_alerts.EventAnalyzer")
 @patch("us_picker.notifications.monitor_alerts.TelegramNotifier")
 @patch("us_picker.notifications.monitor_alerts.load_state")
@@ -391,9 +392,7 @@ def test_monitor_escapes_kap_html_for_open_position_only(
             }
         ]
     )
-    mock_ticker = MagicMock()
-    mock_ticker.history.return_value = pd.DataFrame([{"Close": 55.0}], index=[datetime.now()])
-    mock_yf_ticker.return_value = mock_ticker
+    mock_yf_ticker.return_value = 55.0
     mock_load_state.return_value = {
         "processed_kap_ids": [],
         "notified_exits": {},

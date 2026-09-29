@@ -6,7 +6,7 @@ buffett:
   # which the percentile-rank step then recycled into the top-N.
   min_roe_5yr: 0.15
   max_debt_equity: 1.0         # documentation-only; not used in scoring math
-  min_gross_margin: 0.25       # relaxed from 0.40 for Turkey (BIST has many low-GM sectors)
+  min_gross_margin: 0.25       # BIST value kept; US sector mix is similar enough for a floor
   min_positive_eps_years: 6    # relaxed from 8 for emerging market
   roe_full_score: 0.25         # ROE >= 25% gets maximum score
   roe_min_score: 0.08          # ROE below 8% gets zero (was 0.05; below 8% in TRY is below cost of capital)
@@ -20,8 +20,8 @@ graham:
   # MacroRegime.policy_rate_pct at scoring time. This value is only used
   # as a fallback when no macro row exists. Update if static fallback is
   # ever exercised (rare on the live pipeline).
-  try_bond_yield: 0.30         # fallback only — runtime value comes from TCMB policy rate
-  graham_numerator: 30.0       # adapted for Turkey's high risk-free rate (nominal baseline)
+  try_bond_yield: 0.045        # US port: fallback only — runtime value is FRED DGS10
+  graham_numerator: 4.4        # US port: Graham's original 4.4 against the 10y Treasury yield
 
 dcf:
   # Dynamic discount rate = TCMB policy rate + equity_risk_premium_try.
@@ -32,19 +32,19 @@ dcf:
   dynamic_discount_rate: true
   # ERP fallback. At runtime the DCF scorer prefers macro.yaml erp.equity_risk_premium_try
   # (Damodaran, manually updated) over this value. Kept for legacy callers.
-  equity_risk_premium_try: 0.06
-  min_rate_terminal_spread: 0.05  # enforce r - g_terminal >= 5% for dynamic path
-  discount_rate_try: 0.35         # static fallback for discount rate
+  equity_risk_premium_try: 0.045   # US port: USD ERP fallback (Damodaran US ~4.5%)
+  min_rate_terminal_spread: 0.03  # US port: r ~9% vs g ~4.5% needs a thinner guard than TRY
+  discount_rate_try: 0.09         # US port: static USD fallback (10y + ERP)
   # Static terminal growth fallback. At runtime DCF prefers
   # MacroRegime.inflation_expectation_24m_pct + macro.yaml real_growth_pct.
   # Lowered 0.12 -> 0.08 to reflect more realistic long-run TRY nominal
   # (~6% expected CPI + 2% real growth) when the dynamic path is unavailable.
-  terminal_growth_try: 0.08
+  terminal_growth_try: 0.035      # US port: ~2.3% inflation + ~1.2% real
   projection_years: 10
   maintenance_capex_pct: 0.70     # approximate maintenance as 70% of total capex
-  min_growth_rate: 0.05           # floor: inflation pass-through minimum
-  max_growth_rate: 0.35           # cap: realistic Turkish nominal growth ceiling
-  conservative_growth_rate: 0.10  # used when only 1 year of EPS history exists
+  min_growth_rate: 0.02           # US port: floor ~ inflation pass-through
+  max_growth_rate: 0.25           # US port: nominal USD growth ceiling
+  conservative_growth_rate: 0.06  # used when only 1 year of EPS history exists
 
 piotroski:
   min_fscore: 4                # minimum to be considered investable
@@ -141,13 +141,13 @@ selection:
     incumbent_min_score: 88.0
     financial_sleeve_min_score: 80.0
     financial_sleeve_min_relative_strength: 50.0
-    min_avg_volume_try: 10_000_000
+    min_avg_volume_try: 20_000_000   # US port: USD 20-session average $ volume
     min_free_float: 25.0
     min_data_completeness: 60.0
     liquidity_lookback_days: 30
 
 magic_formula:
-  min_market_cap_try: 500_000_000  # ₺500M minimum
+  min_market_cap_try: 1_000_000_000  # US port: $1B minimum (key name kept from BIST)
 
 backtest:
   # Execution-realism knobs (A4 / #9, 2026-07-07 advisor review). Defaults
@@ -189,7 +189,7 @@ filters:
   alpha:
     exclude_high_risk: true
     min_free_float: 25.0
-    min_avg_volume_try: 10_000_000
+    min_avg_volume_try: 20_000_000   # US port: USD 20-session average $ volume
     min_data_completeness: 70.0
     min_fscore: 5
 alpha_research:
@@ -356,14 +356,14 @@ risk_classifier:
 
   # Market capitalization in TRY
   market_cap:
-    large_min: 10_000_000_000  # > 10B TRY -> LARGE (LOW risk)
-    small_max: 2_000_000_000   # < 2B TRY  -> SMALL (HIGH risk)
+    large_min: 10_000_000_000  # US port: > $10B -> LARGE (LOW risk)
+    small_max: 2_000_000_000   # US port: < $2B  -> SMALL (HIGH risk)
 
   # 20-day average daily TRY turnover.
   # ISYATIRIM rows already store TRY turnover; YAHOO rows use close * volume.
   liquidity:
-    high_min: 25_000_000       # avg turnover > 25M TRY -> HIGH liquidity (LOW risk)
-    low_max: 5_000_000         # avg turnover < 5M TRY  -> LOW liquidity (HIGH risk)
+    high_min: 100_000_000      # US port: avg $ turnover > $100M -> HIGH liquidity
+    low_max: 20_000_000        # US port: avg $ turnover < $20M -> LOW liquidity
 
   # Debt / Equity ratio from most recent annual balance sheet
   leverage:

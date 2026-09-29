@@ -260,17 +260,10 @@ class MagicFormulaScorer:
         """Get most recent closing price on or before cutoff."""
         if cutoff is None:
             cutoff = _date.today()
-        row = (
-            session.query(DailyPrice.close)
-            .filter(
-                DailyPrice.company_id == company_id,
-                DailyPrice.close.isnot(None),
-                DailyPrice.date <= cutoff,
-            )
-            .order_by(DailyPrice.date.desc())
-            .first()
-        )
-        return row[0] if row else None
+        # US port: base-unit price so it matches split-normalized share counts.
+        from us_picker.utils.splits import valuation_price
+
+        return valuation_price(session, company_id, cutoff)
 
     def _get_shares(self, company_id: int, session: Session, cutoff: _date = None) -> Optional[float]:
         """Get shares outstanding from latest balance sheet share capital."""

@@ -1,4 +1,4 @@
-"""Regression tests for finalized XU100 daily-bar persistence."""
+"""Regression tests for finalized SPY benchmark daily-bar persistence."""
 
 from datetime import date, timedelta
 
@@ -21,16 +21,17 @@ def session():
     sess.close()
 
 
-class _FakeYahoo:
+class _FakeAlpaca:
     def __init__(self, close: float):
         self.close = close
         self.calls = []
 
-    def fetch_index_data(self, start_date, end_date):
+    def fetch_price_history(self, symbols, start_date, end_date):
         self.calls.append((start_date, end_date))
         return pd.DataFrame(
             [
                 {
+                    "symbol": symbols[0],
                     "date": end_date,
                     "open": self.close - 10,
                     "high": self.close + 20,
@@ -38,42 +39,42 @@ class _FakeYahoo:
                     "close": self.close,
                     "volume": 123,
                     "adjusted_close": self.close,
-                    "source": "XU100",
+                    "source": "ALPACA",
                 }
             ]
         )
 
 
-def _fetcher(session, close=14_000.0):
-    fetcher = DataFetcher.__new__(DataFetcher)
-    fetcher._session = session
-    fetcher._console = Console(quiet=True)
-    fetcher._yahoo = _FakeYahoo(close)
-    return fetcher
+def _fetcher(session, close=640.0):
+    return DataFetcher(
+        session=session,
+        console=Console(quiet=True),
+        alpaca_client=_FakeAlpaca(close),
+    )
 
 
 def test_benchmark_excludes_today_and_upserts_legacy_partial_row(session):
-    fetcher = _fetcher(session, close=14_000.0)
+    fetcher = _fetcher(session, close=640.0)
     fetcher.fetch_benchmark_prices(days_back=30)
 
     expected_end = date.today() - timedelta(days=1)
-    assert fetcher._yahoo.calls[-1][1] == expected_end
-    company = session.query(Company).filter_by(ticker="XU100").one()
+    assert fetcher.alpaca.calls[-1][1] == expected_end
+    company = session.query(Company).filter_by(ticker="SPY").one()
     row = session.query(DailyPrice).filter_by(
         company_id=company.id, date=expected_end
     ).one()
-    assert row.close == 14_000.0
+    assert row.close == 640.0
 
     # A later fetch of the same completed date must replace a partial/incorrect
     # value instead of being frozen by OR IGNORE.
-    fetcher._yahoo.close = 14_350.6
+    fetcher.alpaca.close = 641.35
     fetcher.fetch_benchmark_prices(days_back=30)
     session.expire_all()
     row = session.query(DailyPrice).filter_by(
         company_id=company.id, date=expected_end
     ).one()
-    assert row.close == pytest.approx(14_350.6)
-    assert row.adjusted_close == pytest.approx(14_350.6)
+    assert row.close == pytest.approx(641.35)
+    assert row.adjusted_close == pytest.approx(641.35)
 
 
 def test_default_equity_bulk_insert_remains_insert_only(session):

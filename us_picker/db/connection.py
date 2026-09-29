@@ -31,6 +31,13 @@ _RuntimeReadyEngineIds: set[int] = set()
 # existing ones. Each entry here is applied only if the column is absent.
 # Key format: (table, column) -> ALTER TABLE DDL.
 _RUNTIME_SQLITE_COLUMN_ADDS: dict[tuple[str, str], str] = {
+    # US port: SEC identity on companies.
+    ("companies", "cik"): "ALTER TABLE companies ADD COLUMN cik INTEGER",
+    ("companies", "sic"): "ALTER TABLE companies ADD COLUMN sic VARCHAR(8)",
+    ("companies", "exchange"): "ALTER TABLE companies ADD COLUMN exchange VARCHAR(16)",
+    ("portfolio_selections", "split_applied_through"): (
+        "ALTER TABLE portfolio_selections ADD COLUMN split_applied_through DATE"
+    ),
     ("macro_regime", "inflation_expectation_24m_pct"): (
         "ALTER TABLE macro_regime "
         "ADD COLUMN inflation_expectation_24m_pct REAL"

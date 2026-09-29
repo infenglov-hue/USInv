@@ -389,8 +389,8 @@ class UniverseBuilder:
         cutoff = self.scoring_date - timedelta(days=_LOOKBACK_DAYS)
 
         turnover_expr = case(
-            (DailyPrice.source.ilike("YAHOO%"), DailyPrice.close * DailyPrice.volume),
-            else_=DailyPrice.volume,
+            (DailyPrice.source.ilike("ISYATIRIM%"), DailyPrice.volume),
+            else_=DailyPrice.close * DailyPrice.volume,
         )
 
         rows = (

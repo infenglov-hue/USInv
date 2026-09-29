@@ -19,6 +19,8 @@ from sqlalchemy.orm import Session
 
 from us_picker.db.schema import Company
 
+from us_picker.classification.sic import sub_sector_for_sic
+
 logger = logging.getLogger("us_picker.classification.sector_mapper")
 
 _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "sectors.yaml"
@@ -133,11 +135,14 @@ class SectorMapper:
         }
 
         for company in companies:
-            sub_sector = self.map_sector(
-                ticker=company.ticker,
-                bist_sector=company.sector_bist or "",
-                company_name=company.name or "",
-            )
+            if getattr(company, "sic", None):
+                sub_sector = sub_sector_for_sic(company.sic)
+            else:
+                sub_sector = self.map_sector(
+                    ticker=company.ticker,
+                    bist_sector=company.sector_bist or "",
+                    company_name=company.name or "",
+                )
 
             if company.sector_custom != sub_sector:
                 company.sector_custom = sub_sector

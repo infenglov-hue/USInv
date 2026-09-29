@@ -223,7 +223,7 @@ def test_latest_price_date_ignores_index_only_update(source_engine, tmp_path):
     session = sessionmaker(bind=source_engine)()
     try:
         xu100 = Company(
-            ticker="XU100",
+            ticker="SPY",
             name="BIST 100",
             company_type="INDEX",
             is_active=False,
@@ -295,7 +295,7 @@ def test_export_mobile_feed_writes_manifest_and_gzip(source_engine, tmp_path):
     assert manifest["live_tickers"]["filename"] == "live_tickers.json"
     assert manifest["live_tickers"]["ticker_count"] == 2
     live_tickers = json.loads(live_tickers_path.read_text(encoding="utf-8"))
-    assert live_tickers["tickers"] == ["TEST1", "XU100"]
+    assert live_tickers["tickers"] == ["TEST1", "SPY"]
 
     extracted_snapshot = tmp_path / "extracted_snapshot.db"
     with gzip.open(snapshot_gzip_path, "rb") as source:

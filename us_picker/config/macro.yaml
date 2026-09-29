@@ -16,8 +16,8 @@ erp:
   # Damodaran-style Turkey Equity Risk Premium = US ERP + Country Risk Premium.
   # Source: NYU Stern Damodaran ctryprem.xls (updated monthly by the author).
   # Manual update because no free API returns Turkey sovereign CDS / EMBI spread.
-  equity_risk_premium_try: 0.0889
-  last_updated: "2026-05-29"       # YYYY-MM-DD — bump whenever you refresh the value
+  equity_risk_premium_try: 0.0446   # US port: Damodaran United States ERP
+  last_updated: "2026-09-29"       # YYYY-MM-DD — bump whenever you refresh the value
   source_url: "https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/ctryprem.html"
   stale_after_days: 90             # pipeline opens a GitHub issue past this age
 
@@ -25,6 +25,6 @@ terminal_growth:
   # When MacroRegime.inflation_expectation_24m_pct is populated (TCMB Market
   # Participants Survey), DCF uses:  g_terminal = expected_cpi_24m + real_growth_pct
   # Fallback to `terminal_growth_try` in thresholds.yaml when TCMB data missing.
-  real_growth_pct: 0.02            # long-run real GDP growth pass-through (~2%)
-  min_floor: 0.05                  # clamp: never go below 5% nominal
-  max_ceiling: 0.15                # clamp: never go above 15% nominal
+  real_growth_pct: 0.015           # US port: long-run real growth pass-through
+  min_floor: 0.025                 # US port: clamp nominal terminal growth >= 2.5%
+  max_ceiling: 0.05                # US port: clamp nominal terminal growth <= 5%

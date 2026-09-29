@@ -348,16 +348,10 @@ class LynchScorer:
         scoring_date: Optional[_date] = None,
     ) -> Optional[float]:
         """Get most recent closing price."""
-        query = session.query(DailyPrice.close).filter(
-            DailyPrice.company_id == company_id,
-            DailyPrice.close.isnot(None),
-        )
+        # US port: base-unit price so it matches split-normalized share counts.
+        from us_picker.utils.splits import valuation_price
 
-        if scoring_date:
-            query = query.filter(DailyPrice.date <= scoring_date)
-            
-        row = query.order_by(DailyPrice.date.desc()).first()
-        return row[0] if row else None
+        return valuation_price(session, company_id, scoring_date)
 
 
 def _score_peg(peg: float) -> float:

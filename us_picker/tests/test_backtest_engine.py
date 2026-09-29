@@ -40,7 +40,7 @@ def test_backtest_engine_calculates_returns(session, monkeypatch, tmp_path):
     # 1. Add mock companies
     c1 = Company(ticker="TEST1", name="Test 1", company_type="OPERATING", is_active=True)
     c2 = Company(ticker="TEST2", name="Test 2", company_type="OPERATING", is_active=True)
-    benchmark = Company(ticker="XU100", name="BIST 100", company_type="INDEX", is_active=False)
+    benchmark = Company(ticker="SPY", name="BIST 100", company_type="INDEX", is_active=False)
     session.add_all([c1, c2, benchmark])
     session.flush()
 
@@ -197,7 +197,7 @@ def test_backtest_engine_treats_empty_selection_as_flat_period(
     d2 = date(2026, 3, 23)
     company = Company(ticker="REAL", name="Real", is_active=True)
     benchmark = Company(
-        ticker="XU100",
+        ticker="SPY",
         name="BIST 100",
         company_type="INDEX",
         is_active=False,
@@ -338,7 +338,7 @@ def test_backtest_engine_take_profit_exit(session, monkeypatch, tmp_path):
     d2 = date(2026, 3, 23)
 
     c1 = Company(ticker="TEST1", name="Test 1", company_type="OPERATING", is_active=True)
-    benchmark = Company(ticker="XU100", name="BIST 100", company_type="INDEX", is_active=False)
+    benchmark = Company(ticker="SPY", name="BIST 100", company_type="INDEX", is_active=False)
     session.add_all([c1, benchmark])
     session.flush()
 
@@ -481,7 +481,7 @@ def test_incremental_backtest_preserves_nav_continuity(
         is_active=True,
     )
     benchmark = Company(
-        ticker="XU100",
+        ticker="SPY",
         name="BIST 100",
         company_type="INDEX",
         is_active=False,

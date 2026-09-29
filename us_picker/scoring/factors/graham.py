@@ -494,17 +494,10 @@ class GrahamScorer:
         Returns:
             Latest closing price, or None if not available.
         """
-        query = session.query(DailyPrice.close).filter(
-            DailyPrice.company_id == company_id,
-            DailyPrice.close.isnot(None),
-        )
+        # US port: base-unit price so it matches split-normalized share counts.
+        from us_picker.utils.splits import valuation_price
 
-        if scoring_date:
-            query = query.filter(DailyPrice.date <= scoring_date)
-
-        latest = query.order_by(DailyPrice.date.desc()).first()
-
-        return latest[0] if latest else None
+        return valuation_price(session, company_id, scoring_date)
 
     def _load_latest_balance(
         self,

@@ -23,7 +23,7 @@ class MarketRegimeClassifier:
         """Fetch XU100 prices up to end_date."""
         xu100 = (
             self.session.query(Company.id)
-            .filter(Company.ticker == "XU100")
+            .filter(Company.ticker == "SPY")
             .first()
         )
         if xu100 is None:

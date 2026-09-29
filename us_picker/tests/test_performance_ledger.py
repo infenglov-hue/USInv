@@ -71,7 +71,7 @@ def _selection(
 
 
 def test_legacy_cohorts_compound_period_nav_and_exclude_zero_trade_from_win_rate(session):
-    xu100 = _company(session, "XU100", "INDEX")
+    xu100 = _company(session, "SPY", "INDEX")
     companies = [_company(session, f"P{i}") for i in range(7)]
 
     # Benchmark periods: 0%, +10%, 0% => +10% cumulative.
@@ -130,7 +130,7 @@ def test_legacy_cohorts_compound_period_nav_and_exclude_zero_trade_from_win_rate
 
 
 def test_cycle_marks_replace_continuity_rows_without_double_counting(session):
-    xu100 = _company(session, "XU100", "INDEX")
+    xu100 = _company(session, "SPY", "INDEX")
     a, b, c = [_company(session, ticker) for ticker in ("A", "B", "C")]
     for d in (date(2026, 7, 1), date(2026, 7, 15), date(2026, 7, 20)):
         _price(session, xu100, d, 100)

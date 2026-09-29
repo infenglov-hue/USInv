@@ -829,8 +829,8 @@ class PortfolioSelector:
         cutoff = self.scoring_date - timedelta(days=lookback_days)
 
         turnover_expr = case(
-            (DailyPrice.source.ilike("YAHOO%"), DailyPrice.close * DailyPrice.volume),
-            else_=DailyPrice.volume,
+            (DailyPrice.source.ilike("ISYATIRIM%"), DailyPrice.volume),
+            else_=DailyPrice.close * DailyPrice.volume,
         )
 
         rows = (
@@ -896,8 +896,8 @@ class PortfolioSelector:
         start_date = self.scoring_date - timedelta(days=lookback_days)
         p0 = self._get_price_by_ticker(ticker, start_date, session)
         p1 = self._get_price_by_ticker(ticker, self.scoring_date, session)
-        x0 = self._get_price_by_ticker("XU100", start_date, session)
-        x1 = self._get_price_by_ticker("XU100", self.scoring_date, session)
+        x0 = self._get_price_by_ticker("SPY", start_date, session)
+        x1 = self._get_price_by_ticker("SPY", self.scoring_date, session)
         if p0 <= 0 or p1 <= 0 or x0 <= 0 or x1 <= 0:
             return 50.0
 
@@ -1149,6 +1149,10 @@ class PortfolioSelector:
             .all()
         )
 
+        # US port: S&P 500 membership as of the signal date, not today's flag
+        # (a later index addition must not count as an index name in 2019).
+        index_members = _index_members_as_of(session, self.scoring_date)
+
         candidates = []
         for score_row, company in rows:
             composite = getattr(score_row, score_col, None)
@@ -1167,7 +1171,11 @@ class PortfolioSelector:
                     "sector_custom": company.sector_custom,
                     "sector_key": company.sector_custom or company.sector_bist,
                     "company_type": company.company_type,
-                    "is_bist100": bool(company.is_bist100),
+                    "is_bist100": (
+                        company.ticker in index_members
+                        if index_members is not None
+                        else bool(company.is_bist100)
+                    ),
                     "risk_tier": getattr(score_row, "risk_tier", None),
                     "free_float_pct": company.free_float_pct,
                     "dcf_mos": score_row.dcf_margin_of_safety_pct,
@@ -1691,3 +1699,21 @@ class PortfolioSelector:
         )
 
         return round(stop_price, 2)
+
+
+def _index_members_as_of(session: Session, as_of: date) -> Optional[set[str]]:
+    """Tickers in the S&P 500 on ``as_of`` or ``None`` when no history is stored."""
+    from us_picker.db.schema import IndexMembership
+
+    rows = (
+        session.query(IndexMembership.ticker, IndexMembership.start_date, IndexMembership.end_date)
+        .filter(IndexMembership.index_name == "SP500")
+        .all()
+    )
+    if not rows:
+        return None
+    return {
+        ticker
+        for ticker, start, end in rows
+        if start <= as_of and (end is None or as_of < end)
+    }

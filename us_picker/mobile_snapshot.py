@@ -158,6 +158,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             policy_rate_pct REAL,
             cpi_yoy_pct REAL,
             usdtry_rate REAL,
+            bond_yield_10y_pct REAL,
+            high_yield_oas_bps REAL,
             regime TEXT,
             cash_state TEXT,
             cash_pct REAL,
@@ -481,14 +483,14 @@ def _market_wide_latest_price_date(
         company.id
         for company in companies
         if company.is_active
-        and company.ticker != "XU100"
+        and company.ticker != "SPY"
         and str(company.company_type or "").upper() != "INDEX"
     }
     if not active_equity_ids:
         active_equity_ids = {
             company.id
             for company in companies
-            if company.ticker != "XU100"
+            if company.ticker != "SPY"
             and str(company.company_type or "").upper() != "INDEX"
         }
 
@@ -635,6 +637,8 @@ def export_mobile_snapshot(output_path: str | Path = DEFAULT_MOBILE_SNAPSHOT_PAT
                 "policy_rate_pct",
                 "cpi_yoy_pct",
                 "usdtry_rate",
+                "bond_yield_10y_pct",
+                "high_yield_oas_bps",
                 "regime",
                 "cash_state",
                 "cash_pct",
@@ -665,6 +669,9 @@ def export_mobile_snapshot(output_path: str | Path = DEFAULT_MOBILE_SNAPSHOT_PAT
                     "policy_rate_pct": macro.get("policy_rate_pct"),
                     "cpi_yoy_pct": macro.get("cpi_yoy_pct"),
                     "usdtry_rate": macro.get("usdtry_rate"),
+                    # US port: 10y Treasury and HY OAS (stored in turkey_cds_5y).
+                    "bond_yield_10y_pct": macro.get("bond_yield_10y_pct"),
+                    "high_yield_oas_bps": macro.get("turkey_cds_5y"),
                     "regime": macro.get("regime"),
                     "cash_state": cash_state.get("state"),
                     "cash_pct": cash_state.get("cash_pct"),

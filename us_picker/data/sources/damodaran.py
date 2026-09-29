@@ -44,7 +44,7 @@ logger = logging.getLogger("us_picker.data.sources.damodaran")
 _CTRYPREM_URL = (
     "https://pages.stern.nyu.edu/~adamodar/New_Home_Page/datafile/ctryprem.html"
 )
-_USER_AGENT = "bist-picker/2.0 (+https://github.com/Somethinglikeu-hub/MobileInv)"
+_USER_AGENT = "us-picker/1.0 (research)"
 _REQUEST_TIMEOUT = 30  # seconds
 _CACHE_SOURCE = "damodaran"
 _CACHE_TICKER = "turkey"
@@ -171,3 +171,85 @@ def parse_turkey_row(html: str) -> Optional[dict]:
         "crp": pct_values[1],
         "erp": pct_values[2],
     }
+
+
+# ── US port: any country row (United States for the US picker) ─────────────
+
+
+def _country_row_re(country: str) -> re.Pattern:
+    return re.compile(
+        r"<tr[^>]*>\s*"
+        rf"<td[^>]*>\s*{re.escape(country)}(?:\s*\(updated\s+([^<)]+?)\))?\s*</td>"
+        r"(.*?)"
+        r"</tr>",
+        re.IGNORECASE | re.DOTALL,
+    )
+
+
+def parse_country_row(html: str, country: str) -> Optional[dict]:
+    """``parse_turkey_row`` for an arbitrary country name (exact cell match)."""
+
+    m = _country_row_re(country).search(html)
+    if not m:
+        return None
+    updated_label = (m.group(1) or "").strip() or None
+    cells = [c.strip() for c in _CELL_RE.findall(m.group(2))]
+    rating: Optional[str] = None
+    pct_values: list[float] = []
+    for cell in cells:
+        pct_match = _PCT_RE.search(cell)
+        if pct_match:
+            pct_values.append(float(pct_match.group(1)) / 100.0)
+            continue
+        if rating is None and cell and len(cell) <= 8:
+            rating = cell
+    if len(pct_values) < 3:
+        return None
+    return {
+        "rating": rating,
+        "updated_label": updated_label,
+        "adj_default_spread": pct_values[0],
+        "crp": pct_values[1],
+        "erp": pct_values[2],
+    }
+
+
+def fetch_us_erp(
+    cache: Optional[FileCache] = None,
+    *,
+    force_refresh: bool = False,
+) -> Optional[DamodaranTurkeyERP]:
+    """United States equity risk premium from the same Damodaran page."""
+
+    cache = cache or FileCache()
+    html: Optional[str] = None
+    if not force_refresh:
+        cached = cache.load_raw_response(
+            _CACHE_SOURCE, "united_states", _CACHE_DATA_TYPE,
+            max_age_hours=_CACHE_TTL_HOURS,
+        )
+        if isinstance(cached, str):
+            html = cached
+    if html is None:
+        try:
+            req = urllib.request.Request(_CTRYPREM_URL, headers={"User-Agent": _USER_AGENT})
+            with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
+            try:
+                cache.save_raw_response(_CACHE_SOURCE, "united_states", _CACHE_DATA_TYPE, html)
+            except Exception as exc:  # pragma: no cover — cache write is best-effort
+                logger.debug("Damodaran cache write failed: %s", exc)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            logger.warning("Damodaran fetch failed: %s", exc)
+            return None
+    parsed = parse_country_row(html, "United States")
+    if parsed is None:
+        logger.warning("Damodaran HTML did not yield a United States row")
+        return None
+    return DamodaranTurkeyERP(
+        equity_risk_premium_pct=parsed["erp"],
+        country_risk_premium_pct=parsed["crp"],
+        moodys_rating=parsed.get("rating"),
+        last_updated_label=parsed.get("updated_label"),
+        fetched_at=date.today(),
+    )

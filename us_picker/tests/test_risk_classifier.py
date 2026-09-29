@@ -174,10 +174,10 @@ class TestDimensionScorers:
 
     def test_liquidity_high_is_low_risk(self, clf):
         """High liquidity (>25M TRY/day) = LOW risk = score 1."""
-        assert clf._score_liquidity(30_000_000) == 1
+        assert clf._score_liquidity(150_000_000) == 1
 
     def test_liquidity_medium(self, clf):
-        assert clf._score_liquidity(10_000_000) == 2
+        assert clf._score_liquidity(50_000_000) == 2
 
     def test_liquidity_low_is_high_risk(self, clf):
         """Low liquidity (<5M TRY/day) = HIGH risk = score 3."""
@@ -204,7 +204,7 @@ class TestBetaCalculation:
     def test_beta_of_one_for_identical_series(self, clf, session):
         """A stock with returns identical to the benchmark has beta = 1.0."""
         # Create benchmark (XU100).
-        bm = _add_company(session, "XU100")
+        bm = _add_company(session, "SPY")
         stock = _add_company(session, "TSTOCK")
 
         prices = _make_low_vol_prices(n=253, seed=42)
@@ -219,7 +219,7 @@ class TestBetaCalculation:
     def test_beta_of_zero_for_uncorrelated_series(self, clf, session):
         """A stock uncorrelated with benchmark should have beta near 0."""
         rng = np.random.default_rng(99)
-        bm = _add_company(session, "XU100")
+        bm = _add_company(session, "SPY")
         stock = _add_company(session, "UNCORR")
 
         bm_prices = _make_low_vol_prices(n=253, seed=10)
@@ -246,7 +246,7 @@ class TestBetaCalculation:
 
     def test_beta_none_with_insufficient_data(self, clf, session):
         """Beta returns None when fewer than 20 shared dates."""
-        bm = _add_company(session, "XU100")
+        bm = _add_company(session, "SPY")
         stock = _add_company(session, "STKX")
         # Only 15 prices (below minimum)
         short_prices = _make_low_vol_prices(n=15)
@@ -268,7 +268,7 @@ class TestBetaCalculation:
         mkt_prices = np.concatenate([[100.0], 100.0 * np.exp(np.cumsum(mkt_ret))]).tolist()
         stock_prices = np.concatenate([[100.0], 100.0 * np.exp(np.cumsum(stock_ret))]).tolist()
 
-        bm = _add_company(session, "XU100")
+        bm = _add_company(session, "SPY")
         stock = _add_company(session, "HBETA")
         _add_prices(session, bm.id, mkt_prices)
         _add_prices(session, stock.id, stock_prices)
