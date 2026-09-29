@@ -1,0 +1,613 @@
+"""SQLAlchemy ORM models for the BIST Stock Picker database.
+
+Defines all 9 tables: companies, daily_prices, financial_statements,
+adjusted_metrics, corporate_actions, insider_transactions, scoring_results,
+portfolio_selections, macro_regime. All tables include created_at and
+updated_at auto-timestamps. Backend: SQLite.
+"""
+
+from __future__ import annotations
+
+import sys
+from datetime import date, datetime
+
+if sys.version_info >= (3, 11):
+    from datetime import UTC as _UTC
+else:
+    from datetime import timezone as _timezone
+    _UTC = _timezone.utc
+from typing import Optional
+
+from sqlalchemy import (
+    Boolean,
+    Column,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    event,
+)
+from sqlalchemy.orm import DeclarativeBase, relationship
+
+
+class Base(DeclarativeBase):
+    """Base class for all ORM models."""
+    pass
+
+
+def _utcnow() -> datetime:
+    """Return a naive UTC timestamp for SQLite-compatible DateTime columns."""
+    return datetime.now(_UTC).replace(tzinfo=None)
+
+
+def _set_updated_at(mapper, connection, target):
+    """Auto-update the updated_at timestamp on every flush."""
+    target.updated_at = _utcnow()
+
+
+class Company(Base):
+    """BIST-listed company master record."""
+
+    __tablename__ = "companies"
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    ticker: str = Column(String(10), unique=True, nullable=False, index=True)
+    name: Optional[str] = Column(String(255))
+    company_type: Optional[str] = Column(String(20))  # OPERATING / HOLDING / BANK / INSURANCE / REIT
+    sector_bist: Optional[str] = Column(String(100))
+    sector_custom: Optional[str] = Column(String(100))
+    listing_date: Optional[date] = Column(Date)
+    delisting_date: Optional[date] = Column(Date)
+    free_float_pct: Optional[float] = Column(Float)
+    is_bist100: bool = Column(Boolean, default=False)
+    is_ipo: bool = Column(Boolean, default=False)
+    ipo_age_months: Optional[int] = Column(Integer)
+    is_active: bool = Column(Boolean, default=True)
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    # Relationships
+    daily_prices = relationship("DailyPrice", back_populates="company")
+    financial_statements = relationship("FinancialStatement", back_populates="company")
+    adjusted_metrics = relationship("AdjustedMetric", back_populates="company")
+    corporate_actions = relationship("CorporateAction", back_populates="company")
+    insider_transactions = relationship("InsiderTransaction", back_populates="company")
+    scoring_results = relationship("ScoringResult", back_populates="company")
+    portfolio_selections = relationship("PortfolioSelection", back_populates="company")
+
+
+class DailyPrice(Base):
+    """Daily OHLCV price data for a company."""
+
+    __tablename__ = "daily_prices"
+    __table_args__ = (
+        UniqueConstraint("company_id", "date", name="uq_daily_prices_company_date"),
+    )
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    company_id: int = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    date: date = Column(Date, nullable=False, index=True)
+    open: Optional[float] = Column(Float)
+    high: Optional[float] = Column(Float)
+    low: Optional[float] = Column(Float)
+    close: Optional[float] = Column(Float)
+    volume: Optional[int] = Column(Integer)
+    adjusted_close: Optional[float] = Column(Float)
+    source: Optional[str] = Column(String(20))  # ISYATIRIM / YAHOO
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    company = relationship("Company", back_populates="daily_prices")
+
+
+class FinancialStatement(Base):
+    """Raw financial statement data stored as JSON."""
+
+    __tablename__ = "financial_statements"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "period_end", "period_type", "statement_type", "version",
+            name="uq_financial_statements_composite",
+        ),
+    )
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    company_id: int = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    period_end: date = Column(Date, nullable=False)
+    period_type: str = Column(String(10), nullable=False)  # Q1 / Q2 / Q3 / ANNUAL
+    statement_type: str = Column(String(20), nullable=False)  # INCOME / BALANCE / CASHFLOW
+    is_consolidated: bool = Column(Boolean, default=True)
+    is_inflation_adj: bool = Column(Boolean, default=False)
+    publication_date: Optional[date] = Column(Date)
+    version: int = Column(Integer, default=1)
+    data_json: Optional[str] = Column(Text)  # Full statement as JSON
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    company = relationship("Company", back_populates="financial_statements")
+
+
+class AdjustedMetric(Base):
+    """Calculated clean financial metrics after IAS 29 and inflation adjustments."""
+
+    __tablename__ = "adjusted_metrics"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "period_end",
+            name="uq_adjusted_metrics_company_period",
+        ),
+    )
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    company_id: int = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    period_end: date = Column(Date, nullable=False)
+    # Period/basis audit metadata. Interim income and cash-flow statements are
+    # cumulative YTD; the clean stage converts them to TTM before producing
+    # this row. Legacy rows keep NULL until the next clean run.
+    source_period_type: Optional[str] = Column(String(10))  # Q1/Q2/Q3/ANNUAL
+    calculation_basis: Optional[str] = Column(String(20))  # TTM / ANNUAL
+    source_periods_json: Optional[str] = Column(Text)
+    input_hash: Optional[str] = Column(String(64), index=True)
+    # KAP filing date for the underlying financials (mirrors the latest
+    # FinancialStatement.publication_date used to derive this row). Lets
+    # ScoringContext apply a true point-in-time guard instead of the legacy
+    # 76-day heuristic. NULL on legacy rows — the guard falls back to
+    # period_end + lag in that case (audit CRITICAL #1, 2026-05-07).
+    publication_date: Optional[date] = Column(Date, index=True)
+    reported_net_income: Optional[float] = Column(Float)
+    monetary_gain_loss: Optional[float] = Column(Float)
+    adjusted_net_income: Optional[float] = Column(Float)
+    owner_earnings: Optional[float] = Column(Float)
+    free_cash_flow: Optional[float] = Column(Float)
+    roe_adjusted: Optional[float] = Column(Float)
+    roa_adjusted: Optional[float] = Column(Float)
+    eps_adjusted: Optional[float] = Column(Float)
+    # CPI-deflated (Fisher) versions, decimal. Added 2026-05-07 (audit
+    # CRITICAL #3): IAS-29 stripping fixes monetary gain/loss but does NOT
+    # convert nominal ROE/ROA to real terms — a Turkish company with 30%
+    # nominal ROE under 50% CPI has roughly -13% real ROE, yet the legacy
+    # roe_adjusted column maxed out the Buffett quality score. Buffett scorer
+    # now prefers roe_real / roa_real when available; falls back to nominal.
+    roe_real: Optional[float] = Column(Float)
+    roa_real: Optional[float] = Column(Float)
+    real_eps_growth_pct: Optional[float] = Column(Float)
+    related_party_revenue_pct: Optional[float] = Column(Float)
+    # Greenwald CapEx decomposition (V2.5 improvement)
+    maintenance_capex: Optional[float] = Column(Float)
+    growth_capex: Optional[float] = Column(Float)
+    # IAS 29 adjustments (V2.5 improvement)
+    deferred_tax_stripped: Optional[float] = Column(Float)
+    excess_depreciation_addback: Optional[float] = Column(Float)
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    company = relationship("Company", back_populates="adjusted_metrics")
+
+
+class CorporateAction(Base):
+    """Corporate actions: splits, bonus shares, rights issues, dividends, mergers."""
+
+    __tablename__ = "corporate_actions"
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    company_id: int = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    action_date: date = Column(Date, nullable=False)
+    action_type: str = Column(String(20), nullable=False)  # SPLIT / BONUS / RIGHTS / DIVIDEND / MERGER
+    adjustment_factor: Optional[float] = Column(Float)
+    details_json: Optional[str] = Column(Text)
+    source: Optional[str] = Column(String(50))
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    company = relationship("Company", back_populates="corporate_actions")
+
+
+class InsiderTransaction(Base):
+    """Insider buying/selling disclosures from KAP."""
+
+    __tablename__ = "insider_transactions"
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    company_id: int = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    disclosure_date: date = Column(Date, nullable=False)
+    person_name: Optional[str] = Column(String(255))
+    person_role: Optional[str] = Column(String(50))  # BOARD / CEO / MAJOR_SHAREHOLDER / RELATED
+    transaction_type: Optional[str] = Column(String(10))  # BUY / SELL
+    shares: Optional[float] = Column(Float)
+    price_per_share: Optional[float] = Column(Float)
+    total_value_try: Optional[float] = Column(Float)
+    source_url: Optional[str] = Column(String(500))
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    company = relationship("Company", back_populates="insider_transactions")
+
+
+class ScoringResult(Base):
+    """Factor scores and composite scores for each company per scoring date."""
+
+    __tablename__ = "scoring_results"
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    company_id: int = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    scoring_date: date = Column(Date, nullable=False)
+    pipeline_version: Optional[str] = Column(String(32), index=True)
+    model_used: Optional[str] = Column(String(20))  # OPERATING / HOLDING / BANKING / IPO
+    buffett_score: Optional[float] = Column(Float)
+    graham_score: Optional[float] = Column(Float)
+    piotroski_fscore: Optional[float] = Column(Float)
+    piotroski_fscore_raw: Optional[int] = Column(Integer)  # Raw 0-9 F-Score (not normalized)
+    magic_formula_rank: Optional[float] = Column(Float)
+    lynch_peg_score: Optional[float] = Column(Float)
+    dcf_margin_of_safety_pct: Optional[float] = Column(Float)
+    # Phase 5: DCF breakdown persisted for UI transparency. Computed by
+    # DCFScorer.score() but previously dropped; now we keep intrinsic value,
+    # growth, discount, and terminal growth so the APK can render the story
+    # ("intrinsic 45 TRY vs price 29 TRY, 8% growth, 42% discount, 10% terminal").
+    dcf_intrinsic_value: Optional[float] = Column(Float)
+    dcf_growth_rate_pct: Optional[float] = Column(Float)
+    dcf_discount_rate_pct: Optional[float] = Column(Float)
+    dcf_terminal_growth_pct: Optional[float] = Column(Float)
+    momentum_score: Optional[float] = Column(Float)
+    insider_score: Optional[float] = Column(Float)
+    technical_score: Optional[float] = Column(Float)
+    # Raw signal: True when latest close > 200-day SMA. Persisted alongside
+    # the normalized technical_score so the selector can apply an absolute
+    # falling-knife filter (sector-relative percentile alone misses absolute
+    # downtrends — see stock_picking_audit.md MEDIUM #11).
+    above_200ma: Optional[bool] = Column(Boolean)
+    dividend_score: Optional[float] = Column(Float)  # Dividend yield + consistency (0-100)
+    # Sector-specific model composites (pre-weighted by BankingScorer/HoldingScorer/ReitScorer)
+    banking_composite: Optional[float] = Column(Float)
+    holding_composite: Optional[float] = Column(Float)
+    reit_composite: Optional[float] = Column(Float)
+    composite_alpha: Optional[float] = Column(Float)
+    # BETA/DELTA composites were removed 2026-05-07 — YAML weights never
+    # existed, columns retained for legacy DB compatibility (always NULL).
+    composite_beta: Optional[float] = Column(Float)
+    composite_delta: Optional[float] = Column(Float)
+    alpha_snapshot_streak: int = Column(Integer, default=1)
+    ai_insight: Optional[str] = Column(Text)  # LLM generated reason for score change
+    target_price: Optional[float] = Column(Float)
+    target_source: Optional[str] = Column(String(32))
+    stop_loss_price: Optional[float] = Column(Float)
+    risk_tier: Optional[str] = Column(String(10))  # HIGH / MEDIUM / LOW
+    data_completeness: Optional[float] = Column(Float)
+    quality_flags_json: Optional[str] = Column(Text)
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    company = relationship("Company", back_populates="scoring_results")
+
+
+class PortfolioSelection(Base):
+    """Monthly portfolio picks with entry/exit tracking."""
+
+    __tablename__ = "portfolio_selections"
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    portfolio: str = Column(String(10), nullable=False)  # ALPHA / BETA / DELTA
+    selection_date: date = Column(Date, nullable=False)
+    # Point-in-time contract: selection_date is the effective/trade session,
+    # while signal_date is the last completed market session whose data the
+    # model was allowed to use.  Legacy rows keep NULL and fall back to
+    # selection_date in readers.
+    signal_date: Optional[date] = Column(Date)
+    company_id: int = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    entry_price: Optional[float] = Column(Float)
+    composite_score: Optional[float] = Column(Float)
+    target_price: Optional[float] = Column(Float)
+    target_source: Optional[str] = Column(String(32))
+    stop_loss_price: Optional[float] = Column(Float)
+    exit_date: Optional[date] = Column(Date)
+    exit_price: Optional[float] = Column(Float)
+    exit_reason: Optional[str] = Column(String(20))  # REBALANCE / STOP_LOSS / TARGET / THESIS_BREAK
+    return_pct: Optional[float] = Column(Float)
+    holding_days: Optional[int] = Column(Integer)
+    # Phase 4: portfolio weight for this pick, in [0, 1]. At NORMAL cash state
+    # every pick has weight = 1/target_count; as the cash state tightens we
+    # scale each weight down so (sum of weights) = 1 - cash_pct.
+    weight: Optional[float] = Column(Float)
+    # Snapshot of the cash state at selection time (handy for UI + audit so we
+    # don't have to cross-join cash_allocation_state by date).
+    cash_state: Optional[str] = Column(String(20))
+    cash_pct: Optional[float] = Column(Float)
+    # Phase 5: structured "why selected" payload. JSON list of at most 3
+    # objects: {"factor": "buffett_score", "label": "Buffett Quality",
+    # "value": 72.4}. The APK renders these as chips on the pick detail view.
+    reason_top_factors_json: Optional[str] = Column(Text)
+    # B1 position continuity (2026-07-05): a position kept across rotations
+    # stays in ONE row — entry_price/selection_date keep the ORIGINAL cost
+    # basis. cycle_ref_* record the current rotation's reference price/date
+    # so the UI can show both real P&L (since entry) and period P&L (since
+    # the latest rotation).
+    cycle_ref_date: Optional[date] = Column(Date)
+    cycle_signal_date: Optional[date] = Column(Date)
+    cycle_ref_price: Optional[float] = Column(Float)
+    # Highest close seen since entry — the trailing-stop ratchet anchor,
+    # updated by the daily check-exits pass. Stops only ever move UP.
+    highest_close: Optional[float] = Column(Float)
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    company = relationship("Company", back_populates="portfolio_selections")
+
+
+class PortfolioCycleMark(Base):
+    """Per-rotation reference price for every open position (B1).
+
+    Written once per rotation for each position that is open after the
+    rebalance. Lets the PWA reconstruct completed-period per-stock returns
+    even though held positions no longer produce exit rows every cycle.
+    """
+
+    __tablename__ = "portfolio_cycle_marks"
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio", "cycle_date", "company_id", name="uq_cycle_mark"
+        ),
+    )
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    portfolio: str = Column(String(10), nullable=False)
+    cycle_date: date = Column(Date, nullable=False, index=True)
+    signal_date: Optional[date] = Column(Date)
+    company_id: int = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    ref_price: Optional[float] = Column(Float)
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+
+
+class ModelPerformance(Base):
+    """Historical backtesting performance data points."""
+
+    __tablename__ = "model_performance"
+
+    date: str = Column(String(10), primary_key=True)  # YYYY-MM-DD
+    strategy_return: Optional[float] = Column(Float)
+    benchmark_return: Optional[float] = Column(Float)
+    alpha: Optional[float] = Column(Float)
+
+
+class SectorBenchmark(Base):
+    """Aggregate financial benchmarks per custom sector."""
+
+    __tablename__ = "sector_benchmarks"
+    __table_args__ = (
+        UniqueConstraint("sector", "calculation_date", name="uq_sector_benchmarks_date"),
+    )
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    sector: str = Column(String(100), nullable=False, index=True)
+    calculation_date: date = Column(Date, nullable=False, index=True)
+    
+    # Benchmarks (Medians)
+    roe_median: Optional[float] = Column(Float)
+    roa_median: Optional[float] = Column(Float)
+    net_margin_median: Optional[float] = Column(Float)
+    pe_median: Optional[float] = Column(Float)
+    pb_median: Optional[float] = Column(Float)
+    
+    # Metadata
+    company_count: int = Column(Integer, default=0)
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+
+class MacroRegime(Base):
+    """Macro regime indicators and classification."""
+
+    __tablename__ = "macro_regime"
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    date: date = Column(Date, nullable=False, unique=True)
+    policy_rate_pct: Optional[float] = Column(Float)
+    bond_yield_10y_pct: Optional[float] = Column(Float)
+    cpi_yoy_pct: Optional[float] = Column(Float)
+    usdtry_rate: Optional[float] = Column(Float)
+    turkey_cds_5y: Optional[float] = Column(Float)
+    # Market Participants Survey (TCMB) 24-month-ahead CPI expectation, decimal
+    # (e.g., 0.18 = 18%). Feeds DCF terminal growth: g_terminal = expected + real.
+    inflation_expectation_24m_pct: Optional[float] = Column(Float)
+    # Damodaran Turkey Equity Risk Premium, decimal (e.g. 0.0889 = 8.89%).
+    # Auto-fetched from pages.stern.nyu.edu/~adamodar/.../ctryprem.html — see
+    # data/sources/damodaran.py. Was manual-entry in macro.yaml until 2026-05-07.
+    equity_risk_premium_pct: Optional[float] = Column(Float)
+    erp_source: Optional[str] = Column(String(64))  # "damodaran_html" / "yaml_fallback"
+    regime: Optional[str] = Column(String(20))  # RISK_ON / RISK_OFF / TRANSITION
+    weight_adjustments_json: Optional[str] = Column(Text)
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+
+class CpiHistory(Base):
+    """Monthly CPI index levels from TCMB EVDS series TP.FG.J0 (base 2003=100).
+
+    2026-04-30 audit: previously the only CPI data persisted was a single
+    YoY scalar in `macro_regime.cpi_yoy_pct`. Downstream code in
+    `cleaning.inflation.calculate_real_growth` expects index levels (it
+    computes `cpi_current / cpi_previous - 1` to get period-over-period
+    inflation), so feeding it YoY rates produced garbage `real_eps_growth_pct`
+    values. This table stores the actual monthly index series so the math
+    works.
+
+    Populated by `data.fetcher.fetch_macro` on every pipeline run; rows are
+    upserted by date.
+    """
+
+    __tablename__ = "cpi_history"
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    date: date = Column(Date, nullable=False, unique=True, index=True)
+    cpi_index: float = Column(Float, nullable=False)
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+
+class CompanyActivePeriod(Base):
+    """Time-versioned listing membership — the real fix for survivorship bias.
+
+    Backtests must use the universe AS IT WAS on each historical date, not
+    today's ``Company.is_active`` flag (or a delisting-date/last-price
+    heuristic). Each row is an interval ``[active_from, active_to]`` during
+    which the company was listed; ``active_to IS NULL`` means still listed.
+    ``source``/``confidence`` record how the interval was derived so a manual
+    correction can outrank an auto-seeded guess.
+
+    Additive: when this table is empty the as-of universe helpers fall back to
+    the legacy heuristic, so behavior is unchanged until it is seeded
+    (``bist seed-active-periods``) and A/B-validated. Replaces the
+    ``inactive_but_listed_ids`` proxy documented as a placeholder for exactly
+    this table (2026-04-30 audit CRITICAL #4).
+    """
+
+    __tablename__ = "company_active_periods"
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    company_id: int = Column(
+        Integer, ForeignKey("companies.id"), nullable=False, index=True
+    )
+    active_from: date = Column(Date, nullable=False)
+    active_to: Optional[date] = Column(Date, nullable=True)  # None = still listed
+    source: str = Column(String(40), nullable=False)
+    confidence: Optional[float] = Column(Float)
+    notes: Optional[str] = Column(Text)
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+
+class CashAllocationState(Base):
+    """Phase 4: daily persisted state of the portfolio cash-out signal.
+
+    One row per business day. The state machine reads prior rows to evaluate
+    hysteresis (up/down confirmation windows) and the minimum holding period
+    before deciding whether the current day permits a transition.
+    """
+
+    __tablename__ = "cash_allocation_state"
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    date: date = Column(Date, nullable=False, unique=True, index=True)
+
+    # Inputs at the time of evaluation -- persisted for auditability and so
+    # tests / back-diagnosis don't need to re-run the classifiers.
+    market_regime: Optional[str] = Column(String(20))   # BULL_LOW_VOL / BULL_HIGH_VOL / BEAR
+    macro_regime: Optional[str] = Column(String(20))    # RISK_ON / NEUTRAL / RISK_OFF
+    raw_signal: int = Column(Integer, nullable=False)   # 0..4 combined stress score
+
+    # The state the raw_signal ALONE would pick -- useful to show the user
+    # "pending" transitions that are blocked by cooldown / confirmation.
+    target_state: str = Column(String(20), nullable=False)
+
+    # The state actually applied after hysteresis + cooldown + step-limit.
+    state: str = Column(String(20), nullable=False)     # NORMAL / CAUTION / DEFENSIVE / RISK_OFF
+    cash_pct: float = Column(Float, nullable=False)
+
+    # Ancillary metadata for the UI and issue-notification layer.
+    days_in_state: int = Column(Integer, nullable=False, default=1)
+    last_transition_date: Optional[date] = Column(Date)
+    transitioned_today: bool = Column(Boolean, nullable=False, default=False)
+    notes: Optional[str] = Column(Text)   # e.g. "held by cooldown", "kill-switch disabled"
+
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+
+# ── Enhanced Pipeline Tables (V2.5) ──────────────────────────────────────────
+
+
+class KapEvent(Base):
+    """LLM-extracted event data from KAP disclosures."""
+
+    __tablename__ = "kap_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "raw_text_hash",
+            name="uq_kap_events_company_hash",
+        ),
+    )
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    company_id: int = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    disclosure_date: date = Column(Date, nullable=False, index=True)
+    event_type: Optional[str] = Column(String(30))  # NEW_CONTRACT / DIVIDEND / SHARE_BUYBACK / etc.
+    sentiment_score: Optional[float] = Column(Float)  # -1.0 to 1.0
+    monetary_value: Optional[float] = Column(Float)  # Contract/deal size
+    currency: Optional[str] = Column(String(5))  # TRY / USD / EUR
+    counterparty: Optional[str] = Column(String(255))
+    duration_months: Optional[int] = Column(Integer)
+    confidence: Optional[float] = Column(Float)  # LLM confidence 0.0-1.0
+    raw_text_hash: str = Column(String(64), nullable=False)  # SHA-256 of disclosure text
+    raw_text_preview: Optional[str] = Column(Text)  # First 500 chars for debugging
+    llm_response_json: Optional[str] = Column(Text)  # Full LLM JSON response
+    llm_model: Optional[str] = Column(String(50))  # e.g. gemini-2.5-flash
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    company = relationship("Company")
+
+
+class MacroNowcast(Base):
+    """Macro nowcasting data: BONC, credit card spending, LLM macro signals."""
+
+    __tablename__ = "macro_nowcast"
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    date: date = Column(Date, nullable=False, unique=True, index=True)
+    # BONC (Composite Leading Indicators)
+    bonc_index: Optional[float] = Column(Float)
+    bonc_change_mom: Optional[float] = Column(Float)  # Month-over-month change
+    bonc_trend: Optional[str] = Column(String(10))  # RISING / FALLING / FLAT
+    # Credit card sectoral spending
+    credit_card_spending_json: Optional[str] = Column(Text)  # JSON: {sector: amount}
+    credit_card_total_change_pct: Optional[float] = Column(Float)  # Total spending MoM %
+    # LLM macro headline analysis
+    llm_macro_sentiment: Optional[str] = Column(String(20))  # BULLISH / CAUTIOUS / BEARISH
+    sector_impacts_json: Optional[str] = Column(Text)  # JSON: {sector: impact_score}
+    headline_count: Optional[int] = Column(Integer)
+    llm_confidence: Optional[float] = Column(Float)
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+
+class EnhancedSignal(Base):
+    """Per-company enhanced signal scores combining all forward-looking factors."""
+
+    __tablename__ = "enhanced_signals"
+    __table_args__ = (
+        UniqueConstraint(
+            "company_id", "scoring_date",
+            name="uq_enhanced_signals_company_date",
+        ),
+    )
+
+    id: int = Column(Integer, primary_key=True, autoincrement=True)
+    company_id: int = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
+    scoring_date: date = Column(Date, nullable=False, index=True)
+    # Individual enhanced factor scores (0-100 scale)
+    event_score: Optional[float] = Column(Float)  # KAP event impact
+    insider_cluster_score: Optional[float] = Column(Float)  # Insider cluster + drawdown
+    macro_nowcast_score: Optional[float] = Column(Float)  # BONC + credit card
+    analyst_tone_score: Optional[float] = Column(Float)  # LLM analyst tone
+    # Composites
+    enhanced_composite: Optional[float] = Column(Float)  # Weighted combo of above
+    classic_composite_alpha: Optional[float] = Column(Float)  # Copied from ScoringResult
+    blended_alpha: Optional[float] = Column(Float)  # Classic + Enhanced blend
+    created_at: datetime = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at: datetime = Column(DateTime, default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    company = relationship("Company")
+
+
+# Register the updated_at auto-setter for all models
+for model_class in [
+    Company, DailyPrice, FinancialStatement, AdjustedMetric,
+    CorporateAction, InsiderTransaction, ScoringResult,
+    PortfolioSelection, MacroRegime,
+    SectorBenchmark,
+    KapEvent, MacroNowcast, EnhancedSignal,
+]:
+    event.listen(model_class, "before_update", _set_updated_at)

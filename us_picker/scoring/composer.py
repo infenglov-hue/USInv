@@ -1,0 +1,791 @@
+"""Score composition module for the BIST Stock Picker.
+
+Combines individual normalized factor scores (0-100 each) into a single
+weighted composite score (0-100). Only the ALPHA portfolio is alive;
+``composite_beta`` and ``composite_delta`` columns are kept on
+``ScoringResult`` for legacy DB compatibility but are always written as
+``None`` (their YAML weight blocks were removed in 2026-05-07 audit fix).
+
+Weight schemes are loaded from config/scoring_weights.yaml. Weights must sum
+to 1.0 per section — this is validated on load and will raise on failure.
+
+Missing factors (None) have their weight redistributed proportionally among
+the factors that do have a score, so the composite always reflects whatever
+data is available rather than silently defaulting to zero.
+
+Model-type routing:
+  OPERATING  -> alpha weights
+  BANK       -> banking weights
+  HOLDING    -> holding weights
+  IPO        -> ipo weights
+"""
+
+import copy
+import logging
+import math
+from datetime import date
+from pathlib import Path
+from typing import Optional
+
+import yaml
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from sqlalchemy import desc
+from sqlalchemy.orm import Session
+
+from us_picker.db.schema import Company, ScoringResult, SectorBenchmark
+from us_picker.scoring.normalizer import ScoreNormalizer
+
+logger = logging.getLogger(__name__)
+
+# Default path to the weights config (relative to this file's package root).
+_DEFAULT_WEIGHTS_PATH = Path(__file__).resolve().parent.parent / "config" / "scoring_weights.yaml"
+
+# Portfolios that use model-type-specific weight sections regardless of
+# which portfolio the company is being scored for.
+# REIT → uses reit weights
+# INSURANCE → uses insurance weights
+_MODEL_OVERRIDES = {
+    "BANK": "banking",
+    "INSURANCE": "insurance",
+    "HOLDING": "holding",
+    "IPO": "ipo",
+    "REIT": "reit",
+    "FINANCIAL": "banking",  # leasing, factoring, brokerage → banking model
+}
+
+# How ScoringResult DB columns map to the weight key names used in the YAML.
+# Composite weight keys (growth, value_graham_dcf) are derived by averaging
+# the listed column names. When a column is None it is simply excluded from
+# the average, which may cascade to the factor being None if all sub-columns
+# are None (triggering weight redistribution in compose()).
+_DB_COL_TO_FACTOR: dict[str, list[str]] = {
+    # Single-column mappings
+    "quality_buffett": ["buffett_score"],
+    "piotroski": ["piotroski_fscore"],
+    "momentum": ["momentum_score"],
+    "technical": ["technical_score"],
+    # Composite mappings (averaged from multiple columns)
+    "growth": ["magic_formula_rank", "lynch_peg_score"],
+    "value_graham_dcf": ["graham_score", "dcf_margin_of_safety_pct"],
+    # Banking model — individual sub-factors are NOT stored as separate
+    # ScoringResult columns. Instead, BankingScorer pre-computes a single
+    # banking_composite score, which the composer uses directly (see
+    # compose_all lines 388-421). Empty lists here are intentional.
+    "pb_vs_sector": [],
+    "nim": [],
+    "npl_ratio": [],
+    "car": [],
+    "cost_income": [],
+    "loan_growth": [],
+    "roe": [],
+    # Holding model
+    "nav_discount": [],
+    "portfolio_quality": [],
+    "dividend_yield": ["dividend_score"],
+    "governance": [],
+    # IPO model
+    "revenue_growth": [],
+    "gross_margin_vs_sector": [],
+    "ps_ratio_vs_sector": [],
+    "insider_retention": [],
+    "liquidity": [],
+}
+
+
+class ScoreComposer:
+    """Composes weighted composite scores from individual normalized factor scores.
+
+    Usage::
+
+        composer = ScoreComposer()
+        score = composer.compose(
+            company_id=1,
+            factor_scores={"quality_buffett": 75.0, "momentum": 60.0, ...},
+            portfolio="alpha",
+            model_type="OPERATING",
+        )
+    """
+
+    def __init__(self, weights_path: Optional[Path] = None) -> None:
+        """Load and validate scoring weights from YAML.
+
+        Args:
+            weights_path: Path to scoring_weights.yaml. Defaults to
+                us_picker/config/scoring_weights.yaml.
+
+        Raises:
+            FileNotFoundError: If the weights file cannot be found.
+            ValueError: If any weight section does not sum to 1.0.
+        """
+        path = weights_path or _DEFAULT_WEIGHTS_PATH
+        self.weights = self._load_weights(path)
+        self._validate_weights(self.weights)
+        logger.debug("ScoreComposer loaded weights from %s", path)
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _load_weights(self, path: Path) -> dict:
+        """Load scoring_weights.yaml and return the parsed dict.
+
+        Args:
+            path: Absolute path to the YAML file.
+
+        Returns:
+            Parsed YAML as a nested dict.
+
+        Raises:
+            FileNotFoundError: If the file does not exist.
+        """
+        if not path.exists():
+            raise FileNotFoundError(f"scoring_weights.yaml not found at {path}")
+        with path.open("r", encoding="utf-8") as fh:
+            return yaml.safe_load(fh)
+
+    def _validate_weights(self, weights: dict) -> None:
+        """Assert every portfolio section sums to 1.0 (+/- 1e-6 tolerance).
+
+        Skips non-portfolio sections like buffett_subfactors (they are
+        sub-weightings used internally by buffett.py, not by the composer).
+
+        Args:
+            weights: Parsed YAML dict.
+
+        Raises:
+            ValueError: If any section's weights do not sum to 1.0.
+        """
+        # Sections that must sum to 1.0. BETA/DELTA were removed
+        # 2026-05-07; only ALPHA is alive on the OPERATING side.
+        required_sections = {"alpha", "banking", "holding", "ipo", "reit", "insurance"}
+        for section in required_sections:
+            if section not in weights:
+                logger.warning("scoring_weights.yaml missing section '%s'", section)
+                continue
+            total = sum(weights[section].values())
+            if abs(total - 1.0) > 1e-6:
+                raise ValueError(
+                    f"scoring_weights.yaml: section '{section}' weights sum to "
+                    f"{total:.6f}, expected 1.0"
+                )
+        
+        # Validate regime weights if present
+        if "regime_weights" in weights:
+            for regime, r_weights in weights["regime_weights"].items():
+                total = sum(r_weights.values())
+                if abs(total - 1.0) > 1e-6:
+                    raise ValueError(
+                        f"scoring_weights.yaml: regime_weights '{regime}' sum to "
+                        f"{total:.6f}, expected 1.0"
+                    )
+
+        # Validate the real-rate conditional block if present
+        rr_block = (weights.get("real_rate_regime") or {}).get("weights")
+        if rr_block:
+            total = sum(rr_block.values())
+            if abs(total - 1.0) > 1e-6:
+                raise ValueError(
+                    f"scoring_weights.yaml: real_rate_regime weights sum to "
+                    f"{total:.6f}, expected 1.0"
+                )
+
+    # Valid model types: overrides + types that use portfolio-based weights.
+    _VALID_MODEL_TYPES = frozenset(_MODEL_OVERRIDES) | {"OPERATING", "SPORT"}
+
+    def _get_weight_section(self, portfolio: str, model_type: str) -> str:
+        """Return the YAML section name for the given portfolio/model combination.
+
+        Args:
+            portfolio: 'alpha' (BETA/DELTA were removed 2026-05-07).
+            model_type: 'OPERATING', 'BANK', 'FINANCIAL', 'INSURANCE',
+                        'HOLDING', 'REIT', 'IPO', or 'SPORT'.
+
+        Returns:
+            YAML section name string.
+
+        Raises:
+            ValueError: If model_type is not a recognised company type.
+        """
+        if model_type in _MODEL_OVERRIDES:
+            return _MODEL_OVERRIDES[model_type]
+        if model_type not in ("OPERATING", "SPORT"):
+            raise ValueError(
+                f"Unknown model_type {model_type!r}. Must be one of: "
+                f"{sorted(self._VALID_MODEL_TYPES)}"
+            )
+        return portfolio.lower()
+
+    def _extract_factor_scores(
+        self,
+        row: ScoringResult,
+        factor_overrides: Optional[dict[str, Optional[float]]] = None,
+    ) -> dict[str, Optional[float]]:
+        """Build a factor_scores dict from a ScoringResult ORM row.
+
+        Composite factors (growth, value_graham_dcf) are computed by averaging
+        whatever sub-columns have non-None values. If all sub-columns are None
+        the composite is also None, which triggers weight redistribution in
+        compose().
+
+        Args:
+            row: ScoringResult ORM object.
+
+        Returns:
+            Dict mapping weight-key names to float scores (or None).
+        """
+        # Map column name -> current value from the ORM row.
+        col_values: dict[str, Optional[float]] = {
+            "buffett_score": row.buffett_score,
+            "graham_score": row.graham_score,
+            "piotroski_fscore": row.piotroski_fscore,
+            "magic_formula_rank": row.magic_formula_rank,
+            "lynch_peg_score": row.lynch_peg_score,
+            "dcf_margin_of_safety_pct": row.dcf_margin_of_safety_pct,
+            "momentum_score": row.momentum_score,
+            "technical_score": row.technical_score,
+            "dividend_score": row.dividend_score,
+        }
+        if factor_overrides:
+            col_values.update(factor_overrides)
+
+        factor_scores: dict[str, Optional[float]] = {}
+        for factor_key, db_cols in _DB_COL_TO_FACTOR.items():
+            if not db_cols:
+                # Not yet implemented — leave as None.
+                factor_scores[factor_key] = None
+                continue
+            parts = [col_values[c] for c in db_cols if col_values.get(c) is not None]
+            factor_scores[factor_key] = sum(parts) / len(parts) if parts else None
+
+        return factor_scores
+
+    def _build_dcf_factor_overrides(
+        self,
+        session: Session,
+        rows: list[ScoringResult],
+    ) -> dict[int, dict[str, Optional[float]]]:
+        """Normalize raw DCF margins by sector without overwriting the raw DB values."""
+        import pandas as pd
+
+        dcf_rows = [row for row in rows if row.dcf_margin_of_safety_pct is not None]
+        if not dcf_rows:
+            return {}
+
+        company_ids = {row.company_id for row in dcf_rows}
+        sector_rows = (
+            session.query(Company.id, Company.sector_custom, Company.sector_bist)
+            .filter(Company.id.in_(company_ids))
+            .all()
+        )
+        sector_lookup = {
+            cid: (sector_custom or sector_bist or "UNKNOWN")
+            for cid, sector_custom, sector_bist in sector_rows
+        }
+
+        df = pd.DataFrame(
+            [
+                {
+                    "id": row.id,
+                    "sector": sector_lookup.get(row.company_id, "UNKNOWN"),
+                    "dcf_margin_of_safety_pct": row.dcf_margin_of_safety_pct,
+                }
+                for row in dcf_rows
+            ]
+        ).set_index("id")
+
+        normalizer = ScoreNormalizer()
+        normalized = normalizer.normalize_factor(df, "dcf_margin_of_safety_pct", "sector")
+
+        overrides: dict[int, dict[str, Optional[float]]] = {}
+        for row_id, value in normalized.items():
+            overrides[int(row_id)] = {
+                "dcf_margin_of_safety_pct": None if pd.isna(value) else float(value)
+            }
+        return overrides
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def compose(
+        self,
+        company_id: int,
+        factor_scores: dict,
+        portfolio: str,
+        model_type: str,
+    ) -> Optional[float]:
+        """Compute a weighted composite score (0-100) for one company.
+
+        None factors have their weight redistributed proportionally among the
+        remaining factors that do have a score. If all factors are None,
+        returns None.
+
+        Args:
+            company_id: Database ID of the company (used for log messages).
+            factor_scores: Dict mapping weight-key names to normalized scores
+                (0-100 each) or None. Keys must match those in scoring_weights.yaml
+                for the resolved section (portfolio + model_type).
+            portfolio: 'alpha' (BETA/DELTA were removed 2026-05-07).
+            model_type: 'OPERATING', 'BANK', 'HOLDING', or 'IPO'.
+
+        Returns:
+            Weighted composite score in [0, 100], or None if all factors are
+            missing.
+        """
+        section = self._get_weight_section(portfolio, model_type)
+        section_weights = self.weights.get(section)
+        if section_weights is None:
+            logger.warning(
+                "company_id=%d: no weight section '%s' in scoring_weights.yaml",
+                company_id,
+                section,
+            )
+            return None
+
+        # Separate available (non-None) from missing factors.
+        available: dict[str, tuple[float, float]] = {}  # factor -> (score, weight)
+        for factor, weight in section_weights.items():
+            score = factor_scores.get(factor)
+            if score is not None and not (isinstance(score, float) and math.isnan(score)):
+                available[factor] = (float(score), float(weight))
+
+        if not available:
+            logger.debug(
+                "company_id=%d portfolio=%s model=%s: all factors None",
+                company_id, portfolio, model_type,
+            )
+            return None
+
+        # Redistribute weights proportionally among available factors.
+        total_avail_weight = sum(w for _, w in available.values())
+        if total_avail_weight <= 0:
+            return None
+            
+        composite = sum(
+            score * (weight / total_avail_weight)
+            for score, weight in available.values()
+        )
+
+        # Data-coverage penalty: softened to allow high-signal stocks with partial data.
+        # Full data -> no penalty (x1.0), 50% data -> x0.95, 20% data -> x0.92
+        total_possible_weight = sum(w for w in section_weights.values() if w > 0)
+        coverage_ratio = total_avail_weight / total_possible_weight if total_possible_weight > 0 else 0.0
+        data_penalty = 0.90 + 0.10 * coverage_ratio
+        composite = composite * data_penalty
+
+        logger.debug(
+            "company_id=%d portfolio=%s model=%s: "
+            "%d/%d factors available, coverage=%.0f%%, composite=%.2f",
+            company_id, portfolio, model_type,
+            len(available), len(section_weights),
+            coverage_ratio * 100, composite,
+        )
+        return composite
+
+    def _harmonize_composites(self, rows: list[ScoringResult], session: Optional[Session] = None) -> None:
+        """Re-rank all composite scores across the full universe.
+
+        Includes Phase A: Sectoral Benchmarking (Relative Strength). The
+        final rank is a 50/50 blend of the global percentile and the
+        within-custom-sector percentile (was 70/30 until 6dee9ff).
+        """
+        import pandas as pd
+
+        # Count peer group sizes by model type
+        model_counts: dict[str, int] = {}
+        for row in rows:
+            mt = row.model_used or "OPERATING"
+            model_counts[mt] = model_counts.get(mt, 0) + 1
+
+        # Load sector mapping if session provided (Phase A)
+        sector_lookup = {}
+        if session:
+            company_ids = {row.company_id for row in rows}
+            sector_rows = session.query(Company.id, Company.sector_custom).filter(Company.id.in_(company_ids)).all()
+            sector_lookup = {r.id: r.sector_custom for r in sector_rows}
+
+        for attr in ("composite_alpha",):
+            # 1. Global Scores Series
+            global_values = pd.Series(
+                {i: getattr(rows[i], attr) for i in range(len(rows))},
+                dtype=float,
+            )
+
+            # 2. Peer group calibration (Banking/Holding haircuts)
+            for i, row in enumerate(rows):
+                if pd.isna(global_values.iloc[i]):
+                    continue
+                mt = row.model_used or "OPERATING"
+                if mt not in ("OPERATING", "SPORT"):
+                    n_peers = model_counts.get(mt, 1)
+                    peer_factor = 0.95 + 0.05 * min(1.0, n_peers / 10.0)
+                    global_values.iloc[i] = global_values.iloc[i] * peer_factor
+
+            if global_values.dropna().empty:
+                continue
+
+            # 3. Global Percentiles (50% weight)
+            n_global = int(global_values.notna().sum())
+            if n_global <= 1:
+                continue
+
+            global_ranks = global_values.rank(method="average", na_option="keep")
+            global_pcts = (global_ranks - 1) / (n_global - 1) * 100.0
+
+            # 4. Sectoral Percentiles (50% weight) - Phase A
+            sector_pcts = pd.Series(index=global_values.index, data=float("nan"), dtype=float)
+            if sector_lookup:
+                df = pd.DataFrame({
+                    "score": global_values,
+                    "sector": [sector_lookup.get(rows[i].company_id, "other") for i in range(len(rows))]
+                })
+                for sector, group in df.groupby("sector"):
+                    if len(group) > 1:
+                        r = group["score"].rank(method="average")
+                        n = len(group)
+                        sector_pcts.loc[group.index] = (r - 1) / (n - 1) * 100.0
+                    else:
+                        sector_pcts.loc[group.index] = 50.0 # Neutral if alone
+
+            # 5. Blend: 50% Global + 50% Sectoral
+            for i in range(len(rows)):
+                g_pct = global_pcts.iloc[i]
+                s_pct = sector_pcts.iloc[i]
+                
+                if pd.isna(g_pct):
+                    setattr(rows[i], attr, None)
+                    continue
+                
+                # If sector data missing, fallback to global
+                final_pct = (g_pct * 0.50 + s_pct * 0.50) if not pd.isna(s_pct) else g_pct
+                setattr(rows[i], attr, round(float(final_pct), 2))
+
+        logger.info(
+            "Harmonized composite scores with Sectoral Benchmarking (50/50 blend). "
+            "Peer counts: %s",
+            {k: v for k, v in sorted(model_counts.items())},
+        )
+
+    def _get_latest_price(self, session: Session, company_id: int, target_date: date) -> Optional[float]:
+        from us_picker.db.schema import DailyPrice
+        row = (
+            session.query(DailyPrice.adjusted_close)
+            .filter(DailyPrice.company_id == company_id, DailyPrice.date <= target_date)
+            .order_by(desc(DailyPrice.date))
+            .first()
+        )
+        return row[0] if row else None
+
+    def _real_rate_alpha_override(
+        self, session: Session, scoring_date: date
+    ) -> Optional[dict]:
+        """Alpha block override when the real policy rate is restrictive.
+
+        Theory + evidence (2026-07-09 walk-forward A/B on the clean-PIT
+        archive, 432 dates 2018-2026): BIST deep value derates when the real
+        policy rate (policy_rate_pct − cpi_yoy_pct) is positive — a high
+        nominal risk-free crushes long-duration/illiquid small-cap value.
+        Switching the alpha block toward quality/cashflow on those dates
+        improved every sub-window (TRAIN +260pp vs +181pp alpha, TEST
+        2024-26 +87pp vs +5pp) and won 8/9 calendar years; robust to
+        threshold +2pp, a milder block, and a 35-day macro-publication lag.
+
+        Config-gated via ``scoring_weights.yaml real_rate_regime`` —
+        ``enabled: false`` (the default) returns None and composition is
+        byte-identical to the pre-2026-07-09 behavior. PIT-safe: only macro
+        rows dated on/before ``scoring_date`` are consulted.
+
+        Returns the override weight dict, or None to keep the base alpha.
+        """
+        cfg = self.weights.get("real_rate_regime") or {}
+        if not cfg.get("enabled"):
+            return None
+        block = cfg.get("weights") or {}
+        if not block:
+            return None
+        try:
+            threshold = float(cfg.get("threshold", 0.0))
+        except (TypeError, ValueError):
+            threshold = 0.0
+
+        from us_picker.db.schema import MacroRegime
+
+        row = (
+            session.query(MacroRegime.policy_rate_pct, MacroRegime.cpi_yoy_pct)
+            .filter(
+                MacroRegime.date <= scoring_date,
+                MacroRegime.policy_rate_pct.isnot(None),
+                MacroRegime.cpi_yoy_pct.isnot(None),
+            )
+            .order_by(desc(MacroRegime.date))
+            .first()
+        )
+        if row is None:
+            return None
+        real_rate = float(row[0]) - float(row[1])
+        if real_rate > threshold:
+            logger.info(
+                "Real-rate regime: real policy rate %+.3f > %.3f — using "
+                "defensive alpha block",
+                real_rate,
+                threshold,
+            )
+            print(
+                    f"[REGIME] Real rate {real_rate:+.3f} > {threshold:.3f} -> "
+                "defensive alpha block"
+            )
+            return dict(block)
+        return None
+
+    def compose_all(self, session: Session, scoring_date: Optional[date] = None, use_regime: bool = False) -> None:
+        """Compute and persist composite scores for all companies in scoring_results.
+
+        For each ScoringResult row that belongs to the given scoring_date
+        (defaults to today), this method:
+          1. Extracts factor scores from the ORM columns.
+          2. Derives composite_alpha (BETA/DELTA removed 2026-05-07).
+          3. Updates data_completeness (fraction of operating factors available).
+          4. Commits the updated rows.
+
+        Args:
+            session: SQLAlchemy session bound to the us_picker.db database.
+            scoring_date: The scoring date to process. Defaults to today.
+            use_regime: If True, uses MarketRegimeClassifier to pick weights
+                dynamically from regime_weights section.
+        """
+        if scoring_date is None:
+            scoring_date = date.today()
+
+        rows = (
+            session.query(ScoringResult)
+            .filter(ScoringResult.scoring_date == scoring_date)
+            .all()
+        )
+
+        if not rows:
+            logger.warning("compose_all: no scoring_results for %s", scoring_date)
+            return
+
+        dcf_overrides = self._build_dcf_factor_overrides(session, rows)
+
+        # Operating model factors used for data_completeness calculation.
+        operating_factors = [
+            f for f, w in self.weights.get("alpha", {}).items() if w > 0
+        ]
+
+        from us_picker.portfolio.macro_overlay import MacroRegimeClassifier as LegacyMacroClassifier
+        from us_picker.portfolio.regime_classifier import MarketRegimeClassifier
+        from us_picker.scoring.factors.technical import TechnicalScorer
+
+        tech_scorer = TechnicalScorer()
+
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+        ) as progress:
+            working_weights = copy.deepcopy(self.weights)
+
+            if use_regime:
+                classifier = MarketRegimeClassifier(session)
+                regime = classifier.classify(scoring_date)
+                logger.info(f"Market Regime Detection (Dynamic): {regime}")
+                print(f"\n[REGIME] Market Regime Detection (Dynamic): {regime}")
+                
+                regime_weights = self.weights.get("regime_weights", {}).get(regime)
+                if regime_weights:
+                    logger.info(f"Using weights for regime {regime}")
+                    print(f"[REGIME] Using weights for regime {regime}")
+                    # Apply to ALPHA (BETA/DELTA removed 2026-05-07).
+                    working_weights["alpha"] = regime_weights
+                else:
+                    logger.warning(f"No weights defined for regime {regime}, falling back to defaults.")
+                    print(f"[REGIME] No weights defined for regime {regime}, falling back to defaults.")
+            else:
+                # Real-rate conditional alpha override (2026-07-09).
+                # Config-gated via scoring_weights.yaml real_rate_regime
+                # (enabled: false default = byte-identical weights). Applied
+                # BEFORE the legacy overlay so the multipliers scale the
+                # swapped block — exactly the composition the walk-forward
+                # A/B measured.
+                rr_alpha = self._real_rate_alpha_override(session, scoring_date)
+                if rr_alpha is not None:
+                    working_weights["alpha"] = rr_alpha
+
+                # Legacy Macro Overlay logic
+                legacy_classifier = LegacyMacroClassifier(session)
+                regime = legacy_classifier.classify(scoring_date)
+                multipliers = legacy_classifier.get_weight_multipliers(regime)
+
+                if multipliers:
+                    logger.info(f"Macro Regime (Legacy): {regime}. Adjusting weights...")
+                    print(f"\n[REGIME] Macro Regime (Legacy): {regime}. Adjusting weights...")
+                    for section, weights in working_weights.items():
+                        # regime_weights and real_rate_regime are CONFIG
+                        # blocks (nested dicts / non-numeric values), not
+                        # factor-weight sections — multiplying them crashes
+                        # with dict*float.
+                        if not isinstance(weights, dict) or section in (
+                            "regime_weights",
+                            "real_rate_regime",
+                        ):
+                            continue
+                        
+                        new_weights = {}
+                        total_new_weight = 0.0
+                        for factor, weight in weights.items():
+                            mult = multipliers.get(factor, 1.0)
+                            w = weight * mult
+                            new_weights[factor] = w
+                            total_new_weight += w
+                        
+                        if total_new_weight > 0:
+                            working_weights[section] = {
+                                k: v / total_new_weight for k, v in new_weights.items()
+                            }
+                else:
+                    logger.info(f"Macro Regime (Legacy): {regime}. No weight adjustments.")
+
+            # Use the working copy for all scoring
+            original_weights = self.weights
+            self.weights = working_weights
+
+            task = progress.add_task(
+                f"Composing scores for {scoring_date}...", total=len(rows)
+            )
+
+            updated = 0
+            for row in rows:
+                model_type = row.model_used or "OPERATING"
+
+                # ── BANK / FINANCIAL / HOLDING / REIT: hybrid specialized scoring ──
+                if model_type in ("BANK", "FINANCIAL", "INSURANCE", "HOLDING", "REIT"):
+                    col = "banking_composite" if model_type in ("BANK", "FINANCIAL", "INSURANCE") \
+                          else "holding_composite" if model_type == "HOLDING" \
+                          else "reit_composite"
+                    
+                    model_score = getattr(row, col, None)
+                    if model_score is not None:
+                        # Hybrid Bridge (as discussed): 
+                        # 70% Specialized Model Score + 30% Universal Factors (Momentum, Technical)
+                        # This brings "Equivalent Purchasing Power" to different sectors.
+                        
+                        universal_weights = {"momentum_score": 0.50, "technical_score": 0.50}
+                        universal_total = 0.0
+                        universal_avail_w = 0.0
+                        for f, w in universal_weights.items():
+                            val = getattr(row, f, None)
+                            if val is not None:
+                                universal_total += val * w
+                                universal_avail_w += w
+                        
+                        universal_score = (universal_total / universal_avail_w) if universal_avail_w > 0 else model_score
+                        
+                        # Blend: 70% model, 30% universal
+                        blended = (model_score * 0.70) + (universal_score * 0.30)
+                        
+                        if row.data_completeness is None or row.data_completeness < 10.0:
+                            row.data_completeness = 100.0
+
+                        # Apply data_penalty
+                        coverage_ratio = (row.data_completeness or 0.0) / 100.0
+                        data_penalty = 0.90 + 0.10 * coverage_ratio
+                        penalized = round(blended * data_penalty, 2)
+
+                        row.composite_alpha = penalized
+                        row.composite_beta = None
+                        row.composite_delta = None
+                    else:
+                        # Fallback: score with operating factors if model scorer didn't run
+                        factor_scores = self._extract_factor_scores(
+                            row,
+                            factor_overrides=dcf_overrides.get(row.id),
+                        )
+                        row.composite_alpha = self.compose(
+                            row.company_id, factor_scores, "alpha", "OPERATING"
+                        )
+                        row.composite_beta = None
+                        row.composite_delta = None
+                        operating_factors_local = [
+                            f for f, w in self.weights.get("alpha", {}).items() if w > 0
+                        ]
+                        n_avail = sum(
+                            1 for f in operating_factors_local if factor_scores.get(f) is not None
+                        )
+                        row.data_completeness = (
+                            (n_avail / len(operating_factors_local)) * 100.0
+                            if operating_factors_local else None
+                        )
+                    updated += 1
+                    progress.advance(task)
+                    continue
+
+                # SPORTS clubs are tracked in the DB but are not investable
+                if model_type == "SPORT":
+                    row.composite_alpha = None
+                    row.composite_beta = None
+                    row.composite_delta = None
+                    row.data_completeness = None
+                    updated += 1
+                    progress.advance(task)
+                    continue
+
+                # ── OPERATING / INSURANCE: standard factor pipeline ──
+                factor_scores = self._extract_factor_scores(
+                    row,
+                    factor_overrides=dcf_overrides.get(row.id),
+                )
+
+                row.composite_alpha = self.compose(
+                    row.company_id, factor_scores, "alpha", model_type
+                )
+                # BETA/DELTA removed 2026-05-07; columns retained as None
+                # for legacy DB compatibility.
+                row.composite_beta = None
+                row.composite_delta = None
+
+                # Data completeness: percentage (0-100) of operating factors with a value.
+                n_available = sum(
+                    1 for f in operating_factors if factor_scores.get(f) is not None
+                )
+                row.data_completeness = (
+                    (n_available / len(operating_factors)) * 100.0 if operating_factors else None
+                )
+
+                # --- Phase E: Dynamic Exits (Stop Loss / Take Profit) ---
+                curr_price = self._get_latest_price(session, row.company_id, scoring_date)
+                if curr_price:
+                    # 1. Stop Loss: ATR-based (Volatility adjusted)
+                    atr = tech_scorer.calculate_atr(row.company_id, session, scoring_date=scoring_date)
+                    if atr:
+                        row.stop_loss_price = round(curr_price - (2.0 * atr), 2)
+                    else:
+                        row.stop_loss_price = round(curr_price * 0.90, 2) # Fallback 10%
+                    
+                    # 2. Take Profit: Graham Fair Value based
+                    # If we have a DCF or Graham value, use it as a target
+                    if row.graham_score and row.graham_score > 0:
+                        # Graham score is normalized, we need the raw fair value if available.
+                        # For now, let's use a dynamic target: current price + 30% if good, 
+                        # or intrinsic value if we can reverse it (simpler: use intrinsic if stored)
+                        if row.dcf_intrinsic_value:
+                            row.target_price = round(row.dcf_intrinsic_value, 2)
+                            row.target_source = "DCF_INTRINSIC"
+                        else:
+                            row.target_price = round(curr_price * 1.30, 2) # Growth target
+                            row.target_source = "SCORE_IMPLIED"
+
+                updated += 1
+                progress.advance(task)
+
+        # Restore original weights so future calls start from pristine config
+        self.weights = original_weights
+
+        # ── Harmonize: re-rank composites across full universe AND SECTOR (50/50 blend) ──
+        self._harmonize_composites(rows, session=session)
+
+        session.commit()
+        logger.info(
+            "compose_all: updated %d composite scores for %s", updated, scoring_date
+        )

@@ -18,29 +18,50 @@ dependencies = [
   "PyYAML>=6.0",
   "secfsdstools==2.4.3",
   "tzdata>=2025.2",
+  # us_picker (BIST Picker port) runtime
+  "SQLAlchemy>=2.0",
+  "requests>=2.31",
+  "beautifulsoup4>=4.12",
+  "click>=8.1",
+  "rich>=13.0",
+  "tenacity>=8.2",
+  "scipy>=1.11",
 ]
 
 [project.optional-dependencies]
+enhanced = [
+  "google-genai>=1.0",
+]
 dev = [
   "pre-commit>=4.0",
   "pytest>=8.0",
+  "pytest-cov",
   "ruff>=0.9",
 ]
 
 [project.scripts]
 usinv = "usinv.cli:main"
+us-picker = "us_picker.cli:cli"
 
 [tool.hatch.build.targets.wheel]
-packages = ["usinv"]
+packages = ["usinv", "us_picker"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
-testpaths = ["tests"]
+testpaths = ["tests", "us_picker/tests", "tests_picker"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = ["usinv/data/edgar/vendor/secfsdstools_2_4_3", "ai"]
+extend-exclude = [
+  "usinv/data/edgar/vendor/secfsdstools_2_4_3",
+  "ai",
+  # Ported from MobileInv with its own conventions; kept diff-close to upstream.
+  "us_picker",
+  "tests_picker",
+  "scripts_picker",
+  "conftest.py",
+]
 force-exclude = true
 
 [tool.ruff.lint]

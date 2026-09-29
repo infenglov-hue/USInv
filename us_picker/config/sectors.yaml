@@ -1,0 +1,217 @@
+# BIST Stock Picker — Custom Sub-Sector Mapping
+# Maps tickers to our custom sub-sectors (30+ categories).
+# BIST's official sectors are too coarse for meaningful sector-neutral scoring.
+
+# Custom sub-sector definitions
+sub_sectors:
+  - steel
+  - automotive
+  - food_retail
+  - food_production
+  - banking_private
+  - banking_state
+  - insurance
+  - telecom
+  - airlines
+  - defense
+  - energy_power
+  - energy_oil_gas
+  - chemicals
+  - cement
+  - glass
+  - textiles
+  - paper
+  - technology_hardware
+  - technology_software
+  - healthcare_pharma
+  - healthcare_services
+  - real_estate
+  - construction
+  - logistics
+  - retail_general
+  - retail_specialty
+  - industrial_manufacturing
+  - tourism_hotels
+  - media
+  - mining
+  - agriculture
+  - holding_diversified
+  - holding_industrial
+  - financial_services
+  - other
+
+# Manual ticker → sub-sector mapping (at least BIST 100 tickers)
+ticker_mapping:
+  THYAO: airlines
+  PGSUS: airlines
+  ASELS: defense
+  BIMAS: food_retail
+  MGROS: food_retail
+  SOKM: food_retail
+  ULKER: food_production
+  BANVT: food_production
+  TATGD: food_production
+  CCOLA: food_production
+  TUKAS: food_production
+  GARAN: banking_private
+  AKBNK: banking_private
+  YKBNK: banking_private
+  DENIZ: banking_private
+  QNBFB: banking_private
+  SKBNK: banking_private
+  ALBRK: banking_private
+  ISCTR: banking_private
+  TSKB: banking_private
+  HALKB: banking_state
+  VAKBN: banking_state
+  ISFIN: financial_services
+  KLNMA: financial_services
+  CRDFA: financial_services
+  GARFA: financial_services
+  YKFKT: financial_services
+  ISGSY: financial_services
+  ANHYT: insurance
+  ANSGR: insurance
+  TURSG: insurance
+  AKGRT: insurance
+  TCELL: telecom
+  TTKOM: telecom
+  NETAS: telecom
+  SAHOL: holding_diversified
+  KCHOL: holding_diversified
+  DOHOL: holding_diversified
+  TAVHL: holding_diversified
+  NTHOL: holding_diversified
+  GLYHO: holding_diversified
+  TKFEN: holding_industrial
+  ECZYT: holding_industrial
+  KOZAL: holding_industrial
+  ENKAI: energy_power
+  AKSEN: energy_power
+  ODAS: energy_power
+  AYEN: energy_power
+  ZOREN: energy_power
+  TUPRS: energy_oil_gas
+  PETKM: energy_oil_gas
+  AYGAZ: energy_oil_gas
+  TOASO: automotive
+  FROTO: automotive
+  OTKAR: automotive
+  DOAS: automotive
+  EREGL: steel
+  KRDMD: steel
+  CEMTS: steel
+  AKCNS: cement
+  BOLUC: cement
+  SISE: glass
+  TRKCM: glass
+  GUBRF: chemicals
+  BAGFS: chemicals
+  BRISA: automotive
+  ARCLK: retail_general
+  VESTL: technology_hardware
+  VESBE: technology_hardware
+  LOGO: technology_software
+  ARDYZ: technology_software
+  SELEC: healthcare_pharma
+  ECILC: healthcare_pharma
+  EKGYO: real_estate
+  ISGYO: real_estate
+  HLGYO: real_estate
+  ENJSA: construction
+  ENKA: construction
+  CLEBI: logistics
+  RYSAS: logistics
+  MAVI: retail_general
+  VAKKO: retail_general
+  METUR: tourism_hotels
+  MARTI: tourism_hotels
+  KOZAA: mining
+  IPEKE: mining
+  KARTN: paper
+  HURGZ: media
+  DGATE: media
+  YAPRK: agriculture
+
+# Fallback rules: if a ticker is not in the manual mapping,
+# use BIST sector name to guess sub-sector
+bist_sector_fallback:
+  "Bankacılık": banking_private
+  "Banka": banking_private
+  "Sigorta": insurance
+  "Finansal Kiralama": financial_services
+  "Faktoring": financial_services
+  "Aracı Kurumlar": financial_services
+  "Finansal Hizmetler": financial_services
+  "Menkul Kıymet Yatırım Ortaklığı": financial_services
+  "Yatırım Ortaklıkları": financial_services
+  "Varlık": financial_services
+  "Kiralama": financial_services
+  "Faktoring": financial_services
+  "Aracı Kurum": financial_services
+  "Yatırım Menkul": financial_services
+  "Menkul Değerler": financial_services
+  "Girişim Sermayesi": financial_services
+  "Holding": holding_diversified
+  "Gayrimenkul": real_estate
+  "GYO": real_estate
+  "Gıda": food_production
+  "Meşrubat": food_production
+  "İçecek": food_production
+  "Perakende": food_retail
+  "Perakande": food_retail
+  "Pazarlama": retail_general
+  "Dış Ticaret": retail_general
+  "Otomotiv": automotive
+  "Demir Çelik": steel
+  "Demir-Çelik": steel
+  "Çimento": cement
+  "Cam": glass
+  "Kimya": chemicals
+  "Boya": chemicals
+  "Tekstil": textiles
+  "Deri": textiles
+  "Teknoloji": technology_software
+  "Software": technology_software
+  "Bilişim": technology_software
+  "Bilgisayar": technology_software
+  "Yazılım": technology_software
+  "İletişim": telecom
+  "İlaç": healthcare_pharma
+  "Enerji": energy_power
+  "Elektrik Üretim": energy_power
+  "Elektrik - Doğalgaz": energy_power
+  "İnşaat": construction
+  "Seramik": construction
+  "Ulaştırma": logistics
+  "Havacılık": airlines
+  "Turizm": tourism_hotels
+  "Eğlence": tourism_hotels
+  "Madencilik": mining
+  "Kağıt": paper
+  "Medya": media
+  "Tarım": agriculture
+  "Kırtasiye": retail_specialty
+  "Mobilya": retail_specialty
+  "Endüstriyel Makine": industrial_manufacturing
+  "Teçhizat": industrial_manufacturing
+  "Savunma": defense
+  "Spor": other
+  "Dayanıklı Tüketim": retail_general
+  "Petrol": energy_oil_gas
+  "Kablo": industrial_manufacturing
+  "Hayvancılık": agriculture
+  "Varlık Yönetim": financial_services
+  "Faktoring": financial_services
+  "Kiralama": financial_services
+  "Menkul Değerler": financial_services
+  "Aracı Kurum": financial_services
+  "Yatırım Menkul": financial_services
+  "Girişim Sermayesi": financial_services
+  "Gayrimenkul": real_estate
+  "İçecek": food_production
+  "Meşrubat": food_production
+  "Mobilya": retail_specialty
+  "Kırtasiye": retail_specialty
+  "Bilişim": technology_software
+  "Yazılım": technology_software

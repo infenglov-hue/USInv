@@ -1,0 +1,69 @@
+# BIST Stock Picker — General Settings
+
+database:
+  path: "data/us_picker.db"
+
+rate_limits:
+  default_delay_sec: 1.0
+  isyatirim_delay_sec: 0.05
+  kap_delay_sec: 2.0
+  tcmb_delay_sec: 1.0
+  yahoo_delay_sec: 0.5
+
+cache:
+  directory: "data/cache"
+  ttl_hours:
+    prices: 24
+    financials: 168       # 7 days
+    company_list: 168     # 7 days
+    macro: 24
+    insider: 72           # 3 days
+  max_age_days: 30
+
+api_endpoints:
+  isyatirim_prices: "https://www.isyatirim.com.tr/_layouts/15/Isyatirim.Website/Common/Data.aspx/HisseTekil"
+  isyatirim_financials: "https://www.isyatirim.com.tr/_layouts/15/Isyatirim.Website/Common/Data.aspx/MaliTablo"
+  kap_company_list: "https://www.kap.org.tr/tr/bist-sirketler"
+  tcmb_evds: "https://evds2.tcmb.gov.tr/service/evds"
+
+tcmb:
+  api_key: ""               # Prefer TCMB_API_KEY environment variable
+  cpi_series: "TP.FG.J0"
+  usdtry_series: "TP.DK.USD.A"
+  eurtry_series: "TP.DK.EUR.A"
+  policy_rate_series: "TP.AP03.L005"
+
+logging:
+  console_level: "INFO"
+  file_level: "DEBUG"
+  log_dir: "logs"
+  log_file: "us_picker.log"
+
+fetch:
+  price_history_days: 3800   # ~10 years
+  insider_history_days: 180
+  validation_sample_pct: 0.10  # validate 10% of prices against Yahoo
+
+gemini:
+  api_key: ""               # Prefer GEMINI_API_KEY env var or APIKEY_FOLDER/gemini_api_key.txt
+
+telegram:
+  bot_token: ""             # Prefer TELEGRAM_BOT_TOKEN env var or config
+  chat_id: ""               # Prefer TELEGRAM_CHAT_ID env var or config
+  enabled: true
+
+
+# Corporate-action price adjustment (2026-07-09). BIST daily bands are ~±10%,
+# so close-to-close moves beyond [low_ratio, high_ratio] are corporate
+# actions (bedelsiz/bedelli/split) the raw IsYatirim feed does NOT adjust:
+# corporate_actions is empty and adjusted_close arrived == close everywhere.
+# Evidence: BIMAS 2026-05-14 ~2:1 bonus -> momentum 91 -> 8.7, composite
+# 96 -> 57 on zero economic change; 30 such cliffs since 2023. The clean
+# stage back-adjusts adjusted_close (close itself is never touched).
+# Guards: IPO grace window, suspension-gap skip, INDEX/MOCK/TEST skip.
+price_adjustment:
+  enabled: true
+  low_ratio: 0.75
+  high_ratio: 1.30
+  max_gap_days: 7
+  ipo_grace_days: 30

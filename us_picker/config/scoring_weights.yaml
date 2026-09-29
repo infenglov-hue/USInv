@@ -1,0 +1,103 @@
+# Portfolio-specific weights for Operating Companies
+# NOTE: `insider` factor removed — no reliable data source for BIST.
+# Its old weight (always 0.00) has been redistributed where sensible; totals still sum to 1.0.
+alpha:
+  quality_buffett: 0.15
+  value_graham_dcf: 0.30
+  piotroski: 0.15
+  growth: 0.10
+  momentum: 0.25
+  technical: 0.05
+  dividend_yield: 0.00
+
+# Model-specific overrides (applied to all portfolios for these company types)
+holding:
+  nav_discount: 0.35
+  portfolio_quality: 0.25
+  dividend_yield: 0.20
+  governance: 0.20
+
+banking:
+  pb_vs_sector: 0.20
+  roe: 0.20
+  car: 0.15
+  npl_ratio: 0.10
+  cost_income: 0.10
+  nim: 0.15
+  loan_growth: 0.10
+
+reit:
+  pb_vs_sector: 0.35
+  dividend_yield: 0.25
+  roe: 0.20
+  net_margin: 0.10
+  debt_equity: 0.10
+
+insurance:
+  pb_vs_sector: 0.30
+  dividend_yield: 0.15
+  roe: 0.30
+  net_margin: 0.15
+  debt_equity: 0.10
+
+ipo:
+  revenue_growth: 0.30
+  gross_margin_vs_sector: 0.20
+  ps_ratio_vs_sector: 0.20
+  insider_retention: 0.15
+  liquidity: 0.15
+
+# Regime-dependent weight overrides for ALPHA / BETA / DELTA.
+# Each block must sum to 1.0 (validated at load time).
+# BEAR: keep momentum as a trend filter (avoids falling-knife bias); rely on
+# quality + value rather than technical indicators which generate false
+# reversal signals in downtrends.
+regime_weights:
+  BULL_LOW_VOL: # Aggressive Rally
+    quality_buffett: 0.05
+    value_graham_dcf: 0.05
+    piotroski: 0.10
+    growth: 0.30
+    momentum: 0.30
+    technical: 0.20
+  BULL_HIGH_VOL: # Volatile Trend
+    quality_buffett: 0.20
+    value_graham_dcf: 0.10
+    piotroski: 0.10
+    growth: 0.20
+    momentum: 0.20
+    technical: 0.20
+  BEAR: # Defensive Recovery — momentum kept as trend filter
+    quality_buffett: 0.30
+    value_graham_dcf: 0.25
+    piotroski: 0.10
+    growth: 0.05
+    momentum: 0.15
+    technical: 0.15
+
+# Real-rate conditional alpha override (2026-07-09, walk-forward validated).
+# When the latest real policy rate (macro_regime.policy_rate_pct −
+# cpi_yoy_pct, PIT: rows <= scoring_date) exceeds `threshold`, the alpha
+# block is replaced by `weights` below (value trimmed, quality/cashflow up,
+# momentum unchanged). Evidence (clean-PIT archive, 432 dates 2018-2026,
+# biweekly index_aware, trailing 20-35):
+#   FULL   +3766.7% vs +2085.5% baseline (Sharpe 1.73 vs 1.53)
+#   TRAIN  2018-22 alpha +260pp vs +181pp   VALIDATE 2023 +115pp vs +101pp
+#   TEST   2024-26 alpha +87.2pp vs +5.1pp  — wins 8/9 calendar years
+# Robustness: threshold +2pp, milder block, and 35-day macro lag all hold
+# (see docs/PROGRESS_2026-07-09_FINANCIAL_REFRESH.md follow-up section).
+# enabled: false keeps composition byte-identical to the previous behavior.
+# LIVE since 2026-07-09 (user-approved same day, PR #42): first rotation to
+# select with the defensive block is 2026-07-13 (real rate ~+4.6pp). The
+# rule self-reverts to the base alpha block whenever the real rate goes
+# non-positive — it is conditional, not a permanent tilt.
+real_rate_regime:
+  enabled: true
+  threshold: 0.0
+  weights:
+    quality_buffett: 0.25
+    value_graham_dcf: 0.15
+    piotroski: 0.20
+    growth: 0.10
+    momentum: 0.25
+    technical: 0.05
