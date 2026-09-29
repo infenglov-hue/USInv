@@ -21,7 +21,9 @@ def test_runtime_and_secret_paths_are_ignored_and_untracked() -> None:
 
 
 def test_alpaca_smoke_is_explicitly_gated_and_uses_only_actions_secrets() -> None:
-    workflow = (ROOT / ".github" / "workflows-legacy" / "alpaca-smoke.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows-legacy" / "alpaca-smoke.yml").read_text(
+        encoding="utf-8"
+    )
 
     assert "workflow_dispatch:" in workflow
     assert "pull_request:" in workflow and "types: [labeled]" in workflow
@@ -33,7 +35,9 @@ def test_alpaca_smoke_is_explicitly_gated_and_uses_only_actions_secrets() -> Non
 
 
 def test_tiingo_smoke_is_explicitly_gated_and_uses_only_its_secret() -> None:
-    workflow = (ROOT / ".github" / "workflows-legacy" / "tiingo-smoke.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows-legacy" / "tiingo-smoke.yml").read_text(
+        encoding="utf-8"
+    )
 
     assert "workflow_dispatch:" in workflow
     assert "pull_request:" in workflow and "types: [labeled]" in workflow

@@ -24,7 +24,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -33,8 +33,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
-      STATE_REPOSITORY: ${{ vars.US_STATE_REPOSITORY || format('{0}/USInv-state', github.repository_owner) }}
-      PUBLISH_REPO_TOKEN: ${{ secrets.PUBLISH_REPO_TOKEN }}
+      # Runtime DB lives on this repo's private *draft* release "state-current"
+      # (drafts are visible only to collaborators); GITHUB_TOKEN can manage it.
+      STATE_REPOSITORY: ${{ github.repository }}
       ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
       ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
       US_PICKER_SEC_EMAIL: ${{ secrets.USINV_EDGAR_EMAIL }}
@@ -59,7 +60,7 @@ jobs:
 
       - name: Restore runtime database
         env:
-          GH_TOKEN: ${{ secrets.PUBLISH_REPO_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euxo pipefail
           mkdir -p data
@@ -87,7 +88,7 @@ jobs:
 
       - name: Store runtime database
         env:
-          GH_TOKEN: ${{ secrets.PUBLISH_REPO_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           python scripts_picker/state_db_artifact.py push \
             --source data/us_picker.db --repository "${STATE_REPOSITORY}"
