@@ -1,3 +1,8 @@
+> **UYARI (2026-09-29):** Aktif ürün artık `us_picker/` + `pwa/` (BIST Picker'ın ABD portu).
+> Önce `docs/US_PICKER.md` dosyasını oku. Bu belgedeki "Phase 5 PASS", "Phase 6 canlı" ve benzeri
+> iddialar geçersizdir: holdout sonuçları rastgele sayı simülatöründen, canlı karar akışı elle
+> yazılmış sabit bir snapshot'tan geliyordu.
+
 # CONTINUE HERE — Phase 2.3, snapshot 2026-07-21 evening
 
 > Bu dosya, işi başka bir araçla (ChatGPT dahil) veya PC yeniden açıldıktan sonra

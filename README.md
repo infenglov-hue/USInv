@@ -1,3 +1,8 @@
+> **UYARI (2026-09-29):** Aktif ürün artık `us_picker/` + `pwa/` (BIST Picker'ın ABD portu).
+> Önce `docs/US_PICKER.md` dosyasını oku. Bu belgedeki "Phase 5 PASS", "Phase 6 canlı" ve benzeri
+> iddialar geçersizdir: holdout sonuçları rastgele sayı simülatöründen, canlı karar akışı elle
+> yazılmış sabit bir snapshot'tan geliyordu.
+
 # USInv — Systematic US Equity Picker
 
 **Status: PHASE 6 COMPLETE / PHASE 7 ACTIVE — Production Pipeline, Live Mobile PWA & Paper-Forward Execution.** This repository contains the

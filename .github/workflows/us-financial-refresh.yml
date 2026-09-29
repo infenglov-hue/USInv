@@ -1,0 +1,60 @@
+name: US Picker Financial Refresh
+
+# SEC filings + FRED macro, twice a week (BIST Picker "Financial Refresh").
+# Only companies with a new 10-K/10-Q on EDGAR in the last 10 days are
+# re-downloaded, so the run stays small.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "7 9 * * 2,6"
+
+concurrency:
+  group: us-picker-feed
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      STATE_REPOSITORY: ${{ vars.US_STATE_REPOSITORY || format('{0}/USInv-state', github.repository_owner) }}
+      US_PICKER_SEC_EMAIL: ${{ secrets.USINV_EDGAR_EMAIL }}
+      ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
+      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+      US_PICKER_DB_PATH: ${{ github.workspace }}/data/us_picker.db
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check -e ".[enhanced]"
+      - name: Restore runtime database
+        env:
+          GH_TOKEN: ${{ secrets.PUBLISH_REPO_TOKEN }}
+        run: |
+          mkdir -p data
+          python scripts_picker/state_db_artifact.py pull \
+            --repository "${STATE_REPOSITORY}" --target data/us_picker.db
+      - name: Filings, macro, clean
+        run: |
+          set -euxo pipefail
+          python -m us_picker fetch --financials-only
+          python -m us_picker fetch --macro-only
+          python -m us_picker clean
+      - name: Store runtime database
+        env:
+          GH_TOKEN: ${{ secrets.PUBLISH_REPO_TOKEN }}
+        run: |
+          python scripts_picker/state_db_artifact.py push \
+            --source data/us_picker.db --repository "${STATE_REPOSITORY}"
+      - name: Freshness gates
+        run: |
+          python -m us_picker check-financial-freshness
+          python -m us_picker check-score-input-freshness

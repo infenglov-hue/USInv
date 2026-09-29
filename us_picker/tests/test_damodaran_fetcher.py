@@ -110,8 +110,8 @@ class TestParseTurkeyRow:
 
 
 @pytest.mark.skipif(
-    os.getenv("BIST_SKIP_NETWORK_TESTS") == "1",
-    reason="network tests disabled",
+    os.getenv("US_PICKER_NETWORK_TESTS") != "1",
+    reason="network tests are opt-in (US_PICKER_NETWORK_TESTS=1)",
 )
 class TestFetchLive:
     """Hit the real Damodaran URL. Skipped when offline; opt-out via env var."""

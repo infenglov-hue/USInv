@@ -300,56 +300,12 @@ class BacktestEngine:
                 f"to {rebalance_dates[-1]} ({len(rebalance_dates)} weeks)...[/bold green]"
             )
 
-        try:
-            import yfinance as yf
-            if console:
-                console.print("[dim]Fetching Gold and USD/TRY prices for cash hedging...[/dim]")
+        # US port: USD is the reporting currency, so the TRY-specific gram-gold
+        # and USD/TRY deflators do not apply; CPI-real (US CPI) remains.
+        self._gold_cache = None
+        self._usd_cache = None
 
-            # Incremental runs may calculate only the newest point, while the
-            # published summary is rebuilt from the complete persisted NAV.
-            # Fetch deflators from the same earliest date or old NAV points
-            # would all receive the first recent FX/gold value and silently
-            # reproduce nominal returns in the USD/gold fields.
-            deflator_start = self._deflator_history_start(
-                start_date,
-                persist_model_performance=persist_model_performance,
-            )
-            gold = yf.download(
-                "GC=F",
-                start=deflator_start.isoformat(),
-                end=(end_date + timedelta(days=7)).isoformat(),
-                progress=False,
-            )
-            usd_try = yf.download(
-                "TRY=X",
-                start=deflator_start.isoformat(),
-                end=(end_date + timedelta(days=7)).isoformat(),
-                progress=False,
-            )
-            
-            if isinstance(gold.columns, pd.MultiIndex):
-                gold_close = gold['Close']["GC=F"]
-            else:
-                gold_close = gold['Close']
-                
-            if isinstance(usd_try.columns, pd.MultiIndex):
-                usd_close = usd_try['Close']["TRY=X"]
-            else:
-                usd_close = usd_try['Close']
-                
-            df_gold = pd.DataFrame({'gold_usd': gold_close, 'usd_try': usd_close})
-            df_gold = df_gold.ffill()
-            df_gold['gram_gold_try'] = (df_gold['gold_usd'] / 31.1034768) * df_gold['usd_try']
-            self._gold_cache = df_gold['gram_gold_try'].dropna()
-            # A1: keep USD/TRY too so the strategy NAV can be expressed in USD.
-            self._usd_cache = df_gold['usd_try'].dropna()
-        except Exception as e:
-            if console:
-                console.print(f"[yellow]Failed to fetch gold data: {e}[/yellow]")
-            self._gold_cache = None
-            self._usd_cache = None
-
-        # A1: CPI index series (TCMB) for purchasing-power (real) deflation.
+        # A1: CPI index series (US CPI-U from FRED) for purchasing-power deflation.
         # Optional — absent/empty history just means the CPI-real column stays
         # blank; the run does not fail.
         self._cpi_cache = self._load_cpi_cache()

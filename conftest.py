@@ -54,3 +54,27 @@ def protect_canonical_backtest_artifacts():
             + ", ".join(changed),
             pytrace=False,
         )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolate_us_picker_runtime_paths(tmp_path_factory):
+    """Keep the runtime DB and file cache out of the repo's data/ directory.
+
+    USInv's artifact guard fails any test run that touches data/; picker code
+    defaults to data/us_picker.db and data/cache/.
+    """
+    import os
+
+    import us_picker.data.cache as cache_module
+
+    runtime = tmp_path_factory.mktemp("us_picker_runtime")
+    previous_db = os.environ.get("US_PICKER_DB_PATH")
+    os.environ["US_PICKER_DB_PATH"] = str(runtime / "us_picker.db")
+    previous_cache = cache_module._CACHE_DIR
+    cache_module._CACHE_DIR = runtime / "cache"
+    yield
+    cache_module._CACHE_DIR = previous_cache
+    if previous_db is None:
+        os.environ.pop("US_PICKER_DB_PATH", None)
+    else:
+        os.environ["US_PICKER_DB_PATH"] = previous_db

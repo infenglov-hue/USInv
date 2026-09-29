@@ -21,7 +21,7 @@ def test_runtime_and_secret_paths_are_ignored_and_untracked() -> None:
 
 
 def test_alpaca_smoke_is_explicitly_gated_and_uses_only_actions_secrets() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "alpaca-smoke.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows-legacy" / "alpaca-smoke.yml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch:" in workflow
     assert "pull_request:" in workflow and "types: [labeled]" in workflow
@@ -33,7 +33,7 @@ def test_alpaca_smoke_is_explicitly_gated_and_uses_only_actions_secrets() -> Non
 
 
 def test_tiingo_smoke_is_explicitly_gated_and_uses_only_its_secret() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "tiingo-smoke.yml").read_text(encoding="utf-8")
+    workflow = (ROOT / ".github" / "workflows-legacy" / "tiingo-smoke.yml").read_text(encoding="utf-8")
 
     assert "workflow_dispatch:" in workflow
     assert "pull_request:" in workflow and "types: [labeled]" in workflow
@@ -44,7 +44,7 @@ def test_tiingo_smoke_is_explicitly_gated_and_uses_only_its_secret() -> None:
 
 
 def test_alpha_listing_smoke_is_gated_and_never_publishes_raw_payloads() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "alpha-listing-smoke.yml").read_text(
+    workflow = (ROOT / ".github" / "workflows-legacy" / "alpha-listing-smoke.yml").read_text(
         encoding="utf-8"
     )
 
@@ -58,7 +58,7 @@ def test_alpha_listing_smoke_is_gated_and_never_publishes_raw_payloads() -> None
 
 
 def test_phase_2_3_reuses_immutable_listing_without_reuploading_private_csv() -> None:
-    workflow = (ROOT / ".github" / "workflows" / "phase-2-3-universe.yml").read_text(
+    workflow = (ROOT / ".github" / "workflows-legacy" / "phase-2-3-universe.yml").read_text(
         encoding="utf-8"
     )
 

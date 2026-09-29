@@ -127,6 +127,11 @@ def cli(ctx: click.Context, verbose: bool, dry_run: bool) -> None:
         "financial-refresh workflow."
     ),
 )
+@click.option(
+    "--macro-only",
+    is_flag=True,
+    help="Refresh only the FRED/Damodaran macro history.",
+)
 @click.pass_context
 def fetch(
     ctx: click.Context,
@@ -137,6 +142,7 @@ def fetch(
     limit: int,
     history: bool,
     financials_only: bool,
+    macro_only: bool = False,
 ) -> None:
     """Stage 1: Download data from all sources (prices + financials + macro)."""
     from us_picker.db.connection import session_scope
@@ -168,6 +174,11 @@ def fetch(
                 fetcher.fetch_universe()
                 session.commit()
             fetcher.fetch_history(tickers=tickers)
+            return
+
+        if macro_only:
+            fetcher.fetch_macro()
+            session.commit()
             return
 
         if financials_only:
