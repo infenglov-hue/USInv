@@ -1,0 +1,112 @@
+name: US Picker Feed
+
+# BIST Picker "Publish Mobile Feed" port. All crons are UTC. The NYSE closes
+# 20:00 UTC (EDT) / 21:00 UTC (EST); the evening runs land after the close in
+# both seasons. The pre-open run prepares the T session from T-1 data; the
+# Sunday run pre-stages a rotation Monday.
+
+on:
+  workflow_dispatch:
+    inputs:
+      prepare_next_rotation:
+        description: "Prepare the next rotation instead of today's session"
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "17 22 * * 1-5"
+    - cron: "47 22 * * 1-5"
+    - cron: "17 11 * * 1-5"
+    - cron: "17 17 * * 0"
+
+concurrency:
+  group: us-picker-feed
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      # Runtime DB lives on this repo's private *draft* release "state-current"
+      # (drafts are visible only to collaborators); GITHUB_TOKEN can manage it.
+      STATE_REPOSITORY: ${{ github.repository }}
+      ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
+      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+      US_PICKER_SEC_EMAIL: ${{ secrets.USINV_EDGAR_EMAIL }}
+      US_PICKER_DB_PATH: ${{ github.workspace }}/data/us_picker.db
+      FEED_BASE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: python -m pip install --disable-pip-version-check -e ".[dev,enhanced]"
+
+      - name: Quality gate (manual runs)
+        if: github.event_name != 'schedule'
+        run: python -m pytest -q us_picker/tests tests_picker
+
+      - name: Restore runtime database
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p data
+          python scripts_picker/state_db_artifact.py pull \
+            --repository "${STATE_REPOSITORY}" --target data/us_picker.db
+
+      - name: Pipeline
+        run: |
+          set -euxo pipefail
+          python -m us_picker fetch --prices-only --refresh-universe --price-days 15
+          python -m us_picker clean
+          python -m us_picker check-exits --apply --yes
+          weekday_utc=$(date -u +%u)
+          if { [ "${{ github.event_name }}" = "schedule" ] && \
+               { [ "${weekday_utc}" = "5" ] || [ "${weekday_utc}" = "7" ]; }; } || \
+             [ "${{ inputs.prepare_next_rotation }}" = "true" ]; then
+            python -m us_picker prepare-portfolio --next-rotation --max-days-ahead 3
+          else
+            python -m us_picker prepare-portfolio
+          fi
+          python -m us_picker backtest --start-date 2017-01-09 \
+            --rebalance-weeks 2 --execution same-day-open
+          python -m us_picker export-mobile-feed \
+            --feed-dir mobile-feed-dist --base-download-url "${FEED_BASE_URL}"
+
+      - name: Store runtime database
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts_picker/state_db_artifact.py push \
+            --source data/us_picker.db --repository "${STATE_REPOSITORY}"
+
+      - name: Cash-state check
+        continue-on-error: true
+        run: python -m us_picker cash-status --json
+
+      - name: Assemble site (PWA shell + feed)
+        run: |
+          set -euxo pipefail
+          rm -rf site && cp -r pwa site
+          cp mobile-feed-dist/manifest.json mobile-feed-dist/mobile_snapshot.db.gz mobile-feed-dist/live_tickers.json site/
+          (cd site && node --check app.js && node --check sw.js && node tests/pwa-static-check.mjs)
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4

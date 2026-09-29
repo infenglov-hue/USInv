@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <title>US Picker — ABD Portföy Takip</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+
+  <!-- Force no-cache on iOS Safari / PWA -->
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+
+  <!-- PWA Meta Tags for iOS & Android -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="BistPicker">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0E0E10">
+
+  <!-- Icons for PWA -->
+  <link rel="apple-touch-icon" href="./icons/icon-192.png">
+  <link rel="manifest" href="./manifest.webmanifest?v=us1">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+
+  <!-- Material Symbols Icons -->
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="./index.css?v=us1">
+
+  <!-- Local runtime dependencies: first launch must not depend on a CDN. -->
+  <script src="./vendor/pako.min.js?v=us1"></script>
+  <script src="./vendor/sql-wasm.js?v=us1"></script>
+  <script src="./vendor/apexcharts.min.js?v=us1"></script>
+  <script src="./portfolio-costs.js?v=us1"></script>
+
+  <!-- Main Application Logic (deferred) -->
+  <script src="./app.js?v=us1" defer></script>
+</head>
+<body>
+
+  <!-- Simulated Mobile Viewport Mockup on Desktop Browsers -->
+  <div class="mobile-frame">
+
+    <!-- 1. SPLASH SCREEN (Loading engine progress) -->
+    <div id="splash-screen" class="splash-container">
+      <div class="splash-brand">
+        <span class="material-symbols-rounded logo-icon">trending_up</span>
+        <h1 class="logo-title">US Picker</h1>
+        <p class="logo-subtitle">Değer Odaklı Akıllı Portföy</p>
+      </div>
+
+      <div class="loading-wrapper">
+        <div class="progress-bar-track">
+          <div id="splash-progress" class="progress-bar-fill" style="width: 0%;"></div>
+        </div>
+        <p id="splash-status" class="loading-status">Uygulama kütüphaneleri yükleniyor...</p>
+      </div>
+
+      <button type="button" id="splash-retry-btn" class="retry-btn" style="display: none;">🔄 Yeniden Dene</button>
+    </div>
+
+    <!-- 2. MAIN APPLICATION CONTENT -->
+    <div id="app-content" class="app-container" style="display: none;">
+
+      <!-- App Header -->
+      <header class="app-header" aria-label="Uygulama başlığı">
+        <div class="header-main">
+          <div class="brand-text">
+            <span class="brand-title">US Picker</span>
+            <span id="app-update-date" class="brand-subtitle">Güncelleniyor...</span>
+          </div>
+          <button type="button" id="refresh-db-btn" class="header-icon-btn" aria-label="Verileri yenile">
+            <span class="material-symbols-rounded">refresh</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Main Page Content Containers (Tab-driven Router) -->
+      <main class="page-content">
+
+        <!-- PAGE 1: PICKS (HOME) -->
+        <section id="page-picks" class="tab-page active">
+          <!-- Active Portfolio Header -->
+          <div class="section-title-row">
+            <h2>Aktif Portföy</h2>
+            <span id="picks-count-badge" class="badge badge-accent">0 Hisse</span>
+          </div>
+
+          <div id="data-health-card" class="data-health-card" aria-label="Veri durumu">
+            <div class="data-health-item">
+              <span class="label">Portföy Tarihi</span>
+              <strong id="health-portfolio-date">—</strong>
+            </div>
+            <div class="data-health-item">
+              <span class="label">Sinyal Verisi</span>
+              <strong id="health-signal-date">—</strong>
+            </div>
+            <div class="data-health-item">
+              <span class="label">Canlı Feed</span>
+              <strong id="health-live-source">—</strong>
+            </div>
+            <div class="data-health-item">
+              <span class="label">Sonraki Rotasyon</span>
+              <strong id="health-next-rotation">—</strong>
+            </div>
+            <p id="health-data-note" class="data-health-note" style="display: none;"></p>
+          </div>
+
+          <div class="decision-summary-card" aria-label="Rotasyon karar özeti">
+            <div class="decision-topline">
+              <div>
+                <span class="label">Main V2 Karar Özeti</span>
+                <h3 id="decision-weekly-rule">Rotasyon planı yükleniyor</h3>
+                <span id="decision-countdown" class="decision-countdown" style="display: none;"></span>
+              </div>
+              <span id="decision-audit-badge" class="badge badge-delayed">AUDIT</span>
+            </div>
+
+            <div class="decision-metrics-grid">
+              <div class="decision-metric">
+                <span class="label">Portföy</span>
+                <strong id="decision-position-count">—</strong>
+              </div>
+              <div class="decision-metric">
+                <span class="label">Nakit</span>
+                <strong id="decision-cash-state">—</strong>
+              </div>
+              <div class="decision-metric">
+                <span class="label">Model Audit</span>
+                <strong id="decision-model-return">—</strong>
+              </div>
+              <div class="decision-metric">
+                <span class="label">Stres Testi</span>
+                <strong id="decision-stress-return">—</strong>
+              </div>
+            </div>
+
+            <div class="decision-compare-row">
+              <span>S&amp;P 500: <strong id="decision-bist-return">—</strong></span>
+              <span id="decision-price-source">Fiyat kaynağı: —</span>
+            </div>
+
+            <p id="decision-audit-note" class="decision-note">Backtest ve fiyat denetimi hazırlanıyor.</p>
+            <button type="button" id="decision-open-backtest" class="decision-open-btn">
+              <span class="material-symbols-rounded">query_stats</span>
+              <span>Backtesting Detayı</span>
+            </button>
+          </div>
+
+          <!-- Trade-day checklist (visible only on rotation day) -->
+          <div id="trade-day-container"></div>
+
+          <div id="portfolio-list" class="list-container">
+            <!-- Dynamically populated portfolio rows -->
+          </div>
+
+          <!-- Intraweek risk exits (stop-loss / target) -->
+          <div id="intraweek-exits-container"></div>
+
+          <!-- Suggested Signals Section -->
+          <div class="signals-card">
+            <div class="signals-header">
+              <span class="material-symbols-rounded tint-tertiary">psychology</span>
+              <h3>Zeki Sinyaller</h3>
+            </div>
+            <p class="signals-desc">Modelin gerçekleşen rotasyon kararları (pozisyon verisinden). Rotasyon 2 haftada bir Pazartesi yapılır; alınan hisse sonraki rotasyona kadar tutulur.</p>
+            <div id="signals-list" class="list-container spaced-y">
+              <!-- Dynamically populated suggested actions -->
+            </div>
+          </div>
+        </section>
+
+        <!-- PAGE 2: BROWSE (LIST) -->
+        <section id="page-browse" class="tab-page">
+          <!-- Search & Filter Controls -->
+          <div class="search-sticky-container">
+            <div class="search-box">
+              <span class="material-symbols-rounded search-icon">search</span>
+              <input type="text" id="browse-search" placeholder="Hisse kodu veya adıyla ara..." autocomplete="off">
+            </div>
+
+            <div class="filter-pills-row">
+              <button type="button" id="pill-all" class="filter-pill active" data-mode="ALL">Hepsi</button>
+              <button type="button" id="pill-core" class="filter-pill" data-mode="ALPHA_CORE">ALPHA Core</button>
+              <button type="button" id="pill-x" class="filter-pill" data-mode="ALPHA_X">ALPHA X</button>
+              <button type="button" id="pill-research" class="filter-pill" data-mode="RESEARCH">Araştırma</button>
+            </div>
+          </div>
+
+          <!-- Extra Dropdown Filters Button -->
+          <div class="advanced-filters-row">
+            <div class="select-wrapper">
+              <select id="filter-sector">
+                <option value="">Sektör: Tümü</option>
+              </select>
+            </div>
+            <div class="select-wrapper">
+              <select id="filter-risk">
+                <option value="">Risk: Tümü</option>
+                <option value="LOW">Düşük</option>
+                <option value="MEDIUM">Orta</option>
+                <option value="HIGH">Yüksek</option>
+              </select>
+            </div>
+            <div class="select-wrapper">
+              <select id="filter-sort">
+                <option value="SCORE_DESC">Sırala: Skora Göre</option>
+                <option value="TICKER_ASC">Sırala: Kod (A-Z)</option>
+                <option value="RISK_ASC">Sırala: Düşük Risk</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Scoring Rows List -->
+          <div id="browse-result-info" class="label" aria-live="polite"></div>
+          <div id="browse-list" class="list-container">
+            <!-- Dynamically populated stock lists -->
+          </div>
+        </section>
+
+        <!-- PAGE 3: MARKET (MACRO) -->
+        <section id="page-market" class="tab-page">
+          <div class="macro-card">
+            <h2>Makro Göstergeler</h2>
+
+            <div class="macro-metric-row">
+              <div class="macro-metric">
+                <span class="label">Fed Politika Faizi</span>
+                <span id="macro-policy-rate" class="value">—</span>
+              </div>
+              <div class="macro-metric">
+                <span class="label">Yıllık Enflasyon (ABD TÜFE)</span>
+                <span id="macro-inflation" class="value">—</span>
+              </div>
+            </div>
+
+            <!-- Real Yield Slider Indicator -->
+            <div class="yield-meter-wrapper">
+              <div class="yield-header">
+                <span>Reel Getiri Potansiyeli</span>
+                <span id="macro-real-yield-badge" class="badge">NEGATİF REEL</span>
+              </div>
+              <div id="macro-real-yield-val" class="yield-value neg-text">+0.00%</div>
+
+              <div class="yield-slider-track">
+                <div class="yield-slider-labels">
+                  <span>-%15</span>
+                  <span>0</span>
+                  <span>+%15</span>
+                </div>
+                <div class="yield-slider-bar">
+                  <div id="macro-yield-pin" class="yield-slider-pin" style="left: 50%;"></div>
+                </div>
+              </div>
+              <p id="macro-yield-desc" class="macro-desc">...</p>
+            </div>
+          </div>
+
+          <!-- Cash Position Allocation Section -->
+          <div class="macro-card">
+            <h2>Portföy Nakit Dengesi</h2>
+            <div class="cash-status-row">
+              <div>
+                <span class="label">Nakit Ağırlık Seviyesi</span>
+                <span id="macro-cash-state" class="cash-state-title">NORMAL</span>
+              </div>
+              <div style="text-align: right;">
+                <span class="label">Hedef Strateji</span>
+                <span id="macro-cash-target" class="cash-target-title">NORMAL</span>
+              </div>
+            </div>
+
+            <div class="progress-bar-track" style="margin: 12px 0;">
+              <div id="macro-cash-progress" class="progress-bar-fill" style="width: 0%;"></div>
+            </div>
+            <p id="macro-cash-split" class="cash-split-text">0% Nakit / 100% Hisse</p>
+
+            <div id="macro-cash-notes" class="cash-notes-box" style="display: none;"></div>
+          </div>
+
+          <!-- Market Regime Stats -->
+          <div class="macro-card">
+            <h2>Piyasa Rejimi</h2>
+            <div class="info-row">
+              <span class="label">Rejim Sinyali</span>
+              <span id="macro-regime" class="regime-value">RISK_ON</span>
+            </div>
+            <div class="info-row">
+              <span class="label">ABD 10 Yıllık Tahvil</span>
+              <span id="macro-usdtry" class="regime-value">—</span>
+            </div>
+            <div class="info-row">
+              <span class="label">Kurumsal Kredi Spreadi (Baa−10Y)</span>
+              <span id="macro-hy-oas" class="regime-value">—</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- PAGE 4: HISTORY -->
+        <section id="page-history" class="tab-page">
+          <!-- Backtesting Navigation Panel -->
+          <div id="open-backtest-btn" class="backtest-nav-banner">
+            <div class="banner-content">
+              <h3>Main V2 Backtesting</h3>
+              <p>Snapshot içinde kesintisiz yayınlanan model NAV dönemi ve karşılaştırmalı grafik.</p>
+            </div>
+            <span class="material-symbols-rounded">chevron_right</span>
+          </div>
+
+          <!-- Live Performance Card -->
+          <div class="history-hero-card">
+            <div class="hero-header">
+              <div>
+                <h2>Reel Portföy Performansı</h2>
+                <span id="history-start-date" class="label">Başlangıç: —</span>
+              </div>
+              <div class="history-badges">
+                <span id="history-return-mode" class="badge badge-portfolio">NET · MIDAS</span>
+                <span id="live-tracking-badge" class="badge badge-live" style="display: none;">SON SNAPSHOT</span>
+              </div>
+            </div>
+
+            <div class="hero-metrics-grid">
+              <div class="metric-block">
+                <span class="label">Toplam Getiri</span>
+                <span id="history-total-port" class="value">—</span>
+              </div>
+              <div class="metric-block">
+                <span class="label">S&amp;P 500 (SPY)</span>
+                <span id="history-total-bist" class="value">—</span>
+              </div>
+            </div>
+            <div id="history-total-alpha" class="alpha-banner">Endekse Karşı Fark: +0.00%</div>
+          </div>
+
+          <div id="cost-profile-card" class="cost-profile-card" aria-label="History getiri hesabı">
+            <div class="cost-profile-copy">
+              <span class="label">History Hesabı</span>
+              <strong id="cost-profile-label">Aracı kurum · maliyet %0</strong>
+              <span>Brüt maliyetsizdir; Net seçili alış ve satış oranlarını uygular. Fiyat/işlem kaydı tutulmaz.</span>
+            </div>
+            <div class="cost-profile-actions">
+              <div class="return-view-switch" role="group" aria-label="History getiri görünümü">
+                <button type="button" data-return-view="gross">Brüt</button>
+                <button type="button" data-return-view="net" class="active">Net</button>
+              </div>
+              <button type="button" id="open-cost-profile-btn" class="icon-text-btn">
+                <span class="material-symbols-rounded">tune</span>
+                Ayarlar
+              </button>
+            </div>
+          </div>
+
+          <!-- Weekly History Lists -->
+          <div class="section-title-row">
+            <h2>Rotasyon Dönemi Performansları</h2>
+          </div>
+          <div id="weekly-history-list" class="spaced-y">
+            <!-- Dynamically populated weekly history records -->
+          </div>
+        </section>
+
+        <!-- PAGE 5: ABOUT (HAKKINDA) -->
+        <section id="page-about" class="tab-page">
+          <div class="about-card">
+            <h2>US Picker Hakkında</h2>
+            <p>US Picker, BIST Picker'ın ABD borsaları (NYSE / Nasdaq) için uyarlanmış sürümüdür: aynı değer yatırımı disiplinlerini (Graham, Buffett, Piotroski, Magic Formula vb.) ve momentum filtrelerini SEC bilançoları ve ABD fiyatları üzerinde çalıştıran, serverless bir karar destek modelidir.</p>
+          </div>
+
+          <div class="about-card features-card">
+            <h3>Sistem Neler Yapıyor? (Özellikler)</h3>
+            <p>Modelin arka planda senin için çalıştırdığı başlıca yetenekler:</p>
+
+            <p><strong>1. Hisse seçim modelleri</strong></p>
+            <ul>
+              <li><strong>Buffett (Kalite):</strong> yüksek ve tutarlı özkaynak kârlılığı (ROE), düşük borç.</li>
+              <li><strong>Graham & DCF (Değer):</strong> içsel değere göre iskonto ve güvenlik marjı.</li>
+              <li><strong>Piotroski F-Skor:</strong> 9 maddelik mali sağlamlık kontrolü.</li>
+              <li><strong>Magic Formula & Lynch (PEG):</strong> ucuz + kaliteli ve makul büyüme.</li>
+              <li><strong>Momentum & Teknik:</strong> 200 gün ortalama üstü, göreli güç, RSI/hacim.</li>
+              <li><strong>Sektöre özel modeller:</strong> Banka, sigorta ve REIT'ler ayrı modelle ölçülür (SEC SIC koduna göre).</li>
+            </ul>
+
+            <p><strong>2. Portföy kurgusu (Index-Aware V2)</strong></p>
+            <ul>
+              <li>Model skoru + S&amp;P 500'e (SPY) göreli güç + teknik harmanı ile en iyi 5 hisse.</li>
+              <li>En az 2 S&amp;P 500 hissesi, en fazla 1 S&amp;P 500-dışı; sektör başına en fazla 2, banka en fazla 2.</li>
+              <li>Aşırı benzer hisseleri elemek için korelasyon filtresi (0,70).</li>
+              <li>Tutulan güçlü hisseyi gereksiz yere değiştirmeme (turnover koruması).</li>
+            </ul>
+
+            <p><strong>3. Zamanlama & disiplin</strong></p>
+            <ul>
+              <li><strong>2 haftada bir rotasyon</strong> (Pazartesi); aldığını sonraki rotasyona kadar tut.</li>
+              <li><strong>4 seviyeli nakit rejimi</strong> (NORMAL / CAUTION / DEFENSIVE / RISK_OFF): volatilite + makro (kurumsal kredi spreadi, reel faiz) harmanı, ani gidiş-gelişi önleyen histerezis.</li>
+            </ul>
+
+            <p><strong>4. Risk yönetimi</strong></p>
+            <ul>
+              <li><strong>ATR-tabanlı stop-loss</strong> (hissenin kendi oynaklığına göre) + yukarı kilitlenen <strong>trailing stop</strong>.</li>
+              <li>Hedef fiyat: DCF içsel değeri ya da model-implied (kartta hangisi olduğu belirtilir).</li>
+              <li>Günlük çıkış kontrolü; stop/hedef tetiklenince Telegram uyarısı, boşalan yer sonraki rotasyona kadar nakitte.</li>
+              <li>Pozisyon sürekliliği: tutulan hisse orijinal model maliyet esasını korur (her rotasyonda sıfırlanmaz).</li>
+            </ul>
+
+            <p><strong>5. Enflasyon & makro düzeltmeleri</strong></p>
+            <ul>
+              <li>Bilançolar SEC'e ilk verildiği haliyle ve yayın tarihinden sonra kullanılır; hisse bölünmeleri otomatik düzeltilir.</li>
+              <li>Fed faizi, 10 yıllık tahvil, ABD TÜFE, kurumsal kredi spreadi (FRED) ve hisse risk primi (Damodaran) canlı beslenir.</li>
+            </ul>
+
+            <p><strong>6. Güven & şeffaflık</strong></p>
+            <ul>
+              <li>Backtest kapıları: T-1 tamamlanmış veri → T ilk açılış, slippage stresi, drawdown ve fiyat-anomali denetimi.</li>
+              <li>Point-in-time & survivorship korumaları (geçmişi olduğu gibi kullanma).</li>
+              <li>Nominal dolar getirisinin yanında reel (ABD TÜFE) ve kuyruk-risk ölçümleri.</li>
+              <li>Günlük evren yenileme: NYSE/Nasdaq'ta yeterince likit şirketler (ortalama günlük işlem en az $20M).</li>
+            </ul>
+
+            <p class="muted-note">Not: Model bir yatırım danışmanı değildir; pozisyon büyüklüğü ve zarar toleransı sana aittir.</p>
+          </div>
+
+          <div class="about-card usage-card">
+            <h3>Bu Programla Nasıl Yatırım Yapılır?</h3>
+            <div class="usage-flow">
+              <div class="flow-step">
+                <span>1</span>
+                <p><strong>Rotasyon 2 haftada bir Pazartesi yapılır.</strong> Portföy önceki tamamlanmış seans verisiyle borsa açılmadan hazırlanır. Önce SAT, sonra AL emirlerini ilk açılışta ver. Ekrandaki model referansı model denetimi içindir; History sekmesinde getiriyi maliyetsiz veya seçtiğin broker maliyetleriyle karşılaştırabilirsin. <strong>Aldığın hisseyi 2 hafta tutacaksın</strong> — stop uyarısı hariç sonraki rotasyona kadar işlem yapma.</p>
+              </div>
+              <div class="flow-step">
+                <span>2</span>
+                <p><strong>Rotasyonlar arasında yalnızca kırmızı uyarılara tepki ver.</strong> Model stop-loss / hedef fiyat tetiklenirse pozisyonu otomatik kapatır ve ekranda "Rotasyon Arasında Çıkıldı" bölümünde gösterir — aynı gün sen de sat; yeri sonraki rotasyona kadar nakitte kalır. Uyarı yoksa hiçbir şey yapma; ara haftadaki skor oynamalarına göre işlem yapma, erken satış modelin ölçülmüş avantajını bozar.</p>
+              </div>
+              <div class="flow-step">
+                <span>3</span>
+                <p><strong>Nakit rejimini pozisyon büyüklüğüne yansıt.</strong> NORMAL = tam hisse. CAUTION %25, DEFENSIVE %50, RISK_OFF %75 nakit önerir; Market sekmesindeki karta bak ve her pozisyonu o oranda küçült. Rejim otomatik satış yapmaz, ağırlık tavsiyesidir.</p>
+              </div>
+              <div class="flow-step">
+                <span>4</span>
+                <p><strong>Fiyat etiketini kontrol et.</strong> "15 DK GEC." canlıya yakın fiyattır, karar için onu kullan. "SNAPSHOT" etiketi görürsen fiyat eskidir; emir vermeden broker ekranından teyit et.</p>
+              </div>
+              <div class="flow-step">
+                <span>5</span>
+                <p><strong>Kişisel risk limitini sabitle.</strong> ABD seansı İstanbul saatiyle genelde 16:30'da açılır (ABD yaz saati geçişlerinde bir saat kayar). Pozisyon büyüklüğünü ve maksimum zarar toleransını işlemden önce belirle; model güçlü olsa bile kaldıraç kullanma, modelin seçmediği hisseyi portföye katma.</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="about-card investor-grade-card">
+            <div class="about-inline-header">
+              <h3>Güven Kontrolü</h3>
+              <span class="badge">DOĞRULAMA SÜRÜYOR</span>
+            </div>
+            <p>ABD sürümünün geçmiş testi ve ileri dönem (kağıt üzerinde) doğrulaması sürüyor. Aşağıdaki ağırlıklar BIST'te doğrulanmış başlangıç değerleridir; ABD verisinde ayrıca kalibre edilecek. Güncel backtest, Backtesting panelindeki haftalık denetimde gösterilir. Karar desteğidir, garanti değildir.</p>
+          </div>
+
+          <div class="about-card">
+            <h3>Model Ağırlıkları (ALPHA temel set)</h3>
+            <div class="about-weight-row">
+              <span>Değer — Graham + DCF İçsel Değer</span>
+              <strong>%30</strong>
+            </div>
+            <div class="about-weight-row">
+              <span>Momentum (12-1, akademik skip)</span>
+              <strong>%25</strong>
+            </div>
+            <div class="about-weight-row">
+              <span>Buffett Kalite (Reel ROE, Owner Earnings)</span>
+              <strong>%15</strong>
+            </div>
+            <div class="about-weight-row">
+              <span>Piotroski F-Score Finansal Güç</span>
+              <strong>%15</strong>
+            </div>
+            <div class="about-weight-row">
+              <span>Büyüme (Lynch PEG, Magic Formula)</span>
+              <strong>%10</strong>
+            </div>
+            <div class="about-weight-row">
+              <span>Teknik Trend Onayı</span>
+              <strong>%5</strong>
+            </div>
+            <p class="signals-desc" style="margin-top:10px;">Piyasa rejimi (BULL / BEAR / volatilite) değiştiğinde motor bu ağırlıkları rejim setine göre otomatik kaydırır — örn. ayı piyasasında kalite ve değer ağırlığı artar, büyüme azalır. Banka, holding, GYO ve sigorta şirketleri kendi sektörel modelleriyle puanlanır.</p>
+          </div>
+
+          <div class="about-card">
+            <h3>Portföy Yönetim Kuralları</h3>
+            <ul class="about-rules-list">
+              <li><strong>Konsantre Portföy:</strong> Model her rebalansta en fazla 5 ideal şirkete odaklanır; sektör başına en fazla 2 hisse ve yüksek korelasyonlu çiftler filtrelenir.</li>
+              <li><strong>2 Haftalık Rotasyon:</strong> Portföy 2 haftada bir Pazartesi sabahı rebalans edilir; alınan hisse bir sonraki rotasyona kadar (2 hafta) tutulur. Kadans, 2018-2026 walk-forward backtest kalibrasyonuyla seçildi (haftalık al-sata göre daha yüksek getiri, daha düşük drawdown ve yarıya yakın işlem maliyeti). Stop-loss kontrolü ise her gün çalışmaya devam eder.</li>
+              <li><strong>Turnover Koruması:</strong> Portföydeki hisse, üst sıralamadan belirgin şekilde düşmedikçe modelde tutulur; gereksiz al-sat maliyeti azaltılır.</li>
+              <li><strong>Otomatik Stop-Loss:</strong> Fiyat ATR-tabanlı stop seviyesinin (girişten ~%10-25) altına inerse veya hedef fiyata ulaşırsa model pozisyonu hafta içinde otomatik kapatır ve ekranda gösterir.</li>
+              <li><strong>Nakit Koruma:</strong> Piyasa ve makro stres birleşince model otomatik olarak nakit koruma kademelerini (CAUTION, DEFENSIVE, RISK_OFF) etkinleştirir; kademeler yapışkandır, günlük gürültüyle değişmez.</li>
+            </ul>
+          </div>
+
+          <div class="about-card disclaimer">
+            <p><strong>Yasal Uyarı:</strong> Burada yer alan model çıktıları, portföy dağılımları ve analizler yatırım danışmanlığı kapsamında değildir. Geçmiş performans gelecek sonuçların garantisi olamaz.</p>
+          </div>
+        </section>
+
+      </main>
+
+      <!-- Bottom Tab Navigation Bar -->
+      <nav class="bottom-nav">
+        <button type="button" class="nav-item active" data-tab="picks">
+          <span class="material-symbols-rounded">home</span>
+          <span class="nav-label">Portföy</span>
+        </button>
+        <button type="button" class="nav-item" data-tab="browse">
+          <span class="material-symbols-rounded">search</span>
+          <span class="nav-label">Keşfet</span>
+        </button>
+        <button type="button" class="nav-item" data-tab="market">
+          <span class="material-symbols-rounded">public</span>
+          <span class="nav-label">Piyasa</span>
+        </button>
+        <button type="button" class="nav-item" data-tab="history">
+          <span class="material-symbols-rounded">history</span>
+          <span class="nav-label">Geçmiş</span>
+        </button>
+        <button type="button" class="nav-item" data-tab="about">
+          <span class="material-symbols-rounded">info</span>
+          <span class="nav-label">Hakkında</span>
+        </button>
+      </nav>
+
+    </div>
+
+    <!-- 3. SLIDING SHEETS / OVERLAYS -->
+
+    <!-- Detail Sheet overlay -->
+    <div id="detail-sheet" class="overlay-sheet">
+      <header class="sheet-header" aria-label="Hisse detay başlığı">
+        <button type="button" id="close-detail-btn" class="sheet-close-btn" aria-label="Hisse detayını kapat">
+          <span class="material-symbols-rounded">close</span>
+        </button>
+        <div class="sheet-title-container">
+          <h2 id="detail-ticker" class="detail-title">—</h2>
+          <span id="detail-in-portfolio-badge" class="badge badge-portfolio" style="display: none;">PORTFÖYDE</span>
+        </div>
+      </header>
+
+      <div id="detail-scroll-content" class="sheet-scroll-body">
+
+        <!-- Smart Signal Warning Banner -->
+        <div id="detail-signal-banner" class="signal-banner" style="display: none;">
+          <span class="material-symbols-rounded">warning</span>
+          <span id="detail-signal-text">Modelden sat sinyali üretildi.</span>
+        </div>
+
+        <!-- Basic Info block -->
+        <div class="detail-card info-card">
+          <h3 id="detail-name" class="company-name">—</h3>
+          <div class="info-meta-row">
+            <div>
+              <span class="label">Sektör</span>
+              <span id="detail-sector" class="value">—</span>
+            </div>
+            <div>
+              <span class="label">Free Float</span>
+              <span id="detail-float" class="value">—</span>
+            </div>
+            <div>
+              <span class="label">Piyasa Sınıfı</span>
+              <span id="detail-class" class="value">—</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Price and Target Price lane -->
+        <div class="detail-card">
+          <div class="price-header-row">
+            <div>
+              <span class="label">Güncel Fiyat</span>
+              <div class="price-val-block">
+                <span id="detail-price-val" class="price-val">—</span>
+                <span id="detail-live-indicator" class="badge badge-snapshot" style="display: none;">SNAPSHOT</span>
+              </div>
+            </div>
+            <div style="text-align: right;">
+              <span class="label">Model Skoru</span>
+              <span id="detail-model-score" class="score-val">—</span>
+            </div>
+          </div>
+
+          <!-- Visual Stop-Target Price Lane Bar -->
+          <div class="price-lane-container">
+            <div class="lane-prices">
+              <span id="lane-stop-label">Stop: —</span>
+              <span id="lane-target-label">Hedef: —</span>
+            </div>
+            <div class="price-lane-track">
+              <div id="price-lane-progress" class="price-lane-progress-bar"></div>
+              <div id="price-lane-pin" class="price-lane-pin"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ApexCharts: Price Chart (730d) -->
+        <div class="detail-card">
+          <h4>Fiyat Grafiği (2 Yıl)</h4>
+          <div id="detail-price-chart" class="chart-container"></div>
+        </div>
+
+        <!-- Investment Thesis / Core Strengths -->
+        <div class="detail-card">
+          <h4>Yatırım Tezi &amp; Güçlü Faktörler</h4>
+          <ul id="detail-thesis-list" class="thesis-list">
+            <!-- Evaluated strengths -->
+          </ul>
+        </div>
+
+        <!-- ApexCharts: Factor Quarterly Breakdown -->
+        <div class="detail-card">
+          <h4>Faktör Gelişimi (Çeyreklik)</h4>
+          <div id="detail-factor-chart" class="chart-container"></div>
+        </div>
+
+        <!-- Key Financial metrics cards -->
+        <div class="detail-card">
+          <h4>Temel Finansal Metrikler</h4>
+          <div class="financial-grid">
+            <div class="fin-metric-box">
+              <span class="label">Düzeltilmiş ROE</span>
+              <span id="fin-roe" class="value">—</span>
+            </div>
+            <div id="fin-fcf-box" class="fin-metric-box">
+              <span class="label">Free Cash Flow</span>
+              <span id="fin-fcf" class="value">—</span>
+            </div>
+            <div class="fin-metric-box">
+              <span class="label">Reel EPS Büyümesi</span>
+              <span id="fin-eps-growth" class="value">—</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sector Benchmarking -->
+        <div class="detail-card">
+          <h4>Sektör Karşılaştırması</h4>
+          <div class="benchmark-content">
+            <div id="detail-benchmark-text" class="bench-desc">—</div>
+            <table class="benchmark-table">
+              <thead>
+                <tr>
+                  <th>Rasyo</th>
+                  <th>Şirket</th>
+                  <th>Sektör Medyanı</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Düzeltilmiş ROE</td>
+                  <td id="bench-company-roe">—</td>
+                  <td id="bench-sector-roe">—</td>
+                </tr>
+                <tr>
+                  <td>Düzeltilmiş ROA</td>
+                  <td id="bench-company-roa">—</td>
+                  <td id="bench-sector-roa">—</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Advanced Details Accordion Toggle -->
+        <div class="collapsible-section">
+          <button type="button" id="detail-advanced-toggle" class="collapsible-header-btn">
+            <span>Gelişmiş Analiz Verileri (Enflasyon Muhasebesi)</span>
+            <span class="material-symbols-rounded icon-arrow">expand_more</span>
+          </button>
+
+          <div id="detail-advanced-body" class="collapsible-body-content" style="display: none;">
+
+            <!-- Audit warnings if related party > 15% -->
+            <div id="audit-warning-card" class="audit-warning-box" style="display: none;">
+              <span class="material-symbols-rounded">report</span>
+              <p><strong>İlişkili Taraf Risk Uyarısı:</strong> Satışların %<span id="audit-related-pct">0</span>'ı ilişkili taraflarla yapılmıştır. Risk unsuru teşkil edebilir.</p>
+            </div>
+
+            <!-- Reported vs Adjusted net income (TAS 29 effects) -->
+            <div class="advanced-data-group">
+              <h5>Net Kar Analizi (TAS 29 Etkileri)</h5>
+              <div class="info-row">
+                <span class="label">Raporlanan Net Dönem Karı</span>
+                <span id="adv-reported-net" class="value">—</span>
+              </div>
+              <div class="info-row">
+                <span class="label">Parasal Pozisyon Kazanç/Kaybı</span>
+                <span id="adv-monetary-gain" class="value">—</span>
+              </div>
+              <div class="info-row highlight">
+                <span class="label">ALPHA Düzeltilmiş Net Kar</span>
+                <span id="adv-adjusted-net" class="value">—</span>
+              </div>
+            </div>
+
+            <!-- DCF Intrinsic Value parameters -->
+            <div class="advanced-data-group">
+              <h5>İndirgenmiş Nakit Akışları (DCF) Detayı</h5>
+              <div class="info-row">
+                <span class="label">DCF Hesaplanan İçsel Değer</span>
+                <span id="adv-dcf-intrinsic" class="value">—</span>
+              </div>
+              <div class="info-row">
+                <span class="label">DCF Büyüme Oranı (İlk 5 Yıl)</span>
+                <span id="adv-dcf-growth" class="value">—</span>
+              </div>
+              <div class="info-row">
+                <span class="label">İskonto Oranı (WACC)</span>
+                <span id="adv-dcf-discount" class="value">—</span>
+              </div>
+              <div class="info-row">
+                <span class="label">Hesaplanan Güvenlik Marjı (MOS)</span>
+                <span id="adv-dcf-mos" class="value">—</span>
+              </div>
+            </div>
+
+            <!-- Quality check lists -->
+            <div class="advanced-data-group">
+              <h5>Niteliksel Kontrol Kriterleri</h5>
+              <div id="adv-quality-flags" class="flags-tags-container">
+                <!-- Checklist tags -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Backtesting Sheet overlay -->
+    <div id="backtest-sheet" class="overlay-sheet">
+      <header class="sheet-header" aria-label="Backtest başlığı">
+        <button type="button" id="close-backtest-btn" class="sheet-close-btn" aria-label="Backtest ekranını kapat">
+          <span class="material-symbols-rounded">close</span>
+        </button>
+        <div>
+          <h2>Main V2 Backtesting</h2>
+          <span id="bt-period-label" class="label">—</span>
+        </div>
+      </header>
+
+      <div class="sheet-scroll-body">
+        <!-- Cumulative stats panel -->
+        <div class="detail-card backtest-hero-card">
+          <div class="hero-metrics-grid">
+            <div class="metric-block">
+              <span class="label">Model Toplam NAV</span>
+              <span id="bt-nav-return" class="value">—</span>
+            </div>
+            <div class="metric-block">
+              <span class="label">S&amp;P 500 (SPY)</span>
+              <span id="bt-index-return" class="value">—</span>
+            </div>
+          </div>
+          <div id="bt-alpha-banner" class="alpha-banner">Dönemsel Model Alphası: +0.00%</div>
+        </div>
+
+        <div class="detail-card">
+          <div class="section-title-row compact">
+            <h4>Yatırımcı Güven Kontrolleri</h4>
+            <span id="bt-audit-status" class="badge badge-snapshot">SNAPSHOT</span>
+          </div>
+          <div id="bt-audit-grid" class="audit-check-grid">
+            <div class="audit-check-row">
+              <span class="audit-check-label">Execution</span>
+              <strong id="bt-audit-execution">—</strong>
+            </div>
+            <div class="audit-check-row">
+              <span class="audit-check-label">Slippage stres</span>
+              <strong id="bt-audit-slippage">—</strong>
+            </div>
+            <div class="audit-check-row">
+              <span class="audit-check-label">Max drawdown</span>
+              <strong id="bt-audit-drawdown">—</strong>
+            </div>
+            <div class="audit-check-row">
+              <span class="audit-check-label">Fiyat sıçrama audit</span>
+              <strong id="bt-audit-price-jumps">—</strong>
+            </div>
+            <div class="audit-check-row">
+              <span class="audit-check-label">Survivorship</span>
+              <strong id="bt-audit-survivorship">—</strong>
+            </div>
+          </div>
+          <p id="bt-audit-note" class="audit-note">—</p>
+        </div>
+
+        <!-- ApexCharts: Backtest area chart -->
+        <div class="detail-card">
+          <h4>Kümülatif NAV Grafiği</h4>
+          <div id="backtest-area-chart" class="chart-container"></div>
+        </div>
+
+        <!-- Rebalance transaction log list -->
+        <div class="detail-card">
+          <h4>Gerçek Portföy Rotasyonları (Backtest Değildir)</h4>
+          <div id="bt-transactions-list" class="transactions-log-list">
+            <!-- Dynamically populated transaction logs -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Broker cost profile Sheet overlay -->
+    <div id="cost-profile-sheet" class="overlay-sheet">
+      <header class="sheet-header" aria-label="Maliyet profili başlığı">
+        <button type="button" id="close-cost-profile-btn" class="sheet-close-btn" aria-label="Maliyet profilini kapat">
+          <span class="material-symbols-rounded">close</span>
+        </button>
+        <div>
+          <h2>Broker ve Maliyet</h2>
+          <span class="label">Brüt ve net sonucu birlikte izle</span>
+        </div>
+      </header>
+      <div class="sheet-scroll-body cost-form-sheet">
+        <form id="cost-profile-form" class="cost-form">
+          <label for="broker-name">Broker profili</label>
+          <input id="broker-name" name="broker" type="text" maxlength="40" value="Aracı kurum">
+          <div class="cost-input-grid">
+            <div>
+              <label for="buy-cost-pct">Alış maliyeti (%)</label>
+              <input id="buy-cost-pct" name="buyCostPct" type="number" min="0" max="100" step="0.001" inputmode="decimal" value="0">
+            </div>
+            <div>
+              <label for="sell-cost-pct">Satış maliyeti (%)</label>
+              <input id="sell-cost-pct" name="sellCostPct" type="number" min="0" max="100" step="0.001" inputmode="decimal" value="0">
+            </div>
+          </div>
+          <p class="cost-settings-note">
+            Varsayılan alış ve satış maliyeti %0'dır; kendi aracı kurumunun ABD hisse komisyonunu girersen History getirileri net hesaplanır.
+            İleride ücret gelirse buradan değiştirebilirsin. Yalnızca bu maliyet tercihi saklanır; fiyat ve işlem kaydı tutulmaz.
+          </p>
+          <button type="submit" class="primary-form-btn">Maliyet Ayarını Kaydet</button>
+        </form>
+      </div>
+    </div>
+
+  </div>
+
+</body>
+</html>

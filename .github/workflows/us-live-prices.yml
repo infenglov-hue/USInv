@@ -1,0 +1,58 @@
+name: US Picker Live Prices
+
+# Near-live quotes for the PWA every 30 minutes through the US session
+# (13:30-20:00 UTC in EDT, 14:30-21:00 UTC in EST). Uses the compact
+# live_tickers.json contract from the published site, never the big DB.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "7,37 13-21 * * 1-5"
+
+concurrency:
+  group: us-picker-live-prices
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
+      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+      SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check -e .
+      - name: Build live_prices.json
+        run: |
+          set -euxo pipefail
+          curl -fsS "${SITE_URL}/live_tickers.json" -o live_tickers.json
+          python -m us_picker export-live-prices --tickers-file live_tickers.json --output live_prices.json
+      - name: Push to live-data branch
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          cp live_prices.json /tmp/live_prices.json
+          git fetch --depth 1 origin live-data || true
+          if git show-ref --verify --quiet refs/remotes/origin/live-data; then
+            git checkout -B live-data origin/live-data
+          else
+            git checkout --orphan live-data && git rm -rfq .
+          fi
+          cp /tmp/live_prices.json live_prices.json
+          git add live_prices.json
+          if [ -n "$(git status --porcelain -- live_prices.json)" ]; then
+            git commit -m "Update US live prices"
+            git push origin live-data
+          fi

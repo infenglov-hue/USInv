@@ -16,3 +16,6 @@ build/
 dist/
 *.egg-info/
 *.duckdb
+/mobile-feed-dist/
+/site/
+/logs/

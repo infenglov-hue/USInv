@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "us-picker-pwa",
+      "runtimeExecutable": "C:/Users/kerem/.venvs/us-picker/Scripts/python.exe",
+      "runtimeArgs": ["-m", "http.server", "8765", "--directory", "site"],
+      "port": 8765
+    }
+  ]
+}

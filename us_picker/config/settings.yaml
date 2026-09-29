@@ -1,0 +1,59 @@
+# US Picker — General Settings (BIST Picker port)
+
+database:
+  path: "data/us_picker.db"
+
+rate_limits:
+  default_delay_sec: 1.0
+  sec_delay_sec: 0.12        # EDGAR allows ~10 req/s
+  alpaca_delay_sec: 0.31     # Alpaca Basic: 200 req/min
+
+cache:
+  directory: "data/cache"
+  ttl_hours:
+    prices: 24
+    financials: 168       # 7 days
+    company_list: 168     # 7 days
+    macro: 24
+    insider: 72           # 3 days
+  max_age_days: 30
+
+# Investable pool kept in the database. The selector applies its own as-of
+# liquidity filters on top; this only bounds what is downloaded.
+universe:
+  min_price_usd: 5.0
+  min_avg_dollar_volume_usd: 20_000_000   # 20-session average close*volume
+  keep_ratio: 0.5                         # hysteresis for names already in the pool
+  liquidity_lookback_days: 30
+
+logging:
+  console_level: "INFO"
+  file_level: "DEBUG"
+  log_dir: "logs"
+  log_file: "us_picker.log"
+
+fetch:
+  price_history_days: 3800        # ~10 years
+  price_history_start: "2016-01-01"   # Alpaca SIP history begins 2016
+  macro_history_start: "2014-01-01"
+  recent_filing_days: 10          # financial refresh looks back this far on EDGAR
+  sec_workers: 4
+  insider_history_days: 180
+
+gemini:
+  api_key: ""               # Prefer GEMINI_API_KEY env var
+
+telegram:
+  bot_token: ""             # Prefer TELEGRAM_BOT_TOKEN env var or config
+  chat_id: ""               # Prefer TELEGRAM_CHAT_ID env var or config
+  enabled: true
+
+# BIST Picker detected bonus-issue cliffs from raw closes because IsYatirim
+# did not adjust them. Alpaca delivers a vendor total-return adjusted close,
+# so the heuristic stays off: US moves beyond +-30% are real (earnings gaps).
+price_adjustment:
+  enabled: false
+  low_ratio: 0.75
+  high_ratio: 1.30
+  max_gap_days: 7
+  ipo_grace_days: 30

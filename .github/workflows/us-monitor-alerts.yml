@@ -1,0 +1,61 @@
+name: US Picker Alerts
+
+# Telegram stop/target/SEC-filing/rotation alerts for open positions, after
+# each feed run and three times through the US session (UTC).
+
+on:
+  workflow_run:
+    workflows: ["US Picker Feed"]
+    types: [completed]
+  workflow_dispatch:
+  schedule:
+    - cron: "0 15,17,19 * * 1-5"
+
+concurrency:
+  group: us-picker-alerts
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Runtime DB lives on this repo's private *draft* release "state-current"
+      # (drafts are visible only to collaborators); GITHUB_TOKEN can manage it.
+      STATE_REPOSITORY: ${{ github.repository }}
+      ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
+      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+      US_PICKER_SEC_EMAIL: ${{ secrets.USINV_EDGAR_EMAIL }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      US_PICKER_DB_PATH: ${{ github.workspace }}/data/us_picker.db
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --disable-pip-version-check -e ".[enhanced]"
+      - name: Restore database and alert state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euxo pipefail
+          mkdir -p data
+          python scripts_picker/state_db_artifact.py pull --repository "${STATE_REPOSITORY}" --target data/us_picker.db
+          gh release download state-current --repo "${STATE_REPOSITORY}" --pattern alerts_state.json --dir data --clobber || true
+      - run: python -m us_picker monitor-alerts
+      - name: Save alert state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -f data/alerts_state.json ]; then
+            gh release upload state-current data/alerts_state.json --repo "${STATE_REPOSITORY}" --clobber
+          fi

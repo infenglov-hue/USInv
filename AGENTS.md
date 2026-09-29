@@ -1,4 +1,34 @@
-# AGENTS.md — Rules for AI coding agents working on USInv
+# AGENTS.md — USInv
+
+## Active product (2026-09-29): `us_picker/` + `pwa/`
+
+The user wants BIST Picker (MobileInv) running on the US market. `us_picker/`
+is a port of MobileInv's `bist_picker/` backend (commit `b3935e3`, pre-"V2") with
+a US data layer; `pwa/` is the BIST Picker PWA v24 with US labels. Read
+`docs/US_PICKER.md` first, then MobileInv's `AGENTS.md` / `docs/MODEL_AND_BACKTEST.md`
+for model and acceptance rules (they apply here unchanged).
+
+Rules for `us_picker/`:
+
+- The user's language is Turkish.
+- Keep the diff to upstream BIST Picker small: change market-specific pieces,
+  not the model, unless a US backtest under the MobileInv acceptance gate says so.
+- No performance claim without a reproducible run artifact. The old claims in
+  `docs/HANDOFF.md`, `docs/PROGRESS.md`, `CHATGPT_INSTRUCTIONS.md` and
+  `docs/experiments/final_holdout_report.md` are invalid (random-number
+  simulator, hand-written snapshot).
+- Point-in-time: statements are as-first-filed with `publication_date` = filing
+  date + 1; S&P 500 membership is point-in-time; split handling via
+  `utils/splits.py` must not be bypassed by reading `DailyPrice.close` together
+  with statement share counts.
+- Tests: `python -m pytest -q us_picker/tests tests_picker`; PWA static checks in `pwa/`.
+- Never commit secrets or the runtime database; the DB lives outside the repo
+  (`US_PICKER_DB_PATH`).
+
+---
+
+## Legacy rules for the old `usinv/` package (kept for history)
+
 
 Read this first, then `docs/BUILD_GUIDE.md`, then `docs/CODEX_TASKS.md` for your
 current task and the spec/source-register rows that task references. Do not
