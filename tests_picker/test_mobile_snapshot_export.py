@@ -219,6 +219,30 @@ def test_export_mobile_snapshot_writes_expected_tables(source_engine, tmp_path):
         assert price_count == 2
 
 
+def test_export_omits_unused_historical_streaks(source_engine, tmp_path, monkeypatch):
+    scoring_date = date(2026, 3, 19)
+    streak_calls = []
+
+    def fake_streaks(as_of):
+        streak_calls.append(as_of)
+        return {1: 7}
+
+    monkeypatch.setattr(read_service, "get_alpha_snapshot_streaks", fake_streaks)
+    score = read_service.get_scoring_results(scoring_date=scoring_date).iloc[0]
+    assert score["alpha_snapshot_streak"] == 7
+
+    exported = export_mobile_snapshot(tmp_path / "mobile_snapshot.db")
+
+    assert streak_calls == [scoring_date]
+    with sqlite3.connect(exported) as connection:
+        diagnostics = connection.execute(
+            "SELECT alpha_core_eligible, alpha_research_bucket, alpha_snapshot_streak "
+            "FROM scoring_latest WHERE ticker = ?",
+            ("TEST1",),
+        ).fetchone()
+    assert diagnostics == (score["alpha_core_eligible"], score["alpha_research_bucket"], None)
+
+
 def test_latest_price_date_ignores_index_only_update(source_engine, tmp_path):
     session = sessionmaker(bind=source_engine)()
     try:
