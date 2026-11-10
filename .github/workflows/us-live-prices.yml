@@ -18,6 +18,7 @@ permissions:
 
 jobs:
   live:
+    if: vars.US_PICKER_PUBLIC_MARKET_DATA == 'true' && github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -33,12 +34,43 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: python -m pip install --disable-pip-version-check -e .
-      - name: Build live_prices.json
+      - name: Download live ticker contract
+        id: ticker-contract
         run: |
-          set -euxo pipefail
-          curl -fsS "${SITE_URL}/live_tickers.json" -o live_tickers.json
+          set -euo pipefail
+          status=$(curl --silent --show-error --retry 2 --max-time 30 \
+            --output live_tickers.json --write-out '%{http_code}' "${SITE_URL}/live_tickers.json")
+          case "${status}" in
+            200) echo 'ready=true' >> "${GITHUB_OUTPUT}" ;;
+            404) echo 'Live ticker contract is not deployed yet.' ;;
+            *) echo "::error::Live ticker contract request failed (HTTP ${status})."; exit 1 ;;
+          esac
+      - name: Check XNYS session
+        id: session
+        if: steps.ticker-contract.outputs.ready == 'true'
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timezone
+          from os import environ
+          from zoneinfo import ZoneInfo
+
+          from usinv.calendar import default_calendar
+
+          now = datetime.now(timezone.utc)
+          today = now.astimezone(ZoneInfo("America/New_York")).date()
+          calendar = default_calendar()
+          session = calendar.session(today) if calendar.is_session(today) else None
+          if session and (environ["GITHUB_EVENT_NAME"] == "workflow_dispatch" or session.open_at <= now <= session.close_at):
+              with open(environ["GITHUB_OUTPUT"], "a") as output:
+                  output.write("ready=true\n")
+          PY
+      - name: Build live_prices.json
+        if: steps.session.outputs.ready == 'true'
+        run: |
+          set -euo pipefail
           python -m us_picker export-live-prices --tickers-file live_tickers.json --output live_prices.json
       - name: Push to live-data branch
+        if: steps.session.outputs.ready == 'true'
         run: |
           set -euxo pipefail
           git config user.name "github-actions[bot]"

@@ -236,18 +236,17 @@ def fetch(
     "--grace-days",
     type=int,
     default=None,
-    help="Extra slack (days) on top of the SPK deadline before alarming.",
+    help="Extra days beyond the model's expected filing lag before alarming.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 def check_financial_freshness_cmd(
     min_companies: int | None, grace_days: int | None, as_json: bool
 ) -> None:
-    """Alarm (exit 1) when quarterly financials lag the SPK filing calendar.
+    """Alarm (exit 1) when broadly reported quarterly financials are stale.
 
     Compares the newest broadly-populated period_end in financial_statements
-    with the newest quarter whose SPK filing deadline (+grace) has passed —
-    i.e. the period the scoring PIT filter already expects to see. Used as a
-    red-job gate by the financial-refresh workflow.
+    with the newest quarter the scoring model expects to see after its filing
+    lag and grace period. Used as a gate by the financial-refresh workflow.
     """
     import json as _json
 
@@ -278,7 +277,7 @@ def check_financial_freshness_cmd(
         )
         console.print(f"Financial statement freshness: {status}")
         console.print(
-            f"  expected latest period (SPK calendar): {report['expected_period_end']}"
+            f"  expected latest reporting period:     {report['expected_period_end']}"
         )
         console.print(
             f"  actual latest period in DB:            {report['actual_period_end']}"
@@ -287,7 +286,7 @@ def check_financial_freshness_cmd(
         if not report["fresh"]:
             console.print(
                 "  [yellow]Fundamentals lag the filing calendar — run "
-                "`bist fetch --financials-only` (or check the financial-refresh "
+                "`us-picker fetch --financials-only` (or check the financial-refresh "
                 "workflow).[/yellow]"
             )
 
@@ -308,7 +307,7 @@ def check_financial_freshness_cmd(
     "--grace-days",
     type=int,
     default=None,
-    help="Extra slack (days) on top of the SPK deadline before alarming.",
+    help="Extra days beyond the model's expected filing lag before alarming.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 def check_score_input_freshness_cmd(
@@ -345,7 +344,7 @@ def check_score_input_freshness_cmd(
         )
         console.print(f"Financial score-input freshness: {status}")
         console.print(
-            f"  expected latest period (SPK calendar): {report['expected_period_end']}"
+            f"  expected latest reporting period:     {report['expected_period_end']}"
         )
         console.print(
             f"  actual latest audited score input:     {report['actual_period_end']}"
@@ -354,7 +353,7 @@ def check_score_input_freshness_cmd(
         if not report["fresh"]:
             console.print(
                 "  [yellow]Raw filings have not reached annual/TTM score inputs — "
-                "run `bist clean` and inspect MetricsCalculator errors.[/yellow]"
+                "run `us-picker clean` and inspect MetricsCalculator errors.[/yellow]"
             )
 
     if not report["fresh"]:
@@ -937,12 +936,14 @@ def prepare_portfolio(
     strategy: str,
 ) -> None:
     """Score T-1 completed data and prepare a portfolio effective on T."""
+    from usinv.calendar import EXCHANGE_TIMEZONE, default_calendar
+
     if next_rotation and effective_date is not None:
         raise click.UsageError(
             "--next-rotation and --effective-date are mutually exclusive"
         )
 
-    today = date.today()
+    today = datetime.now(EXCHANGE_TIMEZONE).date()
     if effective_date is not None:
         effective = effective_date.date()
     elif next_rotation:
@@ -962,6 +963,12 @@ def prepare_portfolio(
             return
     else:
         effective = today
+
+    if not default_calendar().is_session(effective):
+        if effective_date is not None:
+            raise click.UsageError(f"{effective} is not an XNYS trading session.")
+        console.print(f"[yellow]XNYS is closed on {effective}; no portfolio prepared.[/yellow]")
+        return
 
     from us_picker.db.connection import session_scope
     from us_picker.portfolio.execution import (

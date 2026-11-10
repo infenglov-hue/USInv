@@ -56,6 +56,10 @@ class TestNextRotationDate:
         assert next_rotation_date(date(2026, 7, 6), 2, ANCHOR) == date(2026, 7, 13)
         assert next_rotation_date(date(2026, 7, 12), 2, ANCHOR) == date(2026, 7, 13)
 
+    def test_holiday_rotation_shifts_to_first_trading_session(self):
+        assert next_rotation_date(date(2026, 9, 6), 2, ANCHOR) == date(2026, 9, 8)
+        assert next_rotation_date(date(2026, 9, 7), 2, ANCHOR) == date(2026, 9, 8)
+
 
 class TestShouldSkipRotation:
     CYCLE = ANCHOR  # cycle containing 2026-06-29 .. 2026-07-12

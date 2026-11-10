@@ -96,9 +96,14 @@ def next_rotation_date(
     rotation_weeks: int = DEFAULT_ROTATION_WEEKS,
     anchor_monday: date | None = None,
 ) -> date:
-    """Return the first rotation Monday strictly after ``today``."""
+    """Return the next XNYS session of a rotation cycle, shifting holidays."""
+    from usinv.calendar import default_calendar
+
+    calendar = default_calendar()
     cycle_start = rotation_cycle_start(today, rotation_weeks, anchor_monday)
+    if not calendar.is_session(cycle_start):
+        session = calendar.next_session(cycle_start).label
+        if session > today:
+            return session
     nxt = cycle_start + timedelta(weeks=max(1, int(rotation_weeks)))
-    # cycle_start <= today by construction, so nxt is always in the future
-    # except when today IS a rotation Monday — the next one is still ahead.
-    return nxt
+    return nxt if calendar.is_session(nxt) else calendar.next_session(nxt).label

@@ -1071,17 +1071,20 @@ class DataFetcher:
 
 
 def _last_complete_session_day() -> date:
-    """Today once the New York close is final (16:20 ET), else yesterday.
+    """Latest XNYS session whose close cleared the SIP delay and buffer.
 
     Rows are insert-only, so a partial intraday bar must never be stored.
     """
     from datetime import datetime
-    from zoneinfo import ZoneInfo
 
-    now = datetime.now(ZoneInfo("America/New_York"))
-    if (now.hour, now.minute) >= (16, 20):
-        return now.date()
-    return now.date() - timedelta(days=1)
+    from usinv.calendar import EXCHANGE_TIMEZONE, default_calendar
+
+    now = datetime.now(EXCHANGE_TIMEZONE)
+    today = now.date()
+    calendar = default_calendar()
+    if calendar.is_session(today) and now >= calendar.session(today).close_at + timedelta(minutes=20):
+        return today
+    return calendar.previous_session(today).label
 
 
 def symbol_missing_profile(company: Optional[Company], cik: int) -> bool:
