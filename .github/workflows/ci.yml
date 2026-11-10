@@ -38,4 +38,5 @@ jobs:
           cd pwa
           node --check app.js
           node --check sw.js
+          node tests/pwa-static-check.mjs --shell-only
           node tests/portfolio-costs-check.mjs

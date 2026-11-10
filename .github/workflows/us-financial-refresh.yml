@@ -6,6 +6,15 @@ name: US Picker Financial Refresh
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Refresh and validate a temporary copy without storing it"
+        default: true
+        type: boolean
+      financial_days:
+        description: "Calendar days of SEC filings to refresh (7–120)"
+        default: 10
+        type: number
   schedule:
     - cron: "7 9 * * 2,6"
 
@@ -18,6 +27,7 @@ permissions:
 
 jobs:
   refresh:
+    if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
@@ -25,10 +35,21 @@ jobs:
       # (drafts are visible only to collaborators); GITHUB_TOKEN can manage it.
       STATE_REPOSITORY: ${{ github.repository }}
       US_PICKER_SEC_EMAIL: ${{ secrets.USINV_EDGAR_EMAIL }}
-      ALPACA_KEY_ID: ${{ secrets.ALPACA_KEY_ID }}
-      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
       US_PICKER_DB_PATH: ${{ github.workspace }}/data/us_picker.db
+      FINANCIAL_DAYS: ${{ github.event_name == 'workflow_dispatch' && format('{0}', inputs.financial_days) || '10' }}
+      TZ: America/New_York
     steps:
+      - name: Validate required configuration
+        run: |
+          set -euo pipefail
+          if [[ -z "${US_PICKER_SEC_EMAIL}" ]]; then
+            echo '::error::Missing required Actions secret USINV_EDGAR_EMAIL.'
+            exit 1
+          fi
+          if [[ ! "${FINANCIAL_DAYS}" =~ ^[0-9]{1,3}$ ]] || (( 10#${FINANCIAL_DAYS} < 7 || 10#${FINANCIAL_DAYS} > 120 )); then
+            echo '::error::financial_days must be an integer from 7 to 120.'
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
@@ -44,19 +65,27 @@ jobs:
           mkdir -p data
           python scripts_picker/state_db_artifact.py pull \
             --repository "${STATE_REPOSITORY}" --target data/us_picker.db
-      - name: Filings, macro, clean
+      - name: Refresh and validate fundamentals privately
         run: |
-          set -euxo pipefail
-          python -m us_picker fetch --financials-only
-          python -m us_picker fetch --macro-only
-          python -m us_picker clean
+          set -euo pipefail
+          private_run() {
+            local stage=$1
+            shift
+            printf 'Running %s\n' "${stage}"
+            if ! python -m us_picker "$@" >/dev/null 2>&1; then
+              echo "::error::${stage} failed. Reproduce locally for private diagnostics."
+              exit 1
+            fi
+          }
+          private_run 'SEC filing refresh' fetch --financials-only --financial-days "${FINANCIAL_DAYS}"
+          private_run 'FRED macro refresh' fetch --macro-only
+          private_run 'Score-input preparation' clean
+          private_run 'Raw statement freshness' check-financial-freshness
+          private_run 'Score-input freshness' check-score-input-freshness
       - name: Store runtime database
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python scripts_picker/state_db_artifact.py push \
             --source data/us_picker.db --repository "${STATE_REPOSITORY}"
-      - name: Freshness gates
-        run: |
-          python -m us_picker check-financial-freshness
-          python -m us_picker check-score-input-freshness

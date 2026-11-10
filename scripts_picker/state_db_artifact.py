@@ -2,8 +2,7 @@
 
 ``store``/``restore`` move the artifact between a SQLite file and a directory
 of verified shards. ``push``/``pull`` wrap those with the transport: the
-shards live as assets on one rolling GitHub Release in the private state
-repo, not as git commits.
+shards live as assets on one rolling private GitHub draft release.
 
 Why a release and not a commit: the pipeline rewrites the whole ~100 MB
 artifact 2-3x a day, and git keeps every copy forever. By 2026-07-27 that was
@@ -17,32 +16,39 @@ verification as a git-tracked one.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
+from datetime import datetime, timezone
 import gzip
 import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 from typing import Callable, Optional, Sequence
+from uuid import uuid4
 
 
 LEGACY_NAME = "us_picker.db.gz"
 MANIFEST_NAME = "us_picker.db.gz.parts.json"
 PART_PREFIX = "us_picker.db.gz.part"
+_GENERATION_MANIFEST = re.compile(
+    r"us_picker\.db\.gz\.parts\.([0-9]{8}T[0-9]{12}Z-[0-9a-f]{12})\.json"
+)
 DEFAULT_CHUNK_BYTES = 32 * 1024 * 1024
 SQLITE_HEADER = b"SQLite format 3\x00"
 
 RELEASE_TAG = "state-current"
-RELEASE_TITLE = "Current runtime state"
+RELEASE_TITLE = "US Picker runtime state (private draft)"
 RELEASE_NOTES = (
     "Rolling runtime database artifact, replaced in place by the pipeline.\n\n"
     "Restore with `python scripts_picker/state_db_artifact.py pull --repository "
-    "<owner>/<repo> --target data/us_picker.db`. The shard manifest in "
-    "`us_picker.db.gz.parts.json` is authoritative: restore reads only the "
-    "parts it names, so an orphan asset left by a larger earlier artifact is "
-    "ignored rather than silently mixed in."
+    "<owner>/<repo> --target data/us_picker.db`. The latest generation manifest "
+    "is uploaded after all its shards and is the commit point. The previous "
+    "completed generation is retained for recovery."
 )
 
 GhRunner = Callable[..., "subprocess.CompletedProcess[str]"]
@@ -56,19 +62,32 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _validate_sqlite_header(path: Path) -> None:
+def _validate_sqlite(path: Path) -> None:
     with path.open("rb") as handle:
         header = handle.read(len(SQLITE_HEADER))
     if header != SQLITE_HEADER:
         raise ValueError(f"Restored artifact is not SQLite: {path}")
+    try:
+        with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as connection:
+            result = connection.execute("PRAGMA quick_check(1)").fetchone()
+    except sqlite3.DatabaseError as exc:
+        raise ValueError(f"SQLite quick_check failed: {path}") from exc
+    if result != ("ok",):
+        raise ValueError(f"SQLite quick_check failed: {path}")
 
 
-def restore_state_db(state_dir: Path, target: Path) -> dict[str, object]:
+def restore_state_db(
+    state_dir: Path,
+    target: Path,
+    *,
+    manifest_name: str = MANIFEST_NAME,
+    part_prefix: str = PART_PREFIX,
+) -> dict[str, object]:
     """Restore either the verified shard format or the legacy single gzip."""
 
     state_dir = state_dir.resolve()
     target = target.resolve()
-    manifest_path = state_dir / MANIFEST_NAME
+    manifest_path = state_dir / manifest_name
     legacy_path = state_dir / LEGACY_NAME
     target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -83,7 +102,7 @@ def restore_state_db(state_dir: Path, target: Path) -> dict[str, object]:
                 raise ValueError(f"State artifact has no parts: {manifest_path}")
             with compressed_path.open("wb") as combined:
                 for index, item in enumerate(expected_parts):
-                    expected_name = f"{PART_PREFIX}{index:03d}"
+                    expected_name = f"{part_prefix}{index:03d}"
                     if not isinstance(item, dict) or item.get("name") != expected_name:
                         raise ValueError(f"Invalid state part order at index {index}")
                     part_path = state_dir / expected_name
@@ -107,7 +126,7 @@ def restore_state_db(state_dir: Path, target: Path) -> dict[str, object]:
             artifact_format = "legacy-gzip"
         else:
             raise FileNotFoundError(
-                f"Missing {MANIFEST_NAME} and legacy {LEGACY_NAME} in {state_dir}"
+                f"Missing {manifest_name} and legacy {LEGACY_NAME} in {state_dir}"
             )
 
         temporary_target = target.with_name(f".{target.name}.restore.tmp")
@@ -116,7 +135,7 @@ def restore_state_db(state_dir: Path, target: Path) -> dict[str, object]:
                 "wb"
             ) as output:
                 shutil.copyfileobj(source, output, 1024 * 1024)
-            _validate_sqlite_header(temporary_target)
+            _validate_sqlite(temporary_target)
             temporary_target.replace(target)
         finally:
             temporary_target.unlink(missing_ok=True)
@@ -133,6 +152,8 @@ def store_state_db(
     state_dir: Path,
     *,
     chunk_bytes: int = DEFAULT_CHUNK_BYTES,
+    manifest_name: str = MANIFEST_NAME,
+    part_prefix: str = PART_PREFIX,
 ) -> dict[str, object]:
     """Gzip a SQLite DB and split it into GitHub-safe verified parts."""
 
@@ -140,7 +161,10 @@ def store_state_db(
     state_dir = state_dir.resolve()
     if chunk_bytes <= 0:
         raise ValueError("chunk_bytes must be positive")
-    _validate_sqlite_header(source)
+    _validate_sqlite(source)
+    wal = source.with_name(f"{source.name}-wal")
+    if wal.exists() and wal.stat().st_size:
+        raise ValueError("Checkpoint the SQLite WAL and close writers before storing runtime state")
     state_dir.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="bist_state_store_") as temp_dir:
@@ -155,7 +179,7 @@ def store_state_db(
         with compressed_path.open("rb") as compressed:
             index = 0
             while block := compressed.read(chunk_bytes):
-                name = f"{PART_PREFIX}{index:03d}"
+                name = f"{part_prefix}{index:03d}"
                 part_path = temp_root / name
                 part_path.write_bytes(block)
                 parts.append(
@@ -176,14 +200,14 @@ def store_state_db(
             "parts": parts,
         }
 
-        for stale_part in state_dir.glob(f"{PART_PREFIX}*"):
+        for stale_part in state_dir.glob(f"{part_prefix}*"):
             stale_part.unlink()
         (state_dir / LEGACY_NAME).unlink(missing_ok=True)
-        (state_dir / MANIFEST_NAME).unlink(missing_ok=True)
+        (state_dir / manifest_name).unlink(missing_ok=True)
         for item in parts:
             name = str(item["name"])
             shutil.move(str(temp_root / name), state_dir / name)
-        (state_dir / MANIFEST_NAME).write_text(
+        (state_dir / manifest_name).write_text(
             json.dumps(manifest, indent=2) + "\n",
             encoding="utf-8",
         )
@@ -235,16 +259,14 @@ def _ensure_release(
     token: Optional[str],
     runner: Optional[GhRunner],
 ) -> bool:
-    """Create the rolling release when it does not exist yet."""
+    """Create a private draft only when GitHub confirms the release is missing."""
 
-    view = _gh(
-        ["release", "view", tag, "--repo", repository],
-        token=token,
-        runner=runner,
-        check=False,
-    )
+    view = _view_release_visibility(repository, tag, token=token, runner=runner)
     if view.returncode == 0:
+        _require_draft_release(view)
         return False
+    if (view.stderr or "").strip().lower() != "release not found":
+        raise RuntimeError("GitHub could not verify the runtime release; refusing to upload state")
     _gh(
         [
             "release",
@@ -256,11 +278,36 @@ def _ensure_release(
             RELEASE_TITLE,
             "--notes",
             RELEASE_NOTES,
+            "--draft",
         ],
         token=token,
         runner=runner,
     )
+    _require_draft_release(
+        _view_release_visibility(repository, tag, token=token, runner=runner)
+    )
     return True
+
+
+def _view_release_visibility(
+    repository: str,
+    tag: str,
+    *,
+    token: Optional[str],
+    runner: Optional[GhRunner],
+) -> "subprocess.CompletedProcess[str]":
+    return _gh(
+        ["release", "view", tag, "--repo", repository, "--json", "isDraft", "--jq", ".isDraft"],
+        token=token,
+        runner=runner,
+        check=False,
+    )
+
+
+def _require_draft_release(view: "subprocess.CompletedProcess[str]") -> None:
+    view.check_returncode()
+    if (view.stdout or "").strip() != "true":
+        raise ValueError("Runtime state requires a private GitHub draft release")
 
 
 def _release_asset_names(
@@ -269,6 +316,7 @@ def _release_asset_names(
     *,
     token: Optional[str],
     runner: Optional[GhRunner],
+    check: bool = True,
 ) -> list[str]:
     listed = _gh(
         [
@@ -280,15 +328,25 @@ def _release_asset_names(
             "--json",
             "assets",
             "--jq",
-            ".assets[].name",
+            '.assets | map(select(.state == "uploaded" and .size > 0)) | sort_by(.createdAt, .id) | .[].name',
         ],
         token=token,
         runner=runner,
-        check=False,
+        check=check,
     )
     if listed.returncode != 0:
         return []
     return [line.strip() for line in (listed.stdout or "").splitlines() if line.strip()]
+
+
+def _generations(asset_names: list[str]) -> list[tuple[str, str]]:
+    """Return completed generations in GitHub manifest upload order."""
+    completed = []
+    for name in asset_names:
+        match = _GENERATION_MANIFEST.fullmatch(name)
+        if match:
+            completed.append((name, f"us_picker.db.gz.{match.group(1)}.part"))
+    return completed
 
 
 def pull_state_db(
@@ -301,6 +359,18 @@ def pull_state_db(
 ) -> dict[str, object]:
     """Download the release assets and restore them into *target*."""
 
+    _require_draft_release(
+        _view_release_visibility(repository, tag, token=token, runner=runner)
+    )
+    asset_names = _release_asset_names(repository, tag, token=token, runner=runner)
+    completed = _generations(asset_names)
+    manifest_name, part_prefix = completed[-1] if completed else (MANIFEST_NAME, PART_PREFIX)
+    if completed:
+        patterns = [manifest_name, f"{part_prefix}[0-9]*"]
+    elif MANIFEST_NAME in asset_names:
+        patterns = [MANIFEST_NAME, f"{PART_PREFIX}[0-9]*"]
+    else:
+        patterns = [LEGACY_NAME]
     with tempfile.TemporaryDirectory(prefix="bist_state_pull_") as temp_dir:
         state_dir = Path(temp_dir)
         _gh(
@@ -312,12 +382,12 @@ def pull_state_db(
                 repository,
                 "--dir",
                 str(state_dir),
-                "--clobber",
+                *[argument for pattern in patterns for argument in ("--pattern", pattern)],
             ],
             token=token,
             runner=runner,
         )
-        result = restore_state_db(state_dir, target)
+        result = restore_state_db(state_dir, target, manifest_name=manifest_name, part_prefix=part_prefix)
 
     result["repository"] = repository
     result["release_tag"] = tag
@@ -335,50 +405,44 @@ def push_state_db(
 ) -> dict[str, object]:
     """Shard *source* and upload it over the rolling release assets."""
 
+    generation = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}-{uuid4().hex[:12]}"
+    manifest_name = f"us_picker.db.gz.parts.{generation}.json"
+    part_prefix = f"us_picker.db.gz.{generation}.part"
     with tempfile.TemporaryDirectory(prefix="bist_state_push_") as temp_dir:
         state_dir = Path(temp_dir)
-        result = store_state_db(source, state_dir, chunk_bytes=chunk_bytes)
-        created = _ensure_release(repository, tag, token=token, runner=runner)
-
-        assets = sorted(item for item in state_dir.iterdir() if item.is_file())
-        _gh(
-            [
-                "release",
-                "upload",
-                tag,
-                *[str(item) for item in assets],
-                "--repo",
-                repository,
-                "--clobber",
-            ],
-            token=token,
-            runner=runner,
+        result = store_state_db(
+            source, state_dir, chunk_bytes=chunk_bytes, manifest_name=manifest_name, part_prefix=part_prefix
         )
-        uploaded = [item.name for item in assets]
-
-        # A smaller artifact leaves higher-numbered parts behind. restore
-        # ignores them (the manifest names what it reads), but an orphan
-        # part is confusing to anyone inspecting the release by hand.
-        orphans = [
-            name
-            for name in _release_asset_names(
-                repository, tag, token=token, runner=runner
-            )
-            if name.startswith(PART_PREFIX) and name not in uploaded
-        ]
-        for name in orphans:
+        created = _ensure_release(repository, tag, token=token, runner=runner)
+        parts = sorted(state_dir.glob(f"{part_prefix}*"))
+        for batch in (parts, [state_dir / manifest_name]):
             _gh(
+                ["release", "upload", tag, *map(str, batch), "--repo", repository],
+                token=token,
+                runner=runner,
+            )
+
+    asset_names = _release_asset_names(repository, tag, token=token, runner=runner, check=False)
+    deleted = []
+    for old_manifest, old_prefix in _generations(asset_names)[:-2]:
+        # Delete the old manifest first. If that fails, leave all its shards.
+        for name in [old_manifest, *[asset for asset in asset_names if asset.startswith(old_prefix)]]:
+            removed = _gh(
                 ["release", "delete-asset", tag, name, "--repo", repository, "--yes"],
                 token=token,
                 runner=runner,
                 check=False,
             )
+            if removed.returncode == 0:
+                deleted.append(name)
+            elif name == old_manifest:
+                break
 
     result["repository"] = repository
     result["release_tag"] = tag
     result["release_created"] = created
-    result["uploaded"] = uploaded
-    result["deleted_orphans"] = orphans
+    result["uploaded"] = [part.name for part in parts] + [manifest_name]
+    result["deleted_orphans"] = deleted
     return result
 
 

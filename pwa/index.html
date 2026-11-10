@@ -19,7 +19,7 @@
 
   <!-- Icons for PWA -->
   <link rel="apple-touch-icon" href="./icons/icon-192.png">
-  <link rel="manifest" href="./manifest.webmanifest?v=us1">
+  <link rel="manifest" href="./manifest.webmanifest?v=us2">
 
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,16 +30,16 @@
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
 
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="./index.css?v=us1">
+  <link rel="stylesheet" href="./index.css?v=us2">
 
   <!-- Local runtime dependencies: first launch must not depend on a CDN. -->
-  <script src="./vendor/pako.min.js?v=us1"></script>
-  <script src="./vendor/sql-wasm.js?v=us1"></script>
-  <script src="./vendor/apexcharts.min.js?v=us1"></script>
-  <script src="./portfolio-costs.js?v=us1"></script>
+  <script src="./vendor/pako.min.js?v=us2"></script>
+  <script src="./vendor/sql-wasm.js?v=us2"></script>
+  <script src="./vendor/apexcharts.min.js?v=us2"></script>
+  <script src="./portfolio-costs.js?v=us2"></script>
 
   <!-- Main Application Logic (deferred) -->
-  <script src="./app.js?v=us1" defer></script>
+  <script src="./app.js?v=us2" defer></script>
 </head>
 <body>
 
@@ -58,7 +58,10 @@
         <div class="progress-bar-track">
           <div id="splash-progress" class="progress-bar-fill" style="width: 0%;"></div>
         </div>
-        <p id="splash-status" class="loading-status">Uygulama kütüphaneleri yükleniyor...</p>
+        <p id="splash-status" class="loading-status" role="status">Uygulama kütüphaneleri yükleniyor...</p>
+        <p id="splash-no-feed" class="loading-status" hidden>
+          Özel verinle çalıştırmak için <a class="splash-help-link" href="https://github.com/infenglov-hue/USInv/blob/main/docs/US_PICKER.md">yerel kurulum adımlarına</a> bak.
+        </p>
       </div>
 
       <button type="button" id="splash-retry-btn" class="retry-btn" style="display: none;">🔄 Yeniden Dene</button>
@@ -114,7 +117,7 @@
           <div class="decision-summary-card" aria-label="Rotasyon karar özeti">
             <div class="decision-topline">
               <div>
-                <span class="label">Main V2 Karar Özeti</span>
+                <span class="label">US Picker Karar Özeti</span>
                 <h3 id="decision-weekly-rule">Rotasyon planı yükleniyor</h3>
                 <span id="decision-countdown" class="decision-countdown" style="display: none;"></span>
               </div>
@@ -168,7 +171,7 @@
               <span class="material-symbols-rounded tint-tertiary">psychology</span>
               <h3>Zeki Sinyaller</h3>
             </div>
-            <p class="signals-desc">Modelin gerçekleşen rotasyon kararları (pozisyon verisinden). Rotasyon 2 haftada bir Pazartesi yapılır; alınan hisse sonraki rotasyona kadar tutulur.</p>
+            <p class="signals-desc">Modelin pozisyon kayıtlarındaki rotasyon kararları. Olağan rotasyon aralığı <span data-rotation-weeks>—</span> hafta.</p>
             <div id="signals-list" class="list-container spaced-y">
               <!-- Dynamically populated suggested actions -->
             </div>
@@ -292,11 +295,11 @@
             </div>
             <div class="info-row">
               <span class="label">ABD 10 Yıllık Tahvil</span>
-              <span id="macro-usdtry" class="regime-value">—</span>
+              <span id="macro-ten-year" class="regime-value">—</span>
             </div>
             <div class="info-row">
               <span class="label">Kurumsal Kredi Spreadi (Baa−10Y)</span>
-              <span id="macro-hy-oas" class="regime-value">—</span>
+              <span id="macro-baa-spread" class="regime-value">—</span>
             </div>
           </div>
         </section>
@@ -306,7 +309,7 @@
           <!-- Backtesting Navigation Panel -->
           <div id="open-backtest-btn" class="backtest-nav-banner">
             <div class="banner-content">
-              <h3>Main V2 Backtesting</h3>
+              <h3>US Picker Backtest</h3>
               <p>Snapshot içinde kesintisiz yayınlanan model NAV dönemi ve karşılaştırmalı grafik.</p>
             </div>
             <span class="material-symbols-rounded">chevron_right</span>
@@ -386,9 +389,9 @@
               <li><strong>Sektöre özel modeller:</strong> Banka, sigorta ve REIT'ler ayrı modelle ölçülür (SEC SIC koduna göre).</li>
             </ul>
 
-            <p><strong>2. Portföy kurgusu (Index-Aware V2)</strong></p>
+            <p><strong>2. Portföy kurgusu</strong></p>
             <ul>
-              <li>Model skoru + S&amp;P 500'e (SPY) göreli güç + teknik harmanı ile en iyi 5 hisse.</li>
+              <li>Model, bileşik skor, SPY'a göreli güç ve teknik sinyallerle <strong data-portfolio-target>—</strong> hisse hedefler.</li>
               <li>En az 2 S&amp;P 500 hissesi, en fazla 1 S&amp;P 500-dışı; sektör başına en fazla 2, banka en fazla 2.</li>
               <li>Aşırı benzer hisseleri elemek için korelasyon filtresi (0,70).</li>
               <li>Tutulan güçlü hisseyi gereksiz yere değiştirmeme (turnover koruması).</li>
@@ -396,7 +399,7 @@
 
             <p><strong>3. Zamanlama & disiplin</strong></p>
             <ul>
-              <li><strong>2 haftada bir rotasyon</strong> (Pazartesi); aldığını sonraki rotasyona kadar tut.</li>
+              <li>Planlanan rotasyon aralığı <strong data-rotation-weeks>—</strong> hafta. Tarihler ABD işlem seanslarına göre gösterilir.</li>
               <li><strong>4 seviyeli nakit rejimi</strong> (NORMAL / CAUTION / DEFENSIVE / RISK_OFF): volatilite + makro (kurumsal kredi spreadi, reel faiz) harmanı, ani gidiş-gelişi önleyen histerezis.</li>
             </ul>
 
@@ -417,8 +420,8 @@
             <p><strong>6. Güven & şeffaflık</strong></p>
             <ul>
               <li>Backtest kapıları: T-1 tamamlanmış veri → T ilk açılış, slippage stresi, drawdown ve fiyat-anomali denetimi.</li>
-              <li>Point-in-time & survivorship korumaları (geçmişi olduğu gibi kullanma).</li>
-              <li>Nominal dolar getirisinin yanında reel (ABD TÜFE) ve kuyruk-risk ölçümleri.</li>
+              <li>S&amp;P 500 üyeliği geçmiş tarihe göre alınır. Bugünkü likit hisse evreni, geçmişte listeden çıkan şirketleri kapsamıyor.</li>
+              <li>Backtest USD bazındadır ve SPY'ın temettü dahil toplam getirisiyle karşılaştırılır.</li>
               <li>Günlük evren yenileme: NYSE/Nasdaq'ta yeterince likit şirketler (ortalama günlük işlem en az $20M).</li>
             </ul>
 
@@ -430,11 +433,11 @@
             <div class="usage-flow">
               <div class="flow-step">
                 <span>1</span>
-                <p><strong>Rotasyon 2 haftada bir Pazartesi yapılır.</strong> Portföy önceki tamamlanmış seans verisiyle borsa açılmadan hazırlanır. Önce SAT, sonra AL emirlerini ilk açılışta ver. Ekrandaki model referansı model denetimi içindir; History sekmesinde getiriyi maliyetsiz veya seçtiğin broker maliyetleriyle karşılaştırabilirsin. <strong>Aldığın hisseyi 2 hafta tutacaksın</strong> — stop uyarısı hariç sonraki rotasyona kadar işlem yapma.</p>
+                <p><strong>Rotasyon planını kontrol et.</strong> Model, <span data-rotation-weeks>—</span> haftalık döngüde önceki tamamlanmış seans verisiyle portföyü açılışa hazırlar. History sekmesinde getiriyi brüt veya seçtiğin aracı kurum maliyetleriyle inceleyebilirsin.</p>
               </div>
               <div class="flow-step">
                 <span>2</span>
-                <p><strong>Rotasyonlar arasında yalnızca kırmızı uyarılara tepki ver.</strong> Model stop-loss / hedef fiyat tetiklenirse pozisyonu otomatik kapatır ve ekranda "Rotasyon Arasında Çıkıldı" bölümünde gösterir — aynı gün sen de sat; yeri sonraki rotasyona kadar nakitte kalır. Uyarı yoksa hiçbir şey yapma; ara haftadaki skor oynamalarına göre işlem yapma, erken satış modelin ölçülmüş avantajını bozar.</p>
+                <p><strong>Rotasyon arası çıkışları izle.</strong> Model, stop veya hedef fiyat tetiklenirse sanal pozisyonu kapatır ve "Rotasyon Arasında Çıkıldı" bölümünde gösterir. Boşalan yer sonraki rotasyona kadar nakitte kalır.</p>
               </div>
               <div class="flow-step">
                 <span>3</span>
@@ -442,11 +445,11 @@
               </div>
               <div class="flow-step">
                 <span>4</span>
-                <p><strong>Fiyat etiketini kontrol et.</strong> "15 DK GEC." canlıya yakın fiyattır, karar için onu kullan. "SNAPSHOT" etiketi görürsen fiyat eskidir; emir vermeden broker ekranından teyit et.</p>
+                <p><strong>Fiyat etiketini kontrol et.</strong> "IEX" yakın zamanlı bir IEX işlemini, "SON İŞLEM" daha eski bir IEX işlemini, "SNAPSHOT" ise kayıtlı kapanış fiyatını gösterir.</p>
               </div>
               <div class="flow-step">
                 <span>5</span>
-                <p><strong>Kişisel risk limitini sabitle.</strong> ABD seansı İstanbul saatiyle genelde 16:30'da açılır (ABD yaz saati geçişlerinde bir saat kayar). Pozisyon büyüklüğünü ve maksimum zarar toleransını işlemden önce belirle; model güçlü olsa bile kaldıraç kullanma, modelin seçmediği hisseyi portföye katma.</p>
+                <p><strong>Seans saatine bak.</strong> Normal seans New York saatiyle 09.30'da açılır. İstanbul saatiyle açılış ABD yaz saatinde 16.30, kış saatinde 17.30'dur. <a href="https://www.nyse.com/trade/hours-calendars">NYSE işlem saatleri</a></p>
               </div>
             </div>
           </div>
@@ -456,7 +459,7 @@
               <h3>Güven Kontrolü</h3>
               <span class="badge">DOĞRULAMA SÜRÜYOR</span>
             </div>
-            <p>ABD sürümünün geçmiş testi ve ileri dönem (kağıt üzerinde) doğrulaması sürüyor. Aşağıdaki ağırlıklar BIST'te doğrulanmış başlangıç değerleridir; ABD verisinde ayrıca kalibre edilecek. Güncel backtest, Backtesting panelindeki haftalık denetimde gösterilir. Karar desteğidir, garanti değildir.</p>
+            <p>ABD modeli doğrulama aşamasında. Backtest paneli, yüklü veri paketindeki simülasyonu ve varsa denetim sonuçlarını gösterir.</p>
           </div>
 
           <div class="about-card">
@@ -491,8 +494,8 @@
           <div class="about-card">
             <h3>Portföy Yönetim Kuralları</h3>
             <ul class="about-rules-list">
-              <li><strong>Konsantre Portföy:</strong> Model her rebalansta en fazla 5 ideal şirkete odaklanır; sektör başına en fazla 2 hisse ve yüksek korelasyonlu çiftler filtrelenir.</li>
-              <li><strong>2 Haftalık Rotasyon:</strong> Portföy 2 haftada bir Pazartesi sabahı rebalans edilir; alınan hisse bir sonraki rotasyona kadar (2 hafta) tutulur. Kadans, 2018-2026 walk-forward backtest kalibrasyonuyla seçildi (haftalık al-sata göre daha yüksek getiri, daha düşük drawdown ve yarıya yakın işlem maliyeti). Stop-loss kontrolü ise her gün çalışmaya devam eder.</li>
+              <li><strong>Konsantre portföy</strong> Her rotasyonda <span data-portfolio-target>—</span> hisse hedeflenir. Sektör sınırı ve korelasyon filtresi uygulanır.</li>
+              <li><strong>Rotasyon ve günlük kontrol</strong> Olağan rotasyon aralığı <span data-rotation-weeks>—</span> hafta. Stop kontrolü rotasyonlar arasında da çalışır.</li>
               <li><strong>Turnover Koruması:</strong> Portföydeki hisse, üst sıralamadan belirgin şekilde düşmedikçe modelde tutulur; gereksiz al-sat maliyeti azaltılır.</li>
               <li><strong>Otomatik Stop-Loss:</strong> Fiyat ATR-tabanlı stop seviyesinin (girişten ~%10-25) altına inerse veya hedef fiyata ulaşırsa model pozisyonu hafta içinde otomatik kapatır ve ekranda gösterir.</li>
               <li><strong>Nakit Koruma:</strong> Piyasa ve makro stres birleşince model otomatik olarak nakit koruma kademelerini (CAUTION, DEFENSIVE, RISK_OFF) etkinleştirir; kademeler yapışkandır, günlük gürültüyle değişmez.</li>
@@ -743,7 +746,7 @@
           <span class="material-symbols-rounded">close</span>
         </button>
         <div>
-          <h2>Main V2 Backtesting</h2>
+          <h2>US Picker Backtest</h2>
           <span id="bt-period-label" class="label">—</span>
         </div>
       </header>
@@ -792,6 +795,25 @@
             </div>
           </div>
           <p id="bt-audit-note" class="audit-note">—</p>
+        </div>
+
+        <div id="bt-real-returns" class="detail-card" hidden>
+          <h4>ABD TÜFE'sine göre reel getiri</h4>
+          <p id="bt-real-period" class="audit-note">—</p>
+          <div class="audit-check-grid">
+            <div class="audit-check-row">
+              <span class="audit-check-label">Toplam reel getiri</span>
+              <strong id="bt-real-total">—</strong>
+            </div>
+            <div class="audit-check-row">
+              <span class="audit-check-label">Yıllık bileşik reel getiri</span>
+              <strong id="bt-real-cagr">—</strong>
+            </div>
+            <div class="audit-check-row">
+              <span class="audit-check-label">En büyük reel düşüş</span>
+              <strong id="bt-real-drawdown">—</strong>
+            </div>
+          </div>
         </div>
 
         <!-- ApexCharts: Backtest area chart -->

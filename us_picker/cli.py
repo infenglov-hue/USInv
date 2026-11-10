@@ -121,12 +121,9 @@ def cli(ctx: click.Context, verbose: bool, dry_run: bool) -> None:
 @click.option(
     "--financials-only",
     is_flag=True,
-    help=(
-        "Fetch only the current year's quarterly financial statements "
-        "(freshly filed interim quarters). Cheap; meant for the scheduled "
-        "financial-refresh workflow."
-    ),
+    help="Refresh SEC companyfacts for recent periodic filers.",
 )
+@click.option("--financial-days", type=click.IntRange(1, 120), help="SEC filing lookback for --financials-only.")
 @click.option(
     "--macro-only",
     is_flag=True,
@@ -142,6 +139,7 @@ def fetch(
     limit: int,
     history: bool,
     financials_only: bool,
+    financial_days: int | None,
     macro_only: bool = False,
 ) -> None:
     """Stage 1: Download data from all sources (prices + financials + macro)."""
@@ -152,6 +150,8 @@ def fetch(
         raise click.UsageError(
             "--financials-only and --prices-only are mutually exclusive."
         )
+    if financial_days is not None and (not financials_only or history or macro_only):
+        raise click.UsageError("--financial-days requires --financials-only.")
 
     dry_run: bool = ctx.obj.get("dry_run", False)
     if dry_run:
@@ -191,7 +191,9 @@ def fetch(
                 )
                 fetcher.fetch_universe()
                 session.commit()
-            fetcher.fetch_recent_financials(tickers=tickers)
+            result = fetcher.fetch_recent_financials(tickers=tickers, days_back=financial_days)
+            if result.get("failed"):
+                raise click.ClickException(f"SEC refresh failed for {len(result['failed'])} tickers.")
             return
 
         if prices_only:
@@ -234,18 +236,17 @@ def fetch(
     "--grace-days",
     type=int,
     default=None,
-    help="Extra slack (days) on top of the SPK deadline before alarming.",
+    help="Extra days beyond the model's expected filing lag before alarming.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 def check_financial_freshness_cmd(
     min_companies: int | None, grace_days: int | None, as_json: bool
 ) -> None:
-    """Alarm (exit 1) when quarterly financials lag the SPK filing calendar.
+    """Alarm (exit 1) when broadly reported quarterly financials are stale.
 
     Compares the newest broadly-populated period_end in financial_statements
-    with the newest quarter whose SPK filing deadline (+grace) has passed —
-    i.e. the period the scoring PIT filter already expects to see. Used as a
-    red-job gate by the financial-refresh workflow.
+    with the newest quarter the scoring model expects to see after its filing
+    lag and grace period. Used as a gate by the financial-refresh workflow.
     """
     import json as _json
 
@@ -276,7 +277,7 @@ def check_financial_freshness_cmd(
         )
         console.print(f"Financial statement freshness: {status}")
         console.print(
-            f"  expected latest period (SPK calendar): {report['expected_period_end']}"
+            f"  expected latest reporting period:     {report['expected_period_end']}"
         )
         console.print(
             f"  actual latest period in DB:            {report['actual_period_end']}"
@@ -285,7 +286,7 @@ def check_financial_freshness_cmd(
         if not report["fresh"]:
             console.print(
                 "  [yellow]Fundamentals lag the filing calendar — run "
-                "`bist fetch --financials-only` (or check the financial-refresh "
+                "`us-picker fetch --financials-only` (or check the financial-refresh "
                 "workflow).[/yellow]"
             )
 
@@ -306,7 +307,7 @@ def check_financial_freshness_cmd(
     "--grace-days",
     type=int,
     default=None,
-    help="Extra slack (days) on top of the SPK deadline before alarming.",
+    help="Extra days beyond the model's expected filing lag before alarming.",
 )
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
 def check_score_input_freshness_cmd(
@@ -343,7 +344,7 @@ def check_score_input_freshness_cmd(
         )
         console.print(f"Financial score-input freshness: {status}")
         console.print(
-            f"  expected latest period (SPK calendar): {report['expected_period_end']}"
+            f"  expected latest reporting period:     {report['expected_period_end']}"
         )
         console.print(
             f"  actual latest audited score input:     {report['actual_period_end']}"
@@ -352,7 +353,7 @@ def check_score_input_freshness_cmd(
         if not report["fresh"]:
             console.print(
                 "  [yellow]Raw filings have not reached annual/TTM score inputs — "
-                "run `bist clean` and inspect MetricsCalculator errors.[/yellow]"
+                "run `us-picker clean` and inspect MetricsCalculator errors.[/yellow]"
             )
 
     if not report["fresh"]:
@@ -935,12 +936,14 @@ def prepare_portfolio(
     strategy: str,
 ) -> None:
     """Score T-1 completed data and prepare a portfolio effective on T."""
+    from usinv.calendar import EXCHANGE_TIMEZONE, default_calendar
+
     if next_rotation and effective_date is not None:
         raise click.UsageError(
             "--next-rotation and --effective-date are mutually exclusive"
         )
 
-    today = date.today()
+    today = datetime.now(EXCHANGE_TIMEZONE).date()
     if effective_date is not None:
         effective = effective_date.date()
     elif next_rotation:
@@ -960,6 +963,12 @@ def prepare_portfolio(
             return
     else:
         effective = today
+
+    if not default_calendar().is_session(effective):
+        if effective_date is not None:
+            raise click.UsageError(f"{effective} is not an XNYS trading session.")
+        console.print(f"[yellow]XNYS is closed on {effective}; no portfolio prepared.[/yellow]")
+        return
 
     from us_picker.db.connection import session_scope
     from us_picker.portfolio.execution import (
@@ -1381,7 +1390,7 @@ def _parse_selection_overrides(pairs) -> dict | None:
 
     Dotted keys nest one level (``index_aware.incumbent_min_score=84`` →
     ``{"index_aware": {"incumbent_min_score": 84.0}}``). Values are cast to
-    int, then float, else kept as strings.
+    booleans, integers and floats. Other values stay strings.
     """
     if not pairs:
         return None
@@ -1390,14 +1399,18 @@ def _parse_selection_overrides(pairs) -> dict | None:
         key, sep, raw = pair.partition("=")
         if not sep or not key.strip():
             raise click.BadParameter(f"--override expects key=value, got {pair!r}")
-        value: object = raw.strip()
-        try:
-            value = int(value)  # type: ignore[assignment]
-        except ValueError:
+        raw = raw.strip()
+        value: object = raw
+        if raw.lower() in {"true", "false"}:
+            value = raw.lower() == "true"
+        else:
             try:
-                value = float(value)  # type: ignore[assignment]
+                value = int(raw)
             except ValueError:
-                pass
+                try:
+                    value = float(raw)
+                except ValueError:
+                    pass
         target = result
         parts = key.strip().split(".")
         for part in parts[:-1]:
@@ -1632,6 +1645,14 @@ def _print_execution_realism(meta: dict | None) -> None:
               help="Min trailing distance (fraction). Default: thresholds.yaml.")
 @click.option("--trail-max", type=float, default=None,
               help="Max trailing distance (fraction). Default: thresholds.yaml.")
+@click.option(
+    "--research-dir", type=click.Path(file_okay=False, path_type=Path),
+    help="Write a full research run here without changing the published NAV. Use a disposable DB.",
+)
+@click.option(
+    "--weights-file", type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Alternative scoring weights for research. Requires --research-dir.",
+)
 @click.pass_context
 def backtest(
     ctx: click.Context,
@@ -1649,12 +1670,17 @@ def backtest(
     intra_trailing: bool,
     trail_min: float,
     trail_max: float,
+    research_dir: Path | None,
+    weights_file: Path | None,
 ) -> None:
     """Stage 6: Run walk-forward multi-year backtest and save results to model_performance."""
     from datetime import datetime, timedelta
     from us_picker.db.connection import session_scope
     from us_picker.backtest.engine import BacktestEngine
     from us_picker.db.schema import ModelPerformance
+
+    if weights_file is not None and research_dir is None:
+        raise click.UsageError("--weights-file requires --research-dir and a disposable DB")
 
     engine = _get_engine_and_tables()
     with session_scope(engine) as session:
@@ -1666,7 +1692,9 @@ def backtest(
         initial_benchmark_nav = 100.0
         previous_tickers: set[str] = set()
 
-        if full_reset:
+        if research_dir is not None:
+            pass  # Research never reads or rewrites the canonical NAV.
+        elif full_reset:
             session.query(ModelPerformance).delete()
             session.commit()
         else:
@@ -1740,6 +1768,13 @@ def backtest(
         resolved_trail_max = trail_cfg["max_pct"] if trail_max is None else trail_max
 
         backtester = BacktestEngine(session)
+        research_options = {}
+        if research_dir is not None:
+            research_options = {
+                "persist_model_performance": False,
+                "export_dir": research_dir,
+                "weights_path": weights_file,
+            }
         df = backtester.run_1y_backtest(
             start_date=start_d,
             end_date=end_d,
@@ -1757,8 +1792,17 @@ def backtest(
             intra_window_trailing=resolved_trailing,
             trail_min_pct=resolved_trail_min,
             trail_max_pct=resolved_trail_max,
-            rebuild_stale_scores=rebuild_stale_scores,
+            rebuild_stale_scores=rebuild_stale_scores or research_dir is not None,
+            **research_options,
         )
+        if research_dir is not None:
+            import json
+
+            meta = backtester._last_run_meta if not df.empty else {}
+            if len(df) < 3 or meta.get("stale_score_cache_dates") != 0:
+                raise click.ClickException("Research run produced insufficient NAV or stale scores")
+            df.to_csv(research_dir / "nav.csv", index=False)
+            (research_dir / "run.json").write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
         if not df.empty:
             console.print(f"[green]Backtest completed successfully! Saved {len(df)} points.[/green]")
             console.print(df.tail())

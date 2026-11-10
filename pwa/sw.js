@@ -1,17 +1,17 @@
-const CACHE_NAME = 'us-picker-shell-v1';
+const CACHE_NAME = 'us-picker-shell-v2';
 const APP_SHELL = [
   './',
   './index.html',
-  './index.css?v=us1',
-  './app.js?v=us1',
-  './portfolio-costs.js?v=us1',
-  './manifest.webmanifest?v=us1',
+  './index.css?v=us2',
+  './app.js?v=us2',
+  './portfolio-costs.js?v=us2',
+  './manifest.webmanifest?v=us2',
   './icons/icon-192.png',
   './icons/icon-512.png',
-  './vendor/pako.min.js?v=us1',
-  './vendor/sql-wasm.js?v=us1',
-  './vendor/sql-wasm.wasm?v=us1',
-  './vendor/apexcharts.min.js?v=us1'
+  './vendor/pako.min.js?v=us2',
+  './vendor/sql-wasm.js?v=us2',
+  './vendor/sql-wasm.wasm?v=us2',
+  './vendor/apexcharts.min.js?v=us2'
 ];
 
 self.addEventListener('install', (e) => {

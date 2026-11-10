@@ -13,9 +13,10 @@ import logging
 import os
 import time
 import zipfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable, Iterator, Optional
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -32,6 +33,12 @@ _DAILY_FORM_INDEX_URL = (
     "https://www.sec.gov/Archives/edgar/daily-index/{year}/QTR{qtr}/form.{ymd}.idx"
 )
 _PERIODIC_FORMS = ("10-K", "10-Q", "10-K/A", "10-Q/A", "10-KT", "10-QT")
+_NEW_YORK = ZoneInfo("America/New_York")
+
+
+def latest_index_date() -> date:
+    """EDGAR publishes the current day's daily index after its evening close."""
+    return datetime.now(_NEW_YORK).date() - timedelta(days=1)
 
 
 def sec_contact_email() -> str:
@@ -120,7 +127,7 @@ class SECClient:
         holidays, not yet published) are skipped.
         """
 
-        until = until or date.today()
+        until = until or latest_index_date()
         ciks: set[int] = set()
         day = since
         while day <= until:
@@ -133,6 +140,17 @@ class SECClient:
                     ciks |= parse_form_index(response.text)
             day += timedelta(days=1)
         return ciks
+
+    def filed_periodic_report(self, cik: int, since: date, until: date) -> bool:
+        """Check the official SEC submissions API when daily indexes are unavailable."""
+        payload = self.fetch_submissions(cik)
+        if payload is None:
+            raise RuntimeError(f"SEC submissions not found for CIK {cik}")
+        recent = payload["filings"]["recent"]
+        return any(
+            form in _PERIODIC_FORMS and since <= date.fromisoformat(filed) <= until
+            for form, filed in zip(recent["form"], recent["filingDate"], strict=True)
+        )
 
     def download_bulk_companyfacts(self, target: Path) -> Path:
         """Download EDGAR's nightly companyfacts.zip (~1.3 GB) to ``target``."""

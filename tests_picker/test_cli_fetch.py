@@ -32,8 +32,8 @@ class _FakeFetcher:
         self.calls.append(("all", tickers, limit, price_days))
         return {}
 
-    def fetch_recent_financials(self, tickers=None):
-        self.calls.append(("recent_financials", tickers))
+    def fetch_recent_financials(self, tickers=None, days_back=None):
+        self.calls.append(("recent_financials", tickers, days_back))
         return {}
 
 
@@ -94,7 +94,7 @@ def test_fetch_financials_only_calls_recent_financials(monkeypatch):
     result = CliRunner().invoke(cli, ["fetch", "--financials-only"])
 
     assert result.exit_code == 0, result.output
-    assert _FakeFetcher.instances[-1].calls == [("recent_financials", None)]
+    assert _FakeFetcher.instances[-1].calls == [("recent_financials", None, None)]
 
 
 def test_fetch_financials_only_can_refresh_universe_first(monkeypatch):
@@ -102,13 +102,13 @@ def test_fetch_financials_only_can_refresh_universe_first(monkeypatch):
 
     result = CliRunner().invoke(
         cli,
-        ["fetch", "--financials-only", "--refresh-universe"],
+        ["fetch", "--financials-only", "--refresh-universe", "--financial-days", "60"],
     )
 
     assert result.exit_code == 0, result.output
     assert _FakeFetcher.instances[-1].calls == [
         ("universe",),
-        ("recent_financials", None),
+        ("recent_financials", None, 60),
     ]
 
 

@@ -22,6 +22,7 @@ import yaml
 _THRESHOLDS_PATH = Path(__file__).resolve().parent.parent / "config" / "thresholds.yaml"
 
 DEFAULT_ROTATION_WEEKS = 1
+DEFAULT_TARGET_PORTFOLIO_SIZE = 5
 
 
 def week_start_monday(day: date) -> date:
@@ -61,6 +62,16 @@ def load_rotation_config(config_path: Path | None = None) -> tuple[int, date | N
     return weeks, anchor
 
 
+def load_target_portfolio_size(config_path: Path | None = None) -> int:
+    """Read the configured number of live slots for feed consumers."""
+    try:
+        with (config_path or _THRESHOLDS_PATH).open(encoding="utf-8") as handle:
+            selection = (yaml.safe_load(handle) or {}).get("selection") or {}
+        return max(1, int(selection.get("target_count", DEFAULT_TARGET_PORTFOLIO_SIZE)))
+    except (OSError, TypeError, ValueError):
+        return DEFAULT_TARGET_PORTFOLIO_SIZE
+
+
 def rotation_cycle_start(
     today: date,
     rotation_weeks: int = DEFAULT_ROTATION_WEEKS,
@@ -85,9 +96,14 @@ def next_rotation_date(
     rotation_weeks: int = DEFAULT_ROTATION_WEEKS,
     anchor_monday: date | None = None,
 ) -> date:
-    """Return the first rotation Monday strictly after ``today``."""
+    """Return the next XNYS session of a rotation cycle, shifting holidays."""
+    from usinv.calendar import default_calendar
+
+    calendar = default_calendar()
     cycle_start = rotation_cycle_start(today, rotation_weeks, anchor_monday)
+    if not calendar.is_session(cycle_start):
+        session = calendar.next_session(cycle_start).label
+        if session > today:
+            return session
     nxt = cycle_start + timedelta(weeks=max(1, int(rotation_weeks)))
-    # cycle_start <= today by construction, so nxt is always in the future
-    # except when today IS a rotation Monday — the next one is still ahead.
-    return nxt
+    return nxt if calendar.is_session(nxt) else calendar.next_session(nxt).label

@@ -12,8 +12,9 @@ from us_picker.db.schema import (
     DailyPrice,
     InsiderTransaction,
     PortfolioSelection,
+    ScoringResult,
 )
-from us_picker.portfolio.exit_rules import ExitRuleChecker
+from us_picker.portfolio.exit_rules import ExitBreakers, ExitRuleChecker
 
 
 @pytest.fixture
@@ -80,6 +81,29 @@ class TestStopLossAndTarget:
         signals = ExitRuleChecker(session).check_exits()
         assert len(signals) == 1
         assert signals[0]["reason"] == "TARGET"
+
+
+def test_fundamental_breaker_uses_latest_available_raw_score(session):
+    company = _add_position(session, current_price=95.0)
+    session.add_all([
+        ScoringResult(
+            company_id=company.id, scoring_date=date(2026, 6, 30),
+            piotroski_fscore_raw=5, piotroski_fscore=1,
+        ),
+        ScoringResult(
+            company_id=company.id, scoring_date=date(2026, 7, 2),
+            piotroski_fscore_raw=2, piotroski_fscore=95,
+        ),
+    ])
+    session.flush()
+    checker = ExitRuleChecker(session)
+    checker._breakers = ExitBreakers.from_selection({"fundamental_breaker": {"enabled": True}})
+    assert checker.check_exits() == []
+
+    session.add(DailyPrice(company_id=company.id, date=date(2026, 7, 2), close=95))
+    session.flush()
+    assert checker.check_exits()[0]["reason"] == "FUNDAMENTAL_BREAKER"
+    assert ExitRuleChecker(session).check_exits() == []
 
 
 class TestInsiderThreshold:

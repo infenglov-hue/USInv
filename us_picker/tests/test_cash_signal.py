@@ -104,6 +104,18 @@ def test_steady_benign_signal_stays_normal(session, cfg):
     assert r.days_in_state == 5
 
 
+def test_research_cash_signal_ignores_existing_live_rows(session, cfg):
+    calc = CashSignalCalculator(config=cfg)
+    start = date(2026, 5, 1)
+    _run(calc, session, start, "BULL_LOW_VOL", "RISK_ON")
+    result = calc.compute(
+        session, start + timedelta(days=1),
+        market_regime="BEAR", macro_regime="RISK_OFF", persist=False, isolated=True,
+    )
+    assert result.cash_pct == 0.75
+    assert session.query(CashAllocationState).count() == 1
+
+
 # ── Up-confirmation (reacting to stress) ─────────────────────────────────────
 
 

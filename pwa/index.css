@@ -235,6 +235,10 @@ body {
   min-height: 18px;
 }
 
+.splash-help-link {
+  color: var(--primary);
+}
+
 .retry-btn {
   background: var(--primary-container);
   color: var(--primary);

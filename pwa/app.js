@@ -1,6 +1,5 @@
 /**
- * US Picker - Core Application Logic (BIST Picker PWA v24 port)
- * Rebuilt from scratch to ensure complete parity with the Android Kotlin application.
+ * US Picker - Core Application Logic
  */
 
 window.livePrices = {};
@@ -14,11 +13,16 @@ let activeDetailTicker = null;
 let livePriceRefreshTimer = null;
 let returnCostSettings = PortfolioCosts.normalizeSettings();
 
-const LIVE_PRICE_FEED_URL = 'https://raw.githubusercontent.com/infenglov-hue/USInv/live-data/live_prices.json';
+const LIVE_PRICE_FEED_URL = window.location.hostname === 'infenglov-hue.github.io'
+  ? 'https://raw.githubusercontent.com/infenglov-hue/USInv/live-data/live_prices.json'
+  : './live_prices.json';
 const LIVE_PRICE_REFRESH_MS = 60_000;
 const LIVE_PRICE_REQUEST_TIMEOUT_MS = 7_000;
 const RECENT_QUOTE_MAX_AGE_MS = 45 * 60_000;
 const USABLE_QUOTE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
+const MARKET_DATE = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'
+});
 
 // --- Global Chart Instances ---
 let priceChartInstance = null;
@@ -199,15 +203,15 @@ function getQuoteStatus(ticker) {
   const age = quoteAgeMs(detail.quote_time);
   if (age <= RECENT_QUOTE_MAX_AGE_MS) {
     return {
-      label: '15 DK GEC.',
+      label: 'IEX',
       className: 'badge badge-live',
-      title: `Yahoo Finance yaklaşık 15 dakika gecikmeli fiyat • ${formatQuoteTime(detail.quote_time)}`
+      title: `Alpaca üzerinden son IEX işlemi • ${formatQuoteTime(detail.quote_time)} (TSİ)`
     };
   }
   return {
     label: 'SON İŞLEM',
     className: 'badge badge-delayed',
-    title: `Son piyasa işlemi • ${formatQuoteTime(detail.quote_time)}`
+    title: `Son IEX işlemi • ${formatQuoteTime(detail.quote_time)} (TSİ)`
   };
 }
 
@@ -258,7 +262,7 @@ if ('serviceWorker' in navigator) {
 // 2. IndexedDB Snapshot Storage
 // ==========================================================================
 
-const IDB_NAME = 'BistPickerCache';
+const IDB_NAME = 'USPickerCache';
 const IDB_VERSION = 3;
 const STORE_NAME = 'snapshots';
 const LEGACY_USER_STORE_NAME = 'user-data';
@@ -669,7 +673,7 @@ async function refreshLivePrices() {
       nextDetails[ticker] = {
         price,
         quote_time: quote.quote_time,
-        source: feed.source || 'Yahoo Finance'
+        source: feed.source || 'Alpaca (IEX)'
       };
       updated += 1;
     }
@@ -755,7 +759,7 @@ function modelCyclePositionResult({
 // cohort logic below.
 function buildWeeklyPerformanceRecords(dbPositions, livePrices) {
   let marks = [];
-  const todayDate = localIsoDate();
+  const todayDate = marketIsoDate();
   try {
     marks = queryAll(`
       SELECT * FROM portfolio_cycle_marks
@@ -781,7 +785,7 @@ function buildWeeklyPerformanceRecords(dbPositions, livePrices) {
 }
 
 function buildCycleMarkRecords(marks, dbPositions, livePrices) {
-  const todayDate = localIsoDate();
+  const todayDate = marketIsoDate();
   const exitRows = queryAll(`
     SELECT * FROM portfolio_history
     WHERE exit_date IS NOT NULL AND exit_date > :startDate
@@ -932,7 +936,7 @@ function buildCycleMarkRecords(marks, dbPositions, livePrices) {
 }
 
 function buildLegacyCohortRecords(dbPositions, livePrices) {
-  const todayDate = localIsoDate();
+  const todayDate = marketIsoDate();
   const completedRows = queryAll(`
     SELECT * FROM portfolio_history
     WHERE selection_date >= :startDate
@@ -1111,7 +1115,7 @@ function renderPage(tab) {
 function businessDaysSince(dateStr) {
   const start = new Date(`${dateStr}T00:00:00`);
   if (Number.isNaN(start.getTime())) return null;
-  const now = new Date();
+  const now = new Date(`${marketIsoDate()}T00:00:00`);
   let count = 0;
   const cursor = new Date(start);
   cursor.setDate(cursor.getDate() + 1);
@@ -1179,7 +1183,7 @@ function summarizeQuoteCoverage(tickers) {
   tickers.forEach(ticker => {
     const status = getQuoteStatus(ticker);
     summary.labels.push(status.label);
-    if (status.label === '15 DK GEC.') {
+    if (status.label === 'IEX') {
       summary.recent += 1;
     } else if (status.label === 'SON İŞLEM') {
       summary.delayed += 1;
@@ -1447,14 +1451,9 @@ function renderPicksPage() {
 // Days until the manifest's next rotation date; null when unknown/stale.
 function rotationCountdownText() {
   const nextIso = window.feedManifest?.rotation?.next_rotation_date;
-  if (!nextIso) return null;
-  const next = new Date(nextIso + 'T00:00:00');
-  if (Number.isNaN(next.getTime())) return null;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const days = Math.round((next - today) / 86400000);
-  if (days < 0) return null; // stale manifest — don't show a wrong countdown
-  const dateLabel = next.toLocaleDateString('tr-TR', { day: 'numeric', month: 'long', weekday: 'long' });
+  const days = daysBetweenIsoDates(marketIsoDate(), nextIso);
+  if (days == null || days < 0) return null;
+  const dateLabel = getRotationInfo().nextLabel;
   let text;
   if (days === 0) text = `Rotasyon günü BUGÜN — ${dateLabel}`;
   else if (days === 1) text = `Sonraki rotasyon YARIN — ${dateLabel}`;
@@ -1463,12 +1462,24 @@ function rotationCountdownText() {
 }
 
 // --- Rotation cadence helpers ---------------------------------------------
-// Cadence is published by the backend in manifest.rotation (bi-weekly since
-// 2026-07-04, C1 calibration). Falls back to 2 weeks when the manifest
-// predates the field. Next rotation = last rotation Monday + N weeks.
+// Read the active model settings, with the original US defaults for old snapshots.
+function getPortfolioSettings() {
+  const target = Number(window.feedManifest?.rotation?.target_portfolio_size);
+  const weeks = Number(window.feedManifest?.rotation?.rotation_weeks);
+  return {
+    target: Number.isSafeInteger(target) && target > 0 ? target : 5,
+    weeks: Number.isSafeInteger(weeks) && weeks > 0 ? weeks : 2
+  };
+}
+
+function renderPortfolioSettings() {
+  const { target, weeks } = getPortfolioSettings();
+  document.querySelectorAll('[data-portfolio-target]').forEach(el => { el.textContent = target; });
+  document.querySelectorAll('[data-rotation-weeks]').forEach(el => { el.textContent = weeks; });
+}
+
 function getRotationInfo(rotationDate) {
-  const weeks = Number(window.feedManifest?.rotation?.rotation_weeks) > 0
-    ? Number(window.feedManifest.rotation.rotation_weeks) : 2;
+  const { weeks } = getPortfolioSettings();
   let next = null;
   if (window.feedManifest?.rotation?.next_rotation_date) {
     const d = new Date(window.feedManifest.rotation.next_rotation_date + 'T00:00:00');
@@ -1578,7 +1589,7 @@ function renderTradeDayCard(decisions) {
   if (!container) return;
   container.innerHTML = '';
 
-  const todayIso = localIsoDate();
+  const todayIso = marketIsoDate();
   const actionable = [...decisions.sells, ...decisions.buys];
   const daysUntilRotation = daysBetweenIsoDates(todayIso, decisions.rotationDate);
   if (daysUntilRotation == null || daysUntilRotation < 0 || daysUntilRotation > 1 || actionable.length === 0) return;
@@ -1895,10 +1906,9 @@ function renderMarketPage() {
   regimeEl.textContent = home.regime || '—';
   regimeEl.style.color = home.regime === 'RISK_ON' ? 'var(--success)' : 'var(--danger)';
   const tenYear = home.bond_yield_10y_pct;
-  document.getElementById('macro-usdtry').textContent = tenYear != null ? `${(tenYear * 100).toFixed(2)}%` : '—';
-  const hyOas = home.high_yield_oas_bps;
-  const hyEl = document.getElementById('macro-hy-oas');
-  if (hyEl) hyEl.textContent = hyOas != null ? `${Math.round(hyOas)} bp` : '—';
+  setTextById('macro-ten-year', tenYear != null ? `${(tenYear * 100).toFixed(2)}%` : '—');
+  const baaSpread = home.high_yield_oas_bps; // legacy snapshot column for FRED BAA10Y
+  setTextById('macro-baa-spread', baaSpread != null ? `${Math.round(baaSpread)} bp` : '—');
 }
 
 // --- PAGE 4: HISTORY ---
@@ -2040,17 +2050,19 @@ function formatDateToTurkish(dateStr) {
 function daysBetweenIsoDates(startDate, endDate) {
   const startMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(startDate || ''));
   const endMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(endDate || ''));
-  if (!startMatch || !endMatch) return 0;
+  if (!startMatch || !endMatch) return null;
   const start = Date.UTC(Number(startMatch[1]), Number(startMatch[2]) - 1, Number(startMatch[3]));
   const end = Date.UTC(Number(endMatch[1]), Number(endMatch[2]) - 1, Number(endMatch[3]));
-  return Math.max(0, Math.round((end - start) / 86400000));
+  return Math.round((end - start) / 86400000);
 }
 
-function localIsoDate(value = new Date()) {
-  return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+function marketIsoDate(value = new Date()) {
+  const parts = Object.fromEntries(MARKET_DATE.formatToParts(value).map(({ type, value }) => [type, value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
 }
 
 function formatPercent(value, digits = 1) {
+  if (value == null || value === '') return '—';
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return '—';
   return `${parsed >= 0 ? '+' : ''}${parsed.toFixed(digits)}%`;
@@ -2081,14 +2093,15 @@ function getInvestorAuditSummary() {
         Number(item.total_return_pct ?? Infinity) < Number(worst.total_return_pct ?? Infinity) ? item : worst
       ), stressCases[0])
     : null;
-  const warningGate = (audit.gates || []).find(gate => gate.status !== 'pass');
+  const gates = Array.isArray(audit.gates) ? audit.gates : [];
+  const warningGate = gates.find(gate => gate.status !== 'pass');
 
   return {
     audit,
     baseCase,
     worstStress,
-    hasWarnings: Boolean(warningGate),
-    primaryWarning: warningGate?.detail || ''
+    hasWarnings: !baseCase || gates.length === 0 || Boolean(warningGate),
+    primaryWarning: warningGate?.detail || 'Denetim verisi eksik.'
   };
 }
 
@@ -2140,9 +2153,10 @@ function renderDecisionSummary(home, positions) {
     ? `Fiyat kaynağı: ${formatQuoteCoverage(quoteSummary)}`
     : 'Fiyat kaynağı: portföy boş';
 
-  let weeklyRule = 'AL/SAT/TUT sinyallerine göre 5 hisse hedefini koru; aldığını sonraki rotasyona kadar (2 hafta) tut.';
+  const { target, weeks } = getPortfolioSettings();
+  let weeklyRule = `AL/SAT/TUT sinyallerine göre ${target} hisse hedefini koru ve aldığını sonraki rotasyona kadar (${weeks} hafta) tut.`;
   if (positions.length === 0) {
-    weeklyRule = 'Portföy boş; veri yenile ve Main V2 seçimlerini kontrol et.';
+    weeklyRule = 'Bu snapshotta açık model pozisyonu bulunmuyor.';
   } else if (cashState === 'RISK_OFF') {
     weeklyRule = 'RISK_OFF aktif; model hisselerini izle ama pozisyonu korumacı tut.';
   } else if (cashState === 'DEFENSIVE') {
@@ -2164,7 +2178,7 @@ function renderDecisionSummary(home, positions) {
     }
   }
 
-  setTextById('decision-position-count', `${positions.length} / 5`);
+  setTextById('decision-position-count', `${positions.length} / ${target}`);
   setTextById('decision-cash-state', `${cashState} • ${Math.round(cashPct * 100)}%`);
   setTextById('decision-model-return', baseCase ? formatPercent(baseCase.total_return_pct, 1) : '—');
   setTextById('decision-bist-return', baseCase ? formatPercent(baseCase.benchmark_return_pct, 1) : '—');
@@ -2185,7 +2199,7 @@ function renderDecisionSummary(home, positions) {
     : !audit
       ? 'Backtest audit manifestten okunamadı; History içindeki NAV eğrisi sınırlı fikir verir.'
       : hasWarnings
-        ? `Backtest güçlü, fakat kontrol uyarısı var: ${localizeAuditWarning(primaryWarning)}`
+        ? `Backtest kontrol uyarısı: ${localizeAuditWarning(primaryWarning)}`
         : `${audit.execution_mode === 'same_day_open' ? 'T-1→T açılış' : 'T+1'} backtest ${formatPercent(baseCase?.alpha_pct, 1)} alpha üretiyor; yine de işlem boyutu kişisel risk limitine göre ayarlanmalı.`;
   setTextById('decision-audit-note', auditNote);
 
@@ -2267,7 +2281,7 @@ function openStockDetail(ticker) {
     banner.className = 'signal-banner pos-text';
     banner.style.backgroundColor = 'rgba(34, 197, 94, 0.08)';
     banner.style.borderColor = 'rgba(34, 197, 94, 0.2)';
-    bannerText.textContent = 'Model bu hisseyi bu rotasyonda portföye aldı — ALIŞ. 2 hafta tut; sonraki rotasyona kadar satma (stop uyarısı hariç).';
+    bannerText.textContent = `Model bu hisseyi bu rotasyonda portföye aldı — ALIŞ. Olağan tutma süresi ${getPortfolioSettings().weeks} hafta.`;
   } else {
     banner.style.display = 'none';
   }
@@ -2514,9 +2528,9 @@ function enableSwipeToClose(sheetId) {
 function formatLargeMoney(val) {
   const abs = Math.abs(val);
   const sign = val >= 0 ? '' : '-';
-  if (abs >= 1e9) return `${sign}$${(val / 1e9).toFixed(2)} milyar`;
-  if (abs >= 1e6) return `${sign}$${(val / 1e6).toFixed(2)} milyon`;
-  return `${sign}$${val.toLocaleString('tr-TR')}`;
+  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)} milyar`;
+  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)} milyon`;
+  return `${sign}$${abs.toLocaleString('tr-TR')}`;
 }
 
 // Render Apex Price Chart
@@ -2723,7 +2737,7 @@ function renderBacktestAuditPanel(perfPoints) {
   );
 
   const statusEl = document.getElementById('bt-audit-status');
-  const hasWarnings = (audit.gates || []).some(gate => gate.status !== 'pass');
+  const hasWarnings = gates.size === 0 || [...gates.values()].some(gate => gate.status !== 'pass');
   statusEl.textContent = audit.fromSnapshotFallback ? 'SINIRLI' : (hasWarnings ? 'UYARI' : 'PASS');
   statusEl.className = hasWarnings || audit.fromSnapshotFallback ? 'badge badge-delayed' : 'badge badge-live';
 
@@ -2769,6 +2783,7 @@ function openBacktestingSheet() {
   alphaEl.style.color = alpha >= 0 ? 'var(--success)' : 'var(--danger)';
 
   renderBacktestAuditPanel(perfPoints);
+  renderBacktestRealReturns();
 
   // Render completed transactions list
   const closedPositions = queryAll(`
@@ -2777,7 +2792,7 @@ function openBacktestingSheet() {
     ORDER BY exit_date DESC, sort_order ASC
   `, {
     ':startDate': LIVE_TRACKING_START_DATE,
-    ':todayDate': localIsoDate(),
+    ':todayDate': marketIsoDate(),
   });
   const closedListEl = document.getElementById('bt-transactions-list');
   closedListEl.innerHTML = '';
@@ -2790,7 +2805,7 @@ function openBacktestingSheet() {
       const pnlClass = pnl >= 0 ? 'pos-text' : 'neg-text';
       const holdingDays = pos.holding_days != null
         ? Math.max(0, Math.round(finiteNumber(pos.holding_days)))
-        : daysBetweenIsoDates(pos.selection_date, pos.exit_date);
+        : Math.max(0, daysBetweenIsoDates(pos.selection_date, pos.exit_date) ?? 0);
 
       const card = document.createElement('div');
       card.className = 'card';
@@ -2816,6 +2831,22 @@ function openBacktestingSheet() {
   openSheet('backtest-sheet');
 }
 
+function renderBacktestRealReturns() {
+  const card = document.getElementById('bt-real-returns');
+  const report = window.feedManifest?.real_returns;
+  const real = report?.deflated?.cpi_real;
+  card.hidden = !Number.isFinite(real?.total_return_pct);
+  if (card.hidden) return;
+
+  setTextById('bt-real-total', formatPercent(real.total_return_pct));
+  setTextById('bt-real-cagr', formatPercent(real.cagr_pct));
+  setTextById('bt-real-drawdown', formatPercent(real.max_drawdown_pct));
+  const period = report.window;
+  setTextById('bt-real-period', period?.start && period?.end
+    ? `${formatDateToTurkish(period.start)} – ${formatDateToTurkish(period.end)}`
+    : '—');
+}
+
 function renderBacktestAreaChart(points) {
   if (backtestChartInstance) backtestChartInstance.destroy();
   
@@ -2824,7 +2855,7 @@ function renderBacktestAreaChart(points) {
 
   const options = {
     series: [
-      { name: 'Main V2 Portfolio', data: stratData },
+      { name: 'US Picker Portföyü', data: stratData },
       { name: 'S&P 500 (SPY, toplam getiri)', data: benchData }
     ],
     chart: { type: 'area', height: 250, toolbar: { show: false }, background: 'transparent' },
@@ -2855,6 +2886,7 @@ async function initApp() {
   const statusEl = document.getElementById('splash-status');
   const progressFill = document.getElementById('splash-progress');
   const retryBtn = document.getElementById('splash-retry-btn');
+  const noFeedHelp = document.getElementById('splash-no-feed');
   
   // First launch downloads and opens a ~10 MB compressed snapshot. Slow
   // mobile connections can legitimately take longer than 15 seconds.
@@ -2870,14 +2902,14 @@ async function initApp() {
     progressFill.style.width = '10%';
     
     let manifest = null;
+    let feedMissing = false;
     try {
       const res = await fetch('./manifest.json?t=' + Date.now(), { cache: 'no-store' });
       if (res.ok) {
         manifest = validateSnapshotManifest(await res.json());
-        window.feedManifest = manifest;
-        window.feedBacktestAudit = manifest.backtest_audit || null;
         console.log('[DB] Live manifest found:', manifest.snapshot_version);
       } else {
+        feedMissing = res.status === 404 || res.status === 410;
         console.warn('[DB] Live manifest request failed with HTTP', res.status);
       }
     } catch(e) {
@@ -2887,10 +2919,6 @@ async function initApp() {
     statusEl.textContent = '🗃️ Önbellek kontrol ediliyor...';
     progressFill.style.width = '20%';
     const cached = await getCachedSnapshot();
-    if (!window.feedBacktestAudit && cached?.backtest_audit) {
-      window.feedBacktestAudit = cached.backtest_audit;
-    }
-
     let rawBytes = null;
     let snapshotSource = "";
     const showDownloadProgress = (percent) => {
@@ -2904,9 +2932,7 @@ async function initApp() {
         await setCachedSnapshot({
           db_blob: rawBytes,
           sha256: manifest.snapshot.sha256,
-          exported_at: manifest.exported_at,
-          snapshot_version: manifest.snapshot_version,
-          backtest_audit: manifest.backtest_audit || null
+          manifest
         });
       } catch(cacheErr) {
         console.warn('[DB] Failed writing database snapshot to browser IndexedDB:', cacheErr);
@@ -2925,6 +2951,13 @@ async function initApp() {
       snapshotSource = 'cache-offline';
     } else {
       if (!manifest) {
+        if (feedMissing) {
+          clearTimeout(slowLoadTimer);
+          progressFill.parentElement.hidden = true;
+          statusEl.textContent = 'Portföy verisi bu adreste yayınlanmıyor.';
+          noFeedHelp.hidden = false;
+          return;
+        }
         throw new Error('Canlı manifest alınamadı ve önbellekte kayıtlı veri bulunmuyor!');
       }
 
@@ -2947,7 +2980,7 @@ async function initApp() {
     progressFill.style.width = '90%';
     
     const SQL = await initSqlJs({
-      locateFile: filename => `./vendor/${filename}?v=us1`
+      locateFile: filename => `./vendor/${filename}?v=us2`
     });
 
     try {
@@ -2964,6 +2997,10 @@ async function initApp() {
       await persistDownloadedSnapshot();
       dbInstance = new SQL.Database(rawBytes);
     }
+    const usingOlderCache = snapshotSource === 'cache-offline' || snapshotSource === 'cache-stale';
+    window.feedManifest = usingOlderCache ? cached.manifest ?? null : manifest;
+    window.feedBacktestAudit = window.feedManifest?.backtest_audit
+      ?? (usingOlderCache ? cached.backtest_audit ?? null : null);
     progressFill.style.width = '100%';
     
     clearTimeout(slowLoadTimer);
@@ -2985,6 +3022,7 @@ async function initApp() {
     setupNavigation();
 
     // Render Home tab initially
+    renderPortfolioSettings();
     renderPage('picks');
     startLivePriceRefresh();
 

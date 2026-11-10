@@ -13,6 +13,7 @@ from us_picker.db.schema import (
     ModelPerformance
 )
 from us_picker.portfolio.selector import PortfolioSelector
+from us_picker.portfolio.exit_rules import ExitBreakers
 from us_picker.backtest.engine import (
     BacktestEngine,
     _compose_scores_for_date,
@@ -463,6 +464,58 @@ def test_backtest_engine_gap_up_take_profit_exits_at_target_not_open(session):
     assert reason == "TAKE_PROFIT"
     assert exit_date == mid_date
     assert exit_price == pytest.approx(14.0)
+
+
+def test_research_time_breaker_uses_original_entry_and_total_return(session):
+    stock = Company(ticker="V2TEST", name="Stock", company_type="OPERATING")
+    spy = Company(ticker="SPY", name="SPY", company_type="INDEX")
+    session.add_all([stock, spy])
+    session.flush()
+    entry = date(2026, 1, 5)
+    day_59 = entry + timedelta(days=59)
+    day_60 = entry + timedelta(days=60)
+    for day, stock_close, spy_close in [(entry, 100, 100), (day_59, 90, 120), (day_60, 98, 110)]:
+        session.add_all([
+            DailyPrice(company_id=stock.id, date=day, close=2 * stock_close, adjusted_close=stock_close),
+            DailyPrice(company_id=spy.id, date=day, close=spy_close, adjusted_close=spy_close),
+        ])
+    session.commit()
+    config = ExitBreakers.from_selection({"time_breaker": {"enabled": True}})
+    exit_price, exited, reason, exit_date = BacktestEngine(session)._get_weekly_exit(
+        stock.ticker,
+        entry + timedelta(days=55),
+        entry + timedelta(days=70),
+        stop_loss=None,
+        time_breaker=(config, entry),
+    )
+    assert (exit_price, exited, reason, exit_date) == (
+        98, True, "TIME_UNDERPERFORMANCE_BREAKER", day_60,
+    )
+
+
+def test_research_composer_replaces_current_cached_composite(session):
+    company = Company(ticker="V2CACHE", name="Stock", company_type="OPERATING")
+    session.add(company)
+    session.flush()
+    scoring_date = date(2026, 1, 5)
+    row = ScoringResult(
+        company_id=company.id,
+        scoring_date=scoring_date,
+        pipeline_version=SCORING_PIPELINE_VERSION,
+        composite_alpha=90,
+    )
+    session.add(row)
+    session.commit()
+
+    class AlternativeComposer:
+        def compose_all(self, active_session, *, scoring_date, use_regime):
+            assert active_session is session
+            assert scoring_date == row.scoring_date
+            assert use_regime is False
+            row.composite_alpha = 42
+
+    assert _ensure_scores_for_date(session, scoring_date, composer=AlternativeComposer())
+    assert row.composite_alpha == 42
 
 
 def test_incremental_backtest_preserves_nav_continuity(

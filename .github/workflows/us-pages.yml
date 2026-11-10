@@ -1,0 +1,44 @@
+name: US Picker PWA Shell
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'pwa/**'
+      - '.github/workflows/us-pages.yml'
+
+concurrency:
+  group: us-picker-pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: vars.US_PICKER_PUBLIC_MARKET_DATA != 'true' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify and assemble public shell
+        run: |
+          set -euo pipefail
+          (cd pwa && node --check app.js && node --check sw.js && node tests/pwa-static-check.mjs --shell-only)
+          mkdir site
+          cp pwa/*.js pwa/index.html pwa/index.css pwa/manifest.webmanifest site/
+          cp -r pwa/icons pwa/vendor site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: github-pages
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - uses: actions/deploy-pages@v4

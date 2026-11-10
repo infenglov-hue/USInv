@@ -1,0 +1,20 @@
+[
+  {
+    "name": "bist_v2_us_train",
+    "start": "2017-01-09",
+    "end": "2021-12-27",
+    "args": [
+      "--rebalance-weeks", "4",
+      "--friction-bps", "40",
+      "--override", "target_count=8",
+      "--override", "turnover_top_n=16",
+      "--override", "index_aware.min_bist100=6",
+      "--override", "index_aware.max_non_bist100=2",
+      "--override", "index_aware.incumbent_window=20",
+      "--override", "time_breaker.enabled=true",
+      "--override", "fundamental_breaker.enabled=true",
+      "--override", "cash_signal_isolated=true"
+    ],
+    "weights": "v2-weights.yaml"
+  }
+]
