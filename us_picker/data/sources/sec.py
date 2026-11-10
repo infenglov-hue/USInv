@@ -32,6 +32,8 @@ _BULK_COMPANYFACTS_URL = "https://www.sec.gov/Archives/edgar/daily-index/xbrl/co
 _DAILY_FORM_INDEX_URL = (
     "https://www.sec.gov/Archives/edgar/daily-index/{year}/QTR{qtr}/form.{ymd}.idx"
 )
+_FULL_MASTER_INDEX_URL = "https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{qtr}/master.idx"
+_MASTER_INDEX_HEADER = "CIK|Company Name|Form Type|Date Filed|Filename"
 _PERIODIC_FORMS = ("10-K", "10-Q", "10-K/A", "10-Q/A", "10-KT", "10-QT")
 _NEW_YORK = ZoneInfo("America/New_York")
 
@@ -124,7 +126,8 @@ class SECClient:
         """CIKs that filed a 10-K/10-Q (or amendment) in ``[since, until]``.
 
         Reads EDGAR daily form indexes; days without an index (weekends,
-        holidays, not yet published) are skipped.
+        holidays, not yet published) are skipped. If a daily index returns
+        HTTP 403, try the official full indexes for the remaining dates.
         """
 
         until = until or latest_index_date()
@@ -135,10 +138,38 @@ class SECClient:
                 url = _DAILY_FORM_INDEX_URL.format(
                     year=day.year, qtr=(day.month - 1) // 3 + 1, ymd=day.strftime("%Y%m%d")
                 )
-                response = self._get(url)
+                try:
+                    response = self._get(url)
+                except requests.HTTPError as exc:
+                    if exc.response is None or exc.response.status_code != 403:
+                        raise
+                    remaining = self._full_index_periodic_filers(day, until)
+                    if remaining is None:
+                        raise
+                    return ciks | remaining
                 if response is not None:
                     ciks |= parse_form_index(response.text)
             day += timedelta(days=1)
+        return ciks
+
+    def _full_index_periodic_filers(self, since: date, until: date) -> Optional[set[int]]:
+        ciks: set[int] = set()
+        day = since
+        while day <= until:
+            quarter = (day.month - 1) // 3 + 1
+            if quarter == 4:
+                next_quarter = date(day.year + 1, 1, 1)
+            else:
+                next_quarter = date(day.year, quarter * 3 + 1, 1)
+            response = self._get(_FULL_MASTER_INDEX_URL.format(year=day.year, qtr=quarter))
+            if response is None:
+                return None
+            quarter_end = next_quarter - timedelta(days=1)
+            filers = _parse_master_index(response.text, day, min(until, quarter_end))
+            if filers is None:
+                return None
+            ciks.update(filers)
+            day = next_quarter
         return ciks
 
     def filed_periodic_report(self, cik: int, since: date, until: date) -> bool:
@@ -181,6 +212,41 @@ def parse_form_index(text: str) -> set[int]:
             if token.isdigit() and len(token) <= 10:
                 ciks.add(int(token))
                 break
+    return ciks
+
+
+def _parse_master_index(text: str, since: date, until: date) -> Optional[set[int]]:
+    """Read dated periodic forms from a complete official master index."""
+    lines = iter(text.splitlines())
+    last_received = None
+    for line in lines:
+        if line.startswith("Last Data Received:"):
+            try:
+                last_received = datetime.strptime(line.split(":", 1)[1].strip(), "%B %d, %Y").date()
+            except ValueError:
+                return None
+        if line.strip() == _MASTER_INDEX_HEADER:
+            break
+    else:
+        return None
+
+    last_weekday = until
+    while last_weekday.weekday() >= 5:
+        last_weekday -= timedelta(days=1)
+    if last_received is None or last_received < last_weekday:
+        return None
+
+    ciks: set[int] = set()
+    for line in lines:
+        fields = line.split("|", 4)
+        if len(fields) == 5:
+            cik, _, form, filed, _ = fields
+            if form in _PERIODIC_FORMS:
+                try:
+                    if since <= date.fromisoformat(filed) <= until:
+                        ciks.add(int(cik))
+                except ValueError:
+                    return None
     return ciks
 
 

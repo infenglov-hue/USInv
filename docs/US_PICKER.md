@@ -87,7 +87,7 @@ python -m http.server 8765 --bind 127.0.0.1 --directory $site
 
 Uygulamayı [yerel US Picker](http://127.0.0.1:8765/) adresinde açın. Yerel canlı fiyatları yenilemek için Alpaca anahtarlarını işlem ortamına yükleyip `python -m us_picker export-live-prices --tickers-file site/live_tickers.json --output site/live_prices.json` çalıştırın.
 
-Günlük iş son fiyatları ve model durumunu yeniler. Kesinti sonrası GitHub Actions üzerinden `price_days` ile eksik fiyat aralığını ve `financial_days` ile kaçırılan SEC dosyalamalarını kapsayın. SEC mali tablo taraması son yayımlanmış New York gününe kadar bakar. SEC arşiv indeksine erişim engellendiğinde, etkin şirketlerin resmi `data.sec.gov` dosyalama geçmişi kullanılır. [SEC EDGAR API belgeleri](https://www.sec.gov/search-filings/edgar-application-programming-interfaces)
+Günlük iş son fiyatları ve model durumunu yeniler. Kesinti sonrası GitHub Actions üzerinden `price_days` ile eksik fiyat aralığını ve `financial_days` ile kaçırılan SEC dosyalamalarını kapsayın. SEC mali tablo taraması son yayımlanmış New York gününe kadar bakar. Günlük SEC indeksine erişim engellenirse resmi çeyrek indeksi kullanılır. Bu kaynak da istenen aralığı karşılamazsa etkin şirketlerin resmi `data.sec.gov` dosyalama geçmişi taranır. [SEC EDGAR endeksleri](https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data)
 
 ### V2 araştırma koşusu
 
