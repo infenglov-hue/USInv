@@ -14,9 +14,12 @@ proxied by:
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 from typing import Optional
 
+import yaml
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -25,6 +28,7 @@ from us_picker.db.schema import (
     DailyPrice,
     InsiderTransaction,
     PortfolioSelection,
+    ScoringResult,
 )
 
 logger = logging.getLogger("us_picker.portfolio.exit_rules")
@@ -45,25 +49,62 @@ _TRAIL_MAX_PCT = 0.35
 _TRAIL_ATR_MULT = 2.0
 
 
-def _load_trailing_config() -> dict:
-    """Read selection.trailing_stop from thresholds.yaml (safe defaults)."""
-    from pathlib import Path
-
-    import yaml
-
+def _load_exit_selection_config() -> dict:
     path = Path(__file__).resolve().parent.parent / "config" / "thresholds.yaml"
     try:
         with open(path, encoding="utf-8") as f:
-            cfg = ((yaml.safe_load(f) or {}).get("selection", {}) or {}).get(
-                "trailing_stop", {}
-            ) or {}
+            return (yaml.safe_load(f) or {}).get("selection", {}) or {}
     except OSError:
-        cfg = {}
+        return {}
+
+
+def _load_trailing_config() -> dict:
+    """Read selection.trailing_stop from thresholds.yaml (safe defaults)."""
+    cfg = _load_exit_selection_config().get("trailing_stop", {}) or {}
     return {
         "enabled": bool(cfg.get("enabled", False)),
         "min_pct": float(cfg.get("min_pct", _TRAIL_MIN_PCT)),
         "max_pct": float(cfg.get("max_pct", _TRAIL_MAX_PCT)),
     }
+
+
+@dataclass(frozen=True)
+class ExitBreakers:
+    time_enabled: bool
+    min_holding_days: int
+    max_lag_pct: float
+    fundamental_enabled: bool
+    min_fscore: int
+
+    @classmethod
+    def load(cls, overrides: dict | None = None) -> "ExitBreakers":
+        selection = _load_exit_selection_config()
+        overrides = overrides or {}
+        for key in ("time_breaker", "fundamental_breaker"):
+            selection[key] = {**(selection.get(key) or {}), **(overrides.get(key) or {})}
+        return cls.from_selection(selection)
+
+    @classmethod
+    def from_selection(cls, selection: dict) -> "ExitBreakers":
+        time = selection.get("time_breaker") or {}
+        fundamental = selection.get("fundamental_breaker") or {}
+        return cls(
+            time_enabled=time.get("enabled") is True,
+            min_holding_days=int(time.get("min_holding_days", 60)),
+            max_lag_pct=float(time.get("max_lag_vs_index_pct", 10.0)),
+            fundamental_enabled=fundamental.get("enabled") is True,
+            min_fscore=int(fundamental.get("min_fscore", 4)),
+        )
+
+    def time_triggered(self, holding_days: int, stock_return_pct: float, spy_return_pct: float) -> bool:
+        return (
+            self.time_enabled
+            and holding_days >= self.min_holding_days
+            and spy_return_pct - stock_return_pct >= self.max_lag_pct
+        )
+
+    def fundamental_triggered(self, fscore: int | None) -> bool:
+        return self.fundamental_enabled and fscore is not None and fscore < self.min_fscore
 
 
 class ExitRuleChecker:
@@ -72,6 +113,7 @@ class ExitRuleChecker:
     def __init__(self, session: Session):
         self.session = session
         self._risk_classifier = None  # lazy — only needed for market cap
+        self._breakers = ExitBreakers.load()
 
     def _insider_threshold(self, company_id: int) -> float:
         """Net-selling threshold scaled by market cap.
@@ -268,7 +310,58 @@ class ExitRuleChecker:
                 ),
             }
 
-        return None
+        reason, details = self._evaluate_breakers(selection, company, latest_price_row)
+        if reason is None:
+            return None
+        return {
+            "company_id": company.id,
+            "ticker": company.ticker,
+            "portfolio": selection.portfolio,
+            "entry_date": selection.selection_date,
+            "entry_price": entry_price,
+            "current_price": current_price,
+            "price_date": price_date,
+            "return_pct": ret_pct,
+            "reason": reason,
+            "details": details,
+        }
+
+    def _evaluate_breakers(
+        self, selection: PortfolioSelection, company: Company, latest_price: DailyPrice
+    ) -> tuple[str | None, str | None]:
+        if self._breakers.fundamental_enabled:
+            latest_score = (
+                self.session.query(ScoringResult.piotroski_fscore_raw)
+                .filter(
+                    ScoringResult.company_id == company.id,
+                    ScoringResult.scoring_date <= latest_price.date,
+                )
+                .order_by(ScoringResult.scoring_date.desc())
+                .first()
+            )
+            if latest_score and self._breakers.fundamental_triggered(latest_score[0]):
+                return "FUNDAMENTAL_BREAKER", f"Piotroski F-Score {latest_score[0]}/9"
+
+        if not self._breakers.time_enabled or selection.selection_date is None:
+            return None, None
+        holding_days = (latest_price.date - selection.selection_date).days
+        if holding_days < self._breakers.min_holding_days:
+            return None, None
+
+        from us_picker.utils.index_prices import get_spliced_price_by_ticker
+
+        stock_entry = get_spliced_price_by_ticker(self.session, company.ticker, selection.selection_date)
+        stock_close = get_spliced_price_by_ticker(self.session, company.ticker, latest_price.date)
+        spy_entry = get_spliced_price_by_ticker(self.session, "SPY", selection.selection_date)
+        spy_close = get_spliced_price_by_ticker(self.session, "SPY", latest_price.date)
+        if min(stock_entry, stock_close, spy_entry, spy_close) <= 0:
+            return None, None
+        stock_return = (stock_close / stock_entry - 1.0) * 100
+        spy_return = (spy_close / spy_entry - 1.0) * 100
+        if self._breakers.time_triggered(holding_days, stock_return, spy_return):
+            lag = spy_return - stock_return
+            return "TIME_UNDERPERFORMANCE_BREAKER", f"Held {holding_days}d, trailing SPY by {lag:.1f} pp"
+        return None, None
 
     def _calculate_net_insider_flow(
         self, company_id: int, since_date: date

@@ -21,11 +21,13 @@ import logging
 import os
 import re
 from datetime import date, timedelta
+from itertools import repeat
 from pathlib import Path
 from typing import Optional
 
 import pandas as pd
 import yaml
+from requests import HTTPError
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -661,20 +663,41 @@ class DataFetcher:
             invalidate_split_cache()
         return added
 
-    def fetch_recent_financials(self, tickers: Optional[list[str]] = None) -> dict:
+    def fetch_recent_financials(
+        self, tickers: Optional[list[str]] = None, days_back: Optional[int] = None
+    ) -> dict:
         """Refresh only filers with a new 10-K/10-Q in the last ``days``.
 
         Cheap enough for the scheduled financial-refresh workflow: EDGAR's
         daily form index tells us who filed, and only those companyfacts are
         re-downloaded.
         """
-        days = int(self._fetch_settings.get("recent_filing_days", 10))
-        since = date.today() - timedelta(days=days)
-        filers = self.sec.recent_periodic_filers(since)
+        from us_picker.data.sources.sec import latest_index_date
+
+        days = days_back if days_back is not None else int(
+            self._fetch_settings.get("recent_filing_days", 10)
+        )
+        until = latest_index_date()
+        since = until - timedelta(days=days - 1)
         query = self._session.query(Company).filter(Company.is_active.is_(True))
         if tickers:
             query = query.filter(Company.ticker.in_(tickers))
-        targets = [c.ticker for c in query.all() if c.cik and int(c.cik) in filers]
+        companies = query.filter(Company.cik.is_not(None)).all()
+        if not companies:
+            return {"tickers_processed": 0, "statements_inserted": 0, "failed": []}
+        try:
+            filers = self.sec.recent_periodic_filers(since, until)
+        except HTTPError as exc:
+            if exc.response is None or exc.response.status_code != 403:
+                raise
+            logger.warning("SEC daily indexes denied access; checking official submissions for active CIKs")
+            ciks = sorted({int(company.cik) for company in companies})
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=int(self._fetch_settings.get("sec_workers", 4))
+            ) as executor:
+                matches = executor.map(self.sec.filed_periodic_report, ciks, repeat(since), repeat(until))
+                filers = {cik for cik, matches_window in zip(ciks, matches) if matches_window}
+        targets = [c.ticker for c in companies if int(c.cik) in filers]
         self._console.print(
             f"  EDGAR: {len(filers)} periodic filers since {since}; "
             f"{len(targets)} in the universe"

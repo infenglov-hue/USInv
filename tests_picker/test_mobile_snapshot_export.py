@@ -294,6 +294,8 @@ def test_export_mobile_feed_writes_manifest_and_gzip(source_engine, tmp_path):
     assert len(manifest["snapshot"]["sha256"]) == 64
     assert manifest["live_tickers"]["filename"] == "live_tickers.json"
     assert manifest["live_tickers"]["ticker_count"] == 2
+    assert manifest["rotation"]["target_portfolio_size"] == 5
+    assert manifest["rotation"]["rotation_weeks"] == 2
     live_tickers = json.loads(live_tickers_path.read_text(encoding="utf-8"))
     assert live_tickers["tickers"] == ["TEST1", "SPY"]
 

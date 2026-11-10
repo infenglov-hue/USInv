@@ -1,13 +1,12 @@
 # US Picker — BIST Picker'ın ABD versiyonu
 
-Durum: **geliştirme (2026-09-29)**. Canlı değil, backtest kanıtı henüz yok.
-Bu belge `us_picker/` paketinin kanonik açıklamasıdır.
+Aktif ürün `us_picker/` ve `pwa/` dizinlerindedir. ABD stratejisi [kalibrasyon planındaki](US_CALIBRATION_PLAN.md) kabul kapısına tabidir. Mevcut varsayılan 5 pozisyon ve 2 haftalık rotasyondur. BIST V2, ayrı bir araştırma adayı olarak çalıştırılır.
 
 ## Ne bu?
 
 `us_picker/`, MobileInv'deki BIST Picker backend'inin (`bist_picker/`,
 commit `b3935e3`, 2026-08-08 — Gemini'nin 2026-09-18 "V2" değişikliklerinden
-önceki sürüm) birebir kopyasıdır. Değiştirilen yalnızca piyasaya özgü katman:
+önceki sürüm) temel alınarak geliştirildi. Piyasaya özgü veri kaynakları şöyle eşlenir.
 
 | BIST Picker | US Picker |
 |---|---|
@@ -69,6 +68,38 @@ python -m us_picker prepare-portfolio
 python -m us_picker backtest --start-date 2017-01-09 --rebalance-weeks 2 --execution same-day-open
 python -m us_picker export-mobile-feed --feed-dir mobile-feed-dist
 ```
+
+### Özel veriyle PWA
+
+GitHub Pages herkese açıktır ve varsayılan olarak yalnız uygulama kabuğunu yayınlar. Alpaca fiyatları içeren çalışma veritabanı, snapshot ve canlı fiyat dosyaları özel kullanım içindir. [Alpaca veri dağıtım koşulları](https://alpaca.markets/support/redistribute-alpaca-api)
+
+Repo erişimi olan bir makinede `gh auth login` ile oturum açın. Aşağıdaki PowerShell komutları özel taslak release'deki çalışma veritabanını yerel bir kopyaya indirir ve PWA'yı yalnız bu makinede açar.
+
+```powershell
+$env:US_PICKER_DB_PATH = Join-Path $PWD 'data/us_picker.db'
+$site = Join-Path $PWD 'site'
+New-Item -ItemType Directory -Force -Path $site | Out-Null
+python scripts_picker/state_db_artifact.py pull --repository infenglov-hue/USInv --target $env:US_PICKER_DB_PATH
+Copy-Item -Path pwa/* -Destination $site -Recurse -Force
+python -m us_picker export-mobile-feed --feed-dir $site
+python -m http.server 8765 --bind 127.0.0.1 --directory $site
+```
+
+Uygulamayı [yerel US Picker](http://127.0.0.1:8765/) adresinde açın. Yerel canlı fiyatları yenilemek için Alpaca anahtarlarını işlem ortamına yükleyip `python -m us_picker export-live-prices --tickers-file site/live_tickers.json --output site/live_prices.json` çalıştırın.
+
+Günlük iş son fiyatları ve model durumunu yeniler. Kesinti sonrası GitHub Actions üzerinden `price_days` ile eksik fiyat aralığını ve `financial_days` ile kaçırılan SEC dosyalamalarını kapsayın. SEC mali tablo taraması son yayımlanmış New York gününe kadar bakar. SEC arşiv indeksine erişim engellendiğinde, etkin şirketlerin resmi `data.sec.gov` dosyalama geçmişi kullanılır. [SEC EDGAR API belgeleri](https://www.sec.gov/search-filings/edgar-application-programming-interfaces)
+
+### V2 araştırma koşusu
+
+Aday, 8 pozisyonu, en az 6 S&P 500 üyesini, 4 haftalık rotasyonu, V2 baz ağırlıklarını ve iki çıkış kırıcısını birlikte ölçer. ABD likidite eşiği korunur. Nakit sinyali her rebalance tarihinde hesaplanır. Karar son tamamlanmış seansın verisine, gerçekleşme ise sonraki seansın ilk uygun açılışına dayanır.
+
+```powershell
+$env:US_PICKER_CALIB_SOURCE = $env:US_PICKER_DB_PATH
+$env:US_PICKER_CALIB_DIR = Join-Path $PWD 'data/calibration-scratch'
+python scripts_picker/calibration_runner.py scripts_picker/calibration/v2-train.json data/calibration/results.csv
+```
+
+Koşucu veritabanının tutarlı bir kopyasını kullanır ve kod, girdi, parametre ve çıktı özetlerini kaydeder. Bu tanım yalnızca TRAIN dönemini kapsar. Stratejide %0,4 gidiş-dönüş maliyeti, mevcut SPY kıyasında ise toplam getiri serisine ek yıllık %0,5 model gideri kullanılır.
 
 Testler: `python -m pytest -q us_picker/tests tests_picker`; PWA: `cd pwa &&
 node --check app.js && node tests/pwa-static-check.mjs`.

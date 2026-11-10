@@ -45,6 +45,7 @@ from us_picker.portfolio.cash_signal import (
     CashSignalCalculator,
     CashSignalResult,
 )
+from us_picker.portfolio.exit_rules import ExitBreakers
 from us_picker.portfolio.universes import UniverseBuilder
 from us_picker.utils.index_prices import get_spliced_price_by_ticker
 
@@ -219,6 +220,7 @@ class PortfolioSelector:
         self._cfg = self._load_selection_config(config_path or _DEFAULT_CONFIG_PATH)
         if selection_overrides:
             self._cfg = self._merge_overrides(self._cfg, selection_overrides)
+        self._exit_breakers = ExitBreakers.from_selection(self._cfg)
         self.strategy_variant = self._normalize_strategy_variant(strategy_variant)
 
     @staticmethod
@@ -1155,6 +1157,8 @@ class PortfolioSelector:
 
         candidates = []
         for score_row, company in rows:
+            if self._exit_breakers.fundamental_triggered(score_row.piotroski_fscore_raw):
+                continue
             composite = getattr(score_row, score_col, None)
             # Phase 5: snapshot the full normalized factor score row so the
             # selector can derive "why selected" chips without another query.

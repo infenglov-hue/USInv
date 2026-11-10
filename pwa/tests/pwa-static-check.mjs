@@ -1,6 +1,8 @@
+import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { createContext, runInContext } from "node:vm";
 
 const root = resolve(import.meta.dirname, "..");
 const read = (path) => readFileSync(resolve(root, path), "utf8");
@@ -10,7 +12,6 @@ const serviceWorker = read("sw.js");
 const appJs = read("app.js");
 const indexCss = read("index.css");
 const manifest = JSON.parse(read("manifest.webmanifest"));
-const snapshotManifest = JSON.parse(read("manifest.json"));
 
 const requiredFiles = [
   "app.js",
@@ -23,7 +24,6 @@ const requiredFiles = [
   "vendor/sql-wasm.js",
   "vendor/sql-wasm.wasm",
   "vendor/apexcharts.min.js",
-  "mobile_snapshot.db.gz",
 ];
 
 for (const file of requiredFiles) {
@@ -33,9 +33,9 @@ for (const file of requiredFiles) {
 }
 
 for (const localRuntime of [
-  "./vendor/pako.min.js?v=us1",
-  "./vendor/sql-wasm.js?v=us1",
-  "./vendor/apexcharts.min.js?v=us1",
+  "./vendor/pako.min.js?v=us2",
+  "./vendor/sql-wasm.js?v=us2",
+  "./vendor/apexcharts.min.js?v=us2",
 ]) {
   if (!indexHtml.includes(localRuntime)) {
     throw new Error(`index.html does not reference local runtime: ${localRuntime}`);
@@ -46,8 +46,8 @@ if (/cdnjs\.cloudflare\.com\/ajax\/libs\/(?:pako|sql\.js)|cdn\.jsdelivr\.net\/np
   throw new Error("Core PWA runtime still depends on an external CDN.");
 }
 
-if (!serviceWorker.includes("us-picker-shell-v1")) {
-  throw new Error("Service worker cache version was not bumped to us1.");
+if (!serviceWorker.includes("us-picker-shell-v2")) {
+  throw new Error("Service worker cache version was not bumped to us2.");
 }
 
 if (!appJs.includes("Snapshot bütünlük kontrolü başarısız")) {
@@ -62,11 +62,11 @@ if (!appJs.includes("infenglov-hue/USInv/live-data/live_prices.json")) {
   throw new Error("PWA near-live price feed URL is missing.");
 }
 
-if (!appJs.includes("./vendor/${filename}?v=us1")) {
-  throw new Error("sql.js WASM locateFile cache version was not bumped to us1.");
+if (!appJs.includes("./vendor/${filename}?v=us2")) {
+  throw new Error("sql.js WASM locateFile cache version was not bumped to us2.");
 }
 
-if (!indexHtml.includes("./portfolio-costs.js?v=us1")) {
+if (!indexHtml.includes("./portfolio-costs.js?v=us2")) {
   throw new Error("Portfolio cost profile runtime is missing.");
 }
 
@@ -101,8 +101,10 @@ if (!appJs.includes("PortfolioCosts.normalizeSettings")
   throw new Error("Broker-cost profile (gross/net) wiring is incomplete.");
 }
 
-if (!appJs.includes("sonraki rotasyona kadar") || !indexHtml.includes("2 haftada bir Pazartesi")) {
-  throw new Error("Bi-weekly rotation hold-rule copy is missing from the PWA.");
+if (!appJs.includes("sonraki rotasyona kadar")
+  || !indexHtml.includes("data-rotation-weeks")
+  || !indexHtml.includes("data-portfolio-target")) {
+  throw new Error("Manifest-driven portfolio target and rotation copy are missing from the PWA.");
 }
 
 // B1 continuity (v16): rotation detection must prefer cycle_ref_date and the
@@ -157,14 +159,31 @@ if (manifest.start_url !== "./" || manifest.scope !== "./" || manifest.display !
   throw new Error("PWA manifest install scope/display configuration is invalid.");
 }
 
-const snapshotPath = resolve(root, snapshotManifest.snapshot.filename);
-const snapshotBytes = readFileSync(snapshotPath);
-const actualHash = createHash("sha256").update(snapshotBytes).digest("hex");
-if (actualHash !== snapshotManifest.snapshot.sha256) {
-  throw new Error("Published snapshot SHA-256 does not match manifest.json.");
-}
-if (statSync(snapshotPath).size !== snapshotManifest.snapshot.size_bytes) {
-  throw new Error("Published snapshot size does not match manifest.json.");
+const window = { addEventListener() {}, location: { hostname: 'localhost' } };
+const context = createContext({ window, navigator: {}, PortfolioCosts: { normalizeSettings: () => ({}) } });
+runInContext(appJs, context, { filename: 'app.js' });
+assert.equal(context.getPortfolioSettings().target, 5);
+assert.equal(context.getPortfolioSettings().weeks, 2);
+window.feedManifest = { rotation: { target_portfolio_size: 8, rotation_weeks: 4 } };
+assert.equal(context.getPortfolioSettings().target, 8);
+assert.equal(context.getRotationInfo().weeks, 4);
+assert.equal(context.marketIsoDate(new Date('2026-11-10T02:00:00Z')), '2026-11-09');
+assert.equal(context.daysBetweenIsoDates('2026-11-10', '2026-11-09'), -1);
+assert.equal(context.daysBetweenIsoDates('2026-11-10', null), null);
+window.feedBacktestAudit = { cases: [], gates: [] };
+assert.equal(context.getInvestorAuditSummary().hasWarnings, true);
+
+if (!process.argv.includes('--shell-only')) {
+  const snapshotManifest = JSON.parse(read("manifest.json"));
+  const snapshotPath = resolve(root, snapshotManifest.snapshot.filename);
+  const snapshotBytes = readFileSync(snapshotPath);
+  const actualHash = createHash("sha256").update(snapshotBytes).digest("hex");
+  if (actualHash !== snapshotManifest.snapshot.sha256) {
+    throw new Error("Published snapshot SHA-256 does not match manifest.json.");
+  }
+  if (statSync(snapshotPath).size !== snapshotManifest.snapshot.size_bytes) {
+    throw new Error("Published snapshot size does not match manifest.json.");
+  }
 }
 
 console.log("PWA static checks passed.");

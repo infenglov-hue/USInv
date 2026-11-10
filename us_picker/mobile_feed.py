@@ -13,6 +13,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from tempfile import mkstemp
 from urllib.parse import urljoin
+from zoneinfo import ZoneInfo
 
 from us_picker import read_service
 from us_picker.db.connection import ensure_runtime_db_ready, get_session
@@ -138,20 +139,20 @@ def export_mobile_feed(
 
     # Rotation calendar for the PWA: lets the UI say "next rotation: <date>"
     # and "hold picks for N weeks" without duplicating the cadence logic.
-    from datetime import date as _date
-
     from us_picker.portfolio.rotation import (
         load_rotation_config,
+        load_target_portfolio_size,
         next_rotation_date,
         rotation_cycle_start,
     )
 
     rotation_weeks, rotation_anchor = load_rotation_config()
-    today = _date.today()
+    today = datetime.now(ZoneInfo("America/New_York")).date()
     manifest["rotation"] = {
         "rotation_weeks": rotation_weeks,
         "cycle_start": rotation_cycle_start(today, rotation_weeks, rotation_anchor).isoformat(),
         "next_rotation_date": next_rotation_date(today, rotation_weeks, rotation_anchor).isoformat(),
+        "target_portfolio_size": load_target_portfolio_size(),
     }
 
     manifest_path.write_text(

@@ -1,0 +1,46 @@
+# US TRAIN candidate. MobileInv 813106f base ALPHA weights; US model sections
+# are unchanged, and the BIST-specific real-rate override stays disabled.
+alpha:
+  quality_buffett: 0.35
+  value_graham_dcf: 0.20
+  piotroski: 0.05
+  growth: 0.10
+  momentum: 0.20
+  technical: 0.10
+  dividend_yield: 0.00
+
+holding:
+  nav_discount: 0.35
+  portfolio_quality: 0.25
+  dividend_yield: 0.20
+  governance: 0.20
+
+banking:
+  pb_vs_sector: 0.20
+  roe: 0.20
+  car: 0.15
+  npl_ratio: 0.10
+  cost_income: 0.10
+  nim: 0.15
+  loan_growth: 0.10
+
+reit:
+  pb_vs_sector: 0.35
+  dividend_yield: 0.25
+  roe: 0.20
+  net_margin: 0.10
+  debt_equity: 0.10
+
+insurance:
+  pb_vs_sector: 0.30
+  dividend_yield: 0.15
+  roe: 0.30
+  net_margin: 0.15
+  debt_equity: 0.10
+
+ipo:
+  revenue_growth: 0.30
+  gross_margin_vs_sector: 0.20
+  ps_ratio_vs_sector: 0.20
+  insider_retention: 0.15
+  liquidity: 0.15

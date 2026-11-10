@@ -232,3 +232,39 @@ def test_fetch_recent_financials_no_universe_filers_is_a_noop(session):
     stats = fetcher.fetch_recent_financials()
     assert stats["tickers_processed"] == 0
     assert session.query(FinancialStatement).count() == 0
+
+
+def test_blocked_sec_daily_index_falls_back_to_official_submissions(session, monkeypatch):
+    from requests import HTTPError, Response
+
+    from us_picker.data.sources.sec import SECClient
+
+    session.add_all([
+        Company(ticker="FILED", cik=111, company_type="OPERATING", is_active=True),
+        Company(ticker="FUTURE", cik=222, company_type="OPERATING", is_active=True),
+        Company(ticker="OLD", cik=333, company_type="OPERATING", is_active=True),
+        Company(ticker="INACTIVE", cik=444, company_type="OPERATING", is_active=False),
+    ])
+    session.flush()
+    fetcher = _bare_fetcher(session, filers=set())
+    monkeypatch.setattr("us_picker.data.sources.sec.latest_index_date", lambda: date(2026, 11, 9))
+
+    def denied(since, until):
+        assert (since, until) == (date(2026, 11, 3), date(2026, 11, 9))
+        response = Response()
+        response.status_code = 403
+        raise HTTPError(response=response)
+
+    def submissions(cik):
+        dates = {111: "2026-11-03", 222: "2026-11-10", 333: "2026-11-02"}
+        return {"filings": {"recent": {"form": ["10-Q"], "filingDate": [dates[cik]]}}}
+
+    monkeypatch.setattr(fetcher.sec, "recent_periodic_filers", denied)
+    monkeypatch.setattr(fetcher.sec, "fetch_submissions", submissions, raising=False)
+    monkeypatch.setattr(
+        fetcher.sec, "filed_periodic_report",
+        SECClient.filed_periodic_report.__get__(fetcher.sec), raising=False,
+    )
+
+    assert fetcher.fetch_recent_financials(days_back=7)["tickers_processed"] == 1
+    assert fetcher.sec.facts_calls == [111]

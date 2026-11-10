@@ -178,6 +178,7 @@ class CashSignalCalculator:
         market_regime: Optional[str] = None,
         macro_regime: Optional[str] = None,
         persist: bool = True,
+        isolated: bool = False,
     ) -> CashSignalResult:
         """Evaluate the cash state for *scoring_date*.
 
@@ -193,12 +194,15 @@ class CashSignalCalculator:
         raw = raw_signal_from_regimes(market_regime, macro_regime)
         target = target_state_from_raw(raw)
 
-        prev = self._latest_prior(session, scoring_date)
-        history = self._recent_signals(
-            session,
-            scoring_date,
-            max(self._cfg.up_confirmation_days, self._cfg.down_confirmation_days),
-        )
+        # Research can measure the raw target independently of live state rows.
+        prev, history = None, []
+        if not isolated:
+            prev = self._latest_prior(session, scoring_date)
+            history = self._recent_signals(
+                session,
+                scoring_date,
+                max(self._cfg.up_confirmation_days, self._cfg.down_confirmation_days),
+            )
 
         decision = self._decide_state(
             today_raw=raw,

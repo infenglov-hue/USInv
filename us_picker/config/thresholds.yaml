@@ -79,6 +79,14 @@ selection:
     enabled: true
     min_pct: 0.20
     max_pct: 0.35
+  # Research switches. Enable through backtest overrides on a disposable DB.
+  time_breaker:
+    enabled: false
+    min_holding_days: 60
+    max_lag_vs_index_pct: 10.0
+  fundamental_breaker:
+    enabled: false
+    min_fscore: 4
   # Phase 3 tightening (2026-04-18): lowered from 0.85 to 0.70 to force
   # the portfolio toward genuinely independent bets. Pairs above 0.70
   # realized return correlation are filtered from the candidate list.

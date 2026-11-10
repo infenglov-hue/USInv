@@ -22,6 +22,7 @@ import yaml
 _THRESHOLDS_PATH = Path(__file__).resolve().parent.parent / "config" / "thresholds.yaml"
 
 DEFAULT_ROTATION_WEEKS = 1
+DEFAULT_TARGET_PORTFOLIO_SIZE = 5
 
 
 def week_start_monday(day: date) -> date:
@@ -59,6 +60,16 @@ def load_rotation_config(config_path: Path | None = None) -> tuple[int, date | N
     if anchor is not None:
         anchor = week_start_monday(anchor)
     return weeks, anchor
+
+
+def load_target_portfolio_size(config_path: Path | None = None) -> int:
+    """Read the configured number of live slots for feed consumers."""
+    try:
+        with (config_path or _THRESHOLDS_PATH).open(encoding="utf-8") as handle:
+            selection = (yaml.safe_load(handle) or {}).get("selection") or {}
+        return max(1, int(selection.get("target_count", DEFAULT_TARGET_PORTFOLIO_SIZE)))
+    except (OSError, TypeError, ValueError):
+        return DEFAULT_TARGET_PORTFOLIO_SIZE
 
 
 def rotation_cycle_start(

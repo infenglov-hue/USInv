@@ -19,7 +19,9 @@ from us_picker.db.schema import (
     DailyPrice,
     ModelPerformance
 )
+from us_picker.portfolio.exit_rules import ExitBreakers
 from us_picker.portfolio.selector import PortfolioSelector
+from us_picker.scoring.composer import ScoreComposer
 from us_picker.scoring.version import SCORING_PIPELINE_VERSION
 from us_picker.utils.index_prices import (
     get_price_splice_factor_by_ticker,
@@ -197,6 +199,7 @@ class BacktestEngine:
         trail_min_pct: float = 0.10,
         trail_max_pct: float = 0.25,
         rebuild_stale_scores: bool = False,
+        weights_path: Optional[Path] = None,
     ) -> pd.DataFrame:
         """Run a backtest of the ALPHA (Top 5) strategy. Default 3 years (156 weeks).
 
@@ -224,6 +227,13 @@ class BacktestEngine:
           matches live behavior by default.
         """
         execution_mode = self._normalize_execution_mode(execution_mode)
+        if weights_path is not None and persist_model_performance:
+            raise ValueError("Research weights require isolated backtest output")
+        breaker_config = ExitBreakers.load(selection_overrides)
+        isolated_cash = (selection_overrides or {}).get("cash_signal_isolated") is True
+        compose_options = {}
+        if weights_path is not None:
+            compose_options["composer"] = ScoreComposer(weights_path=weights_path)
         applied_friction = (
             self._FRICTION_ROUND_TRIP
             if friction_round_trip is None
@@ -327,6 +337,7 @@ class BacktestEngine:
         # B1 continuity: per-ticker trailing state carried across rebalances.
         # {"stop": float | None, "high": float} — stop only ever ratchets up.
         held_state: dict[str, dict] = {}
+        breaker_entry_dates: dict[str, date] = {}
         
         strategy_nav = float(initial_strategy_nav)
         bist100_nav = float(initial_benchmark_nav)
@@ -367,12 +378,16 @@ class BacktestEngine:
                 signal_date,
                 console=console,
                 rebuild_stale_scores=rebuild_stale_scores,
+                **compose_options,
             )
             if not score_cache_is_current:
                 stale_score_cache_dates += 1
 
             # B. Evaluate cash signal for this date
-            cash_pct = self._get_cash_pct(signal_date)
+            cash_pct = (
+                self._get_cash_pct(signal_date, isolated=True)
+                if isolated_cash else self._get_cash_pct(signal_date)
+            )
             invested_fraction = max(0.0, 1.0 - cash_pct)
 
             # C. Rebalance: Get Top 5 candidates available AT THIS DATE
@@ -400,6 +415,8 @@ class BacktestEngine:
             exit_event_count = 0
             stop_loss_count = 0
             take_profit_count = 0
+            time_breaker_count = 0
+            closed_tickers: set[str] = set()
             new_buy_count = 0
             not_entered_count = 0
             dcf_overvalued_selected_count = 0
@@ -432,6 +449,7 @@ class BacktestEngine:
                         execution_mode,
                     )
                     if p1 <= 0:
+                        closed_tickers.add(pick["ticker"])
                         # Order never filled (no print inside the window).
                         # The slot sits in cash for the period, no friction,
                         # still counted in the average so the missing fill is
@@ -477,6 +495,11 @@ class BacktestEngine:
                             high = p1
                         trail_state = {"pct": trail_pct, "high": high, "stop": stop_loss}
 
+                    breaker_options = {}
+                    if breaker_config.time_enabled:
+                        original_date = breaker_entry_dates.setdefault(pick["ticker"], entry_date)
+                        breaker_options["time_breaker"] = (breaker_config, original_date)
+
                     # Phase E enhancement: Intra-week stop-loss / take-profit execution
                     p2, exited, exit_reason, exit_date = self._get_weekly_exit(
                         pick["ticker"],
@@ -492,6 +515,7 @@ class BacktestEngine:
                             }
                         ),
                         trail_state=trail_state if intra_window_trailing else None,
+                        **breaker_options,
                     )
 
                     if position_continuity:
@@ -508,12 +532,15 @@ class BacktestEngine:
                         stop_loss_count += 1
                     elif exited and exit_reason == "TAKE_PROFIT":
                         take_profit_count += 1
+                    elif exited and exit_reason == "TIME_UNDERPERFORMANCE_BREAKER":
+                        time_breaker_count += 1
                     elif exited and exit_reason == "NO_PRICE_FORCED_EXIT":
                         # Suspended/delisted mid-hold: keep it out of the
                         # candidate pool while its scores are stale.
                         cooldown_dict[pick["ticker"]] = 4
                     if exited:
                         exit_event_count += 1
+                        closed_tickers.add(pick["ticker"])
 
                     if p1 > 0:
                         raw_return = (p2 / p1) - 1.0
@@ -646,6 +673,7 @@ class BacktestEngine:
                 "Exit_Event_Count": exit_event_count,
                 "Stop_Loss_Count": stop_loss_count,
                 "Take_Profit_Count": take_profit_count,
+                **({"Time_Breaker_Count": time_breaker_count} if breaker_config.time_enabled else {}),
                 "New_Buys": new_buy_count,
                 "Position_Count": len(new_picks),
                 "Not_Entered": not_entered_count,
@@ -683,8 +711,14 @@ class BacktestEngine:
 
             # E. Update current portfolio list for next loop iteration
             prev_tickers_for_print = prev_tickers if i > 0 else set()
+            if breaker_config.time_enabled:
+                new_tickers -= closed_tickers
+                breaker_entry_dates = {
+                    ticker: original_date for ticker, original_date in breaker_entry_dates.items()
+                    if ticker in new_tickers
+                }
             prev_tickers = new_tickers
-            portfolio = [{"company_id": p["company_id"], "ticker": p["ticker"]} for p in new_picks]
+            portfolio = [p for p in new_picks if p["ticker"] in new_tickers]
             # Names sold at this rebalance lose their trailing state — a
             # future re-entry starts fresh at the new entry price.
             for stale in [t for t in held_state if t not in new_tickers]:
@@ -1403,7 +1437,7 @@ class BacktestEngine:
         ]
         return gates
 
-    def _get_cash_pct(self, scoring_date: date) -> float:
+    def _get_cash_pct(self, scoring_date: date, *, isolated: bool = False) -> float:
         """Evaluate the cash-signal state machine for the given date.
 
         Returns the cash percentage (0.0 to 0.75) that should be held in
@@ -1427,6 +1461,7 @@ class BacktestEngine:
                     self.session,
                     scoring_date,
                     persist=False,
+                    isolated=isolated,
                 )
                 nested.commit()
                 return result.cash_pct
@@ -1460,6 +1495,7 @@ class BacktestEngine:
         *,
         include_start_date: bool = False,
         trail_state: Optional[dict] = None,
+        time_breaker: tuple[ExitBreakers, date] | None = None,
     ) -> tuple[float, bool, Optional[str], Optional[date]]:
         """Check intraperiod OHLC prices for stop-loss / take-profit hits.
 
@@ -1498,6 +1534,10 @@ class BacktestEngine:
         valid_take = take_profit is not None and take_profit > 0
         last_price: Optional[float] = None
         trailing = trail_state is not None
+        if time_breaker is not None:
+            breaker, entry_day = time_breaker
+            stock_entry = self._get_price(ticker, entry_day)
+            spy_entry = self._get_price("SPY", entry_day)
 
         for row in rows:
             valid_stop = stop_loss is not None and stop_loss > 0
@@ -1549,6 +1589,20 @@ class BacktestEngine:
                 return (float(stop_loss), True, "STOP_LOSS", row_date)
             if valid_take and high_price >= take_profit:
                 return (float(take_profit), True, "TAKE_PROFIT", row_date)
+
+            if (
+                time_breaker is not None
+                and stock_entry > 0 and spy_entry > 0
+                and row_date < end_date
+                and (row_date - entry_day).days >= breaker.min_holding_days
+                and (spy_close := self._get_price("SPY", row_date)) > 0
+                and breaker.time_triggered(
+                    (row_date - entry_day).days,
+                    (close_price / stock_entry - 1.0) * 100,
+                    (spy_close / spy_entry - 1.0) * 100,
+                )
+            ):
+                return (close_price, True, "TIME_UNDERPERFORMANCE_BREAKER", row_date)
 
             # B1: end-of-day trailing ratchet — mirrors the live daily
             # check-exits pass. Applied only after today's bar survived the
@@ -1780,6 +1834,7 @@ def _ensure_scores_for_date(
     console=None,
     *,
     rebuild_stale_scores: bool = False,
+    composer: ScoreComposer | None = None,
 ) -> bool:
     """Ensure point-in-time scoring results exist in the DB for the given date.
     
@@ -1795,6 +1850,8 @@ def _ensure_scores_for_date(
             ScoringResult.pipeline_version == SCORING_PIPELINE_VERSION
         ).count()
         if current_count == existing_count:
+            if composer is not None:
+                _compose_scores_for_date(session, scoring_date, console, composer=composer)
             if console:
                 console.print(
                     f"[dim]  Using {SCORING_PIPELINE_VERSION} cached scores "
@@ -2049,7 +2106,7 @@ def _ensure_scores_for_date(
 
     # Compose. Unlike risk labels/flag decoration, this is the actual cache
     # payload and therefore fails hard through the guarded helper.
-    _compose_scores_for_date(session, scoring_date, console=console)
+    _compose_scores_for_date(session, scoring_date, console=console, composer=composer)
 
     session.commit()
     return True
@@ -2059,12 +2116,12 @@ def _compose_scores_for_date(
     session: Session,
     scoring_date: date,
     console=None,
+    *,
+    composer: ScoreComposer | None = None,
 ) -> None:
     """Compose one score date or leave it explicitly stale on failure."""
-    from us_picker.scoring.composer import ScoreComposer
-
     try:
-        ScoreComposer().compose_all(
+        (composer or ScoreComposer()).compose_all(
             session,
             scoring_date=scoring_date,
             use_regime=False,
