@@ -58,3 +58,17 @@ Hiçbir TEST sonucu ağırlık/parametre seçimine geri beslenmez.
 Sonuç: yapısal ayarlar farkı kapatmıyor (hepsi SPY'ın yıllık ~10 puan
 gerisinde). Stoplar düşüşü sınırlıyor, getiriyi değiştirmiyor. Sorun skorun
 kendisinde → Tur 2 ağırlıkları dener. Kaynak: `~/.us-picker/calib/results.csv`.
+
+### 10 Kasım 2026 — BIST V2 kuralları, ABD TRAIN
+
+Sekiz pozisyon, en az altı S&P 500 üyesi, dört haftalık rotasyon, V2 baz ağırlıkları ve iki çıkış kırıcısı birlikte denendi. Nakit hedefi rotasyon günlerinde hesaplandı. Aday %0,4 gidiş-dönüş maliyeti içerir. SPY kıyası, toplam getiri serisinden mevcut modelin ek yıllık %0,5 gider kesintisini uygular.
+
+| Ölçüt | V2 ABD adayı | SPY model kıyası |
+|---|---:|---:|
+| Toplam getiri | %30,94 | %113,51 |
+| Yıllık bileşik getiri | %5,65 | %16,72 |
+| Maksimum düşüş | −%15,94 | −%28,62 |
+
+65 NAV noktası 23 Ocak 2017 ile 20 Aralık 2021 arasındadır. Eski skor cache'i kalan tarih sayısı sıfırdır. Aday daha küçük düşüş yaşadı, ancak maliyet sonrası getiri farkı −82,58 yüzde puan oldu. TRAIN kapısı geçilmedi. Bu aday için VALIDATE ve saklı TEST çalıştırılmadı. Canlı V1 ayarları korundu.
+
+Koşu girdilerinin ve çıktılarının sağlama toplamları [kanıt kaydında](evidence/us-picker-v2-train-2026-11-10.json), tekrar çalıştırma komutu [US Picker kılavuzunda](US_PICKER.md#v2-araştırma-koşusu) bulunur. Çalışma verisindeki bugün listelenen şirketlere bağlı evren sınırlaması bu koşuda da geçerlidir.
