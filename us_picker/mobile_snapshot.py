@@ -536,7 +536,9 @@ def export_mobile_snapshot(output_path: str | Path = DEFAULT_MOBILE_SNAPSHOT_PAT
         open_positions_frame = read_service.get_open_positions()
         portfolio_history_frame = read_service.get_portfolio_history()
         cycle_marks_frame = read_service.get_cycle_marks()
-        scoring_frame = read_service.get_scoring_results(scoring_date=latest_scoring_date)
+        scoring_frame = read_service.get_scoring_results(
+            scoring_date=latest_scoring_date, include_snapshot_streaks=False
+        )
         companies = _load_companies(session)
         companies_by_ticker = {company.ticker: company for company in companies}
         latest_scores = _load_latest_scores(session, latest_scoring_date)

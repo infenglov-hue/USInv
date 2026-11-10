@@ -1077,10 +1077,12 @@ def get_alpha_snapshot_streaks(scoring_date: date) -> dict[int, int]:
     return streaks
 
 
-def get_alpha_dashboard_diagnostics(scoring_date: date) -> dict[int, dict[str, object]]:
-    """Return ALPHA dashboard diagnostics enriched with streaks and note text."""
+def get_alpha_dashboard_diagnostics(
+    scoring_date: date, *, include_snapshot_streaks: bool = True
+) -> dict[int, dict[str, object]]:
+    """Return ALPHA dashboard diagnostics with optional historical streaks."""
     diagnostics = get_alpha_universe_diagnostics(scoring_date)
-    streaks = get_alpha_snapshot_streaks(scoring_date)
+    streaks = get_alpha_snapshot_streaks(scoring_date) if include_snapshot_streaks else None
 
     rows: dict[int, dict[str, object]] = {}
     for company_id, info in diagnostics.items():
@@ -1091,7 +1093,7 @@ def get_alpha_dashboard_diagnostics(scoring_date: date) -> dict[int, dict[str, o
             "alpha_primary_blocker": info.get("alpha_primary_blocker"),
             "alpha_all_blockers": "; ".join(blockers),
             "alpha_research_bucket": _alpha_bucket_from_diag(info),
-            "alpha_snapshot_streak": streaks.get(company_id, 1),
+            "alpha_snapshot_streak": streaks.get(company_id, 1) if streaks is not None else None,
             "alpha_relaxed_p4_eligible": bool(
                 info.get("alpha_relaxed_p4_eligible", core_eligible)
             ),
@@ -1169,6 +1171,8 @@ def get_scoring_results(
     risk_tier: Optional[str] = None,
     min_score: Optional[float] = None,
     alpha_eligible_only: bool = False,
+    *,
+    include_snapshot_streaks: bool = True,
 ) -> pd.DataFrame:
     """Fetch scoring results with optional filters.
 
@@ -1213,7 +1217,9 @@ def get_scoring_results(
 
         alpha_diag_map: dict[int, dict[str, object]] = {}
         if effective_scoring_date is not None:
-            alpha_diag_map = get_alpha_dashboard_diagnostics(effective_scoring_date)
+            alpha_diag_map = get_alpha_dashboard_diagnostics(
+                effective_scoring_date, include_snapshot_streaks=include_snapshot_streaks
+            )
         avg_volume_try_map = _load_avg_volume_try_map(session, effective_scoring_date)
         alpha_x_native_peer_counts = _load_alpha_x_native_peer_counts(
             session,
@@ -1283,7 +1289,9 @@ def get_scoring_results(
                 "alpha_primary_blocker": alpha_diag["alpha_primary_blocker"],
                 "alpha_all_blockers": alpha_diag["alpha_all_blockers"],
                 "alpha_research_bucket": alpha_diag["alpha_research_bucket"],
-                "alpha_snapshot_streak": alpha_diag["alpha_snapshot_streak"],
+                "alpha_snapshot_streak": (
+                    alpha_diag["alpha_snapshot_streak"] if include_snapshot_streaks else None
+                ),
                 "ai_insight": score.ai_insight if score else None,
                 "alpha_relaxed_p4_eligible": alpha_diag["alpha_relaxed_p4_eligible"],
                 "alpha_reason": alpha_diag["alpha_reason"],
