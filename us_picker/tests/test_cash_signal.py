@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from us_picker.db.schema import Base, CashAllocationState
+from us_picker.db.schema import Base, CashAllocationState, Company, DailyPrice
 from us_picker.portfolio.cash_signal import (
     CashSignalCalculator,
     CashSignalConfig,
@@ -113,6 +113,30 @@ def test_research_cash_signal_ignores_existing_live_rows(session, cfg):
         market_regime="BEAR", macro_regime="RISK_OFF", persist=False, isolated=True,
     )
     assert result.cash_pct == 0.75
+    assert session.query(CashAllocationState).count() == 1
+
+
+def test_observe_completed_cash_session_is_idempotent_and_requires_benchmark(session, cfg, monkeypatch):
+    from us_picker.portfolio import cash_signal
+
+    monday = date(2026, 7, 6)
+    equity = Company(ticker="ABC", is_active=True)
+    benchmark = Company(ticker="SPY", is_active=False)
+    session.add_all([equity, benchmark])
+    session.flush()
+    session.add(DailyPrice(company_id=equity.id, date=monday, close=100))
+    session.flush()
+    calculator = CashSignalCalculator(config=cfg)
+    assert calculator.observe_completed_session(session, monday) is None
+    assert calculator.observe_completed_session(session, monday - timedelta(days=1)) is None
+    assert session.query(CashAllocationState).count() == 0
+
+    monkeypatch.setattr(cash_signal.MarketRegimeClassifier, "classify", lambda self, day: "BULL_LOW_VOL")
+    monkeypatch.setattr(cash_signal.MacroRegimeClassifier, "classify", lambda self, day: "NEUTRAL")
+    session.add(DailyPrice(company_id=benchmark.id, date=monday, close=100))
+    session.flush()
+    assert calculator.observe_completed_session(session, monday).state == "NORMAL"
+    assert calculator.observe_completed_session(session, monday).days_in_state == 1
     assert session.query(CashAllocationState).count() == 1
 
 

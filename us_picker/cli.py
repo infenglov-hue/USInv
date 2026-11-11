@@ -1198,25 +1198,33 @@ def inspect(ctx: click.Context, ticker: str) -> None:
 def check_exits(ctx: click.Context, apply: bool, yes: bool) -> None:
     """Mid-month exit check: evaluate stop-loss, target, and thesis-breaker conditions."""
     from rich.table import Table
+    from us_picker.data.fetcher import _last_complete_session_day
     from us_picker.db.connection import session_scope
     from us_picker.db.schema import PortfolioSelection
+    from us_picker.portfolio.cash_signal import CashSignalCalculator
     from us_picker.portfolio.exit_rules import ExitRuleChecker
 
+    completed_session = _last_complete_session_day()
     engine = _get_engine_and_tables()
     with session_scope(engine) as session:
-        checker = ExitRuleChecker(session)
+        checker = ExitRuleChecker(session, completed_session=completed_session)
 
         # US port: restate open positions for splits first, otherwise a
         # 10:1 split reads as a -90% day and fires every stop.
         if apply:
             from us_picker.portfolio.split_positions import apply_splits_to_open_positions
 
-            for event in apply_splits_to_open_positions(session):
+            cash = CashSignalCalculator().observe_completed_session(session, completed_session)
+            if cash is not None:
+                console.print(f"[cyan]Cash state {cash.date}: {cash.state} ({cash.cash_pct:.0%}).[/cyan]")
+            else:
+                console.print(f"[yellow]No verified cash observation for {completed_session}.[/yellow]")
+
+            for event in apply_splits_to_open_positions(session, today=completed_session):
                 console.print(
                     f"[cyan]Split {event['ratio']:g}:1 applied to {event['ticker']} "
                     f"(ex {event['action_date']}).[/cyan]"
                 )
-            session.commit()
 
         # B1: ratchet trailing stops daily BEFORE evaluating exits, so a
         # position that fell through today's raised stop exits this run.
@@ -1229,7 +1237,7 @@ def check_exits(ctx: click.Context, apply: bool, yes: bool) -> None:
         signals = checker.check_exits()
 
         if not signals:
-            console.print("[green]No exit signals found. All positions holding steady.[/green]")
+            console.print(f"[green]No exit signals from positions with a valid {completed_session} close.[/green]")
             return
 
         console.print(f"[bold red]Found {len(signals)} exit signals![/bold red]")
@@ -1266,6 +1274,7 @@ def check_exits(ctx: click.Context, apply: bool, yes: bool) -> None:
                         .filter(
                             PortfolioSelection.portfolio == s["portfolio"],
                             PortfolioSelection.company_id == s["company_id"],
+                            PortfolioSelection.selection_date == s["entry_date"],
                             PortfolioSelection.exit_date.is_(None)
                         )
                         .first()
@@ -2190,7 +2199,7 @@ def export_live_prices(output: Path, tickers_file: Path | None) -> None:
     is_flag=True,
     default=False,
     help=(
-        "Force a fresh compute for today using the live regime classifiers "
+        "Evaluate the latest completed session using the live regime classifiers "
         "and persist the row. Without this flag the command only reads the "
         "most recently persisted state."
     ),
@@ -2220,8 +2229,13 @@ def cash_status_command(ctx: click.Context, as_json: bool, compute: bool) -> Non
     cfg = CashSignalConfig.load()
 
     if compute:
+        from us_picker.data.fetcher import _last_complete_session_day
+
+        completed_session = _last_complete_session_day()
         with session_scope() as session:
-            result = CashSignalCalculator(cfg).compute(session, _date.today())
+            result = CashSignalCalculator(cfg).observe_completed_session(session, completed_session)
+        if result is None:
+            raise click.ClickException(f"No verified cash observation for {completed_session}")
         state = {
             "date": result.date,
             "state": result.state,

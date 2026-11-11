@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from us_picker.db.schema import (
     Base,
     Company,
+    DailyPrice,
     PortfolioCycleMark,
     PortfolioSelection,
     ScoringResult,
@@ -179,6 +180,7 @@ def test_select_and_store_replaces_same_day_snapshot():
     session.commit()
 
     scoring_date = date(2026, 3, 16)
+    session.add_all(DailyPrice(company_id=company.id, date=scoring_date, close=100.0) for company in companies)
 
     # Stale same-day snapshot with four names.
     for idx, company in enumerate(companies[:4], start=1):
@@ -263,6 +265,8 @@ def test_select_and_store_separates_signal_and_effective_dates():
 
     signal_date = date(2026, 7, 10)
     effective_date = date(2026, 7, 13)
+    session.add(DailyPrice(company_id=company.id, date=signal_date, close=370.0))
+    session.flush()
     selector = PortfolioSelector(
         scoring_date=signal_date,
         selection_date=effective_date,

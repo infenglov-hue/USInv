@@ -1,6 +1,7 @@
 """Split-normalized units and open-position restatement (US port)."""
 
 from datetime import date
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
@@ -14,6 +15,8 @@ from us_picker.db.schema import (
     PortfolioCycleMark,
     PortfolioSelection,
 )
+from us_picker.portfolio.exit_rules import ExitRuleChecker
+from us_picker.portfolio.selector import PortfolioSelector
 from us_picker.portfolio.split_positions import apply_splits_to_open_positions
 from us_picker.utils.splits import (
     cumulative_split_factor,
@@ -107,3 +110,54 @@ def test_open_position_is_restated_once(session):
 
     assert apply_splits_to_open_positions(session, today=date(2024, 6, 20)) == []
     assert position.entry_price == pytest.approx(110.0)
+
+
+def test_split_restatement_waits_for_post_split_price(session):
+    cid = session.query(Company.id).scalar()
+    split_date = date(2024, 6, 10)
+    session.query(DailyPrice).filter(DailyPrice.date == split_date).delete()
+    position = PortfolioSelection(
+        portfolio="ALPHA", company_id=cid, selection_date=date(2024, 6, 7),
+        entry_price=1200.0, stop_loss_price=900.0,
+    )
+    session.add(position)
+    session.flush()
+
+    assert apply_splits_to_open_positions(session, today=split_date) == []
+    assert position.entry_price == 1200.0
+    assert position.split_applied_through is None
+
+    session.add(DailyPrice(company_id=cid, date=split_date, close=121.79))
+    session.flush()
+    assert len(apply_splits_to_open_positions(session, today=split_date)) == 1
+    assert position.entry_price == 120.0
+    assert position.stop_loss_price == 90.0
+
+
+def test_staged_entry_uses_raw_reference_and_restates_a_split_on_effective_day(session, monkeypatch):
+    cid = session.query(Company.id).scalar()
+    signal = date(2024, 6, 7)
+    effective = date(2024, 6, 10)
+    reference = session.query(DailyPrice).filter_by(company_id=cid, date=signal).one()
+    reference.adjusted_close = 120.888
+    session.flush()
+
+    selector = PortfolioSelector(scoring_date=signal, selection_date=effective)
+    candidate = {"company_id": cid, "ticker": "NVDA", "score": 90}
+    pick = selector._build_pick(candidate, 1, session)
+    assert pick["entry_price"] == 120.888  # The historical selector uses total-return prices.
+    monkeypatch.setattr(selector, "select_all", lambda db: {"alpha": [pick]})
+    selector.select_and_store(session, cash_signal=SimpleNamespace(cash_pct=0.0, state="NORMAL"))
+    position = session.query(PortfolioSelection).one()
+    mark = session.query(PortfolioCycleMark).one()
+    assert position.entry_price == pytest.approx(1208.88)
+    assert position.stop_loss_price == pytest.approx(991.28)
+    assert position.split_applied_through == signal
+    assert mark.ref_price == position.entry_price
+    assert ExitRuleChecker(session, completed_session=signal).check_exits() == []
+
+    assert len(apply_splits_to_open_positions(session, today=effective)) == 1
+    assert position.entry_price == pytest.approx(120.888)
+    assert position.stop_loss_price == pytest.approx(99.128)
+    assert mark.ref_price == position.entry_price
+    assert ExitRuleChecker(session, completed_session=effective).check_exits() == []

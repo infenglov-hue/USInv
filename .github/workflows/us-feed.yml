@@ -151,9 +151,13 @@ jobs:
           else
             private_run 'Portfolio preparation' prepare-portfolio
           fi
+          echo 'Recording private forward observations'
+          if ! python -m us_picker.forward_observation >/dev/null 2>&1; then
+            echo '::error::Forward observation failed. Reproduce locally for private diagnostics.'
+            exit 1
+          fi
           private_run 'Backtest' backtest --start-date 2017-01-09 --execution same-day-open
-          private_run 'Mobile snapshot export' export-mobile-feed --feed-dir mobile-feed-dist \
-            --base-download-url "${FEED_BASE_URL}"
+          private_run 'Mobile snapshot export' export-mobile-feed --feed-dir mobile-feed-dist
 
       - name: Verify mobile snapshot
         run: |
@@ -170,6 +174,14 @@ jobs:
         run: |
           python scripts_picker/state_db_artifact.py push \
             --source data/us_picker.db --repository "${STATE_REPOSITORY}"
+
+      - name: Store verified private mobile feed
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python -m scripts_picker.mobile_feed_artifact push \
+            --source-dir mobile-feed-dist --repository "${STATE_REPOSITORY}"
 
       - name: Stage authorized public feed for Pages
         if: vars.US_PICKER_PUBLIC_MARKET_DATA == 'true' && !inputs.dry_run

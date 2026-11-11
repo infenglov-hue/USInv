@@ -258,6 +258,8 @@ def _ensure_release(
     *,
     token: Optional[str],
     runner: Optional[GhRunner],
+    title: str = RELEASE_TITLE,
+    notes: str = RELEASE_NOTES,
 ) -> bool:
     """Create a private draft only when GitHub confirms the release is missing."""
 
@@ -266,7 +268,7 @@ def _ensure_release(
         _require_draft_release(view)
         return False
     if (view.stderr or "").strip().lower() != "release not found":
-        raise RuntimeError("GitHub could not verify the runtime release; refusing to upload state")
+        raise RuntimeError("GitHub could not verify the draft release; refusing to upload")
     _gh(
         [
             "release",
@@ -275,9 +277,9 @@ def _ensure_release(
             "--repo",
             repository,
             "--title",
-            RELEASE_TITLE,
+            title,
             "--notes",
-            RELEASE_NOTES,
+            notes,
             "--draft",
         ],
         token=token,
@@ -307,7 +309,7 @@ def _view_release_visibility(
 def _require_draft_release(view: "subprocess.CompletedProcess[str]") -> None:
     view.check_returncode()
     if (view.stdout or "").strip() != "true":
-        raise ValueError("Runtime state requires a private GitHub draft release")
+        raise ValueError("Artifact storage requires a private GitHub draft release")
 
 
 def _release_asset_names(

@@ -46,8 +46,10 @@ from us_picker.portfolio.cash_signal import (
     CashSignalResult,
 )
 from us_picker.portfolio.exit_rules import ExitBreakers
+from us_picker.portfolio.split_positions import apply_splits_to_open_positions
 from us_picker.portfolio.universes import UniverseBuilder
 from us_picker.utils.index_prices import get_spliced_price_by_ticker
+from us_picker.utils.splits import latest_raw_close, split_factor_between
 
 # Phase 5: human-friendly labels for the top-factor reason chips. Kept
 # alongside the selector (not in the factor modules) because this mapping is a
@@ -494,7 +496,10 @@ class PortfolioSelector:
         if cash_signal is None:
             cash_signal = CashSignalCalculator().compute(session, self.scoring_date)
 
+        apply_splits_to_open_positions(session, today=self.scoring_date)
         all_picks = self.select_all(session)
+        for portfolio, picks in all_picks.items():
+            all_picks[portfolio] = self._use_traded_references(picks, session)
 
         # Safety net: enforce max_target_multiple cap
         max_multiple = self._cfg.get("max_target_multiple", _DEFAULT_MAX_TARGET_MULTIPLE)
@@ -563,6 +568,7 @@ class PortfolioSelector:
             for pos in open_positions:
                 pick = picks_by_company.get(pos.company_id)
                 if pick is not None:
+                    self._match_position_basis(pick, pos, session)
                     continued_ids.add(pos.company_id)
                     reason_chips = pick.get("reason_top_factors") or []
                     pos.composite_score = pick["score"]
@@ -593,7 +599,10 @@ class PortfolioSelector:
                     continue
 
                 # Genuinely dropped from the selection — exit at current price.
-                exit_price = self._get_latest_price(pos.company_id, session)
+                ref = latest_raw_close(session, pos.company_id, self.scoring_date)
+                exit_price = ref[1] if ref else None
+                if ref and pos.split_applied_through:
+                    exit_price /= split_factor_between(session, pos.company_id, ref[0], pos.split_applied_through)
                 pos.exit_date = self.selection_date
                 pos.exit_price = exit_price or pos.entry_price
                 if pos.selection_date is not None:
@@ -664,6 +673,7 @@ class PortfolioSelector:
                     else None
                 )
                 if existing:
+                    self._match_position_basis(pick, existing, session)
                     existing.composite_score = pick["score"]
                     existing.target_price = pick["target_price"]
                     existing.target_source = pick.get("target_source")
@@ -678,6 +688,7 @@ class PortfolioSelector:
                     existing.cycle_signal_date = self.scoring_date
                     existing.cycle_ref_price = pick["entry_price"]
                     existing.highest_close = pick["entry_price"]
+                    existing.split_applied_through = pick["price_basis_date"]
                     # A same-day rerun may re-pick a name exited as REBALANCE
                     # earlier the same day — that exit was working state, not
                     # a real trade, so reopen the row.
@@ -710,6 +721,7 @@ class PortfolioSelector:
                             cycle_signal_date=self.scoring_date,
                             cycle_ref_price=pick["entry_price"],
                             highest_close=pick["entry_price"],
+                            split_applied_through=pick["price_basis_date"],
                         )
                     )
 
@@ -1470,21 +1482,7 @@ class PortfolioSelector:
                 self.scoring_date,
             )
             return None
-        # Only pull ATR eagerly when the expected-move target needs it (#11);
-        # otherwise the stop computes its own ATR lazily, preserving the exact
-        # prior call graph (and monkeypatch-based tests).
-        target_needs_atr = bool(
-            (self._cfg.get("target_expected_move", {}) or {}).get("enabled")
-        )
-        atr = self._atr_value(candidate["company_id"], session) if target_needs_atr else None
-        target, target_source = self._compute_target_price_with_source(
-            candidate, entry, atr=atr
-        )
-        if atr is not None:
-            stop = self._compute_atr_stop(candidate["company_id"], entry, session, atr=atr)
-        else:
-            # Default path: exact prior 3-arg call (stop computes its own ATR).
-            stop = self._compute_atr_stop(candidate["company_id"], entry, session)
+        target, target_source, stop = self._reference_levels(candidate, entry, session)
 
         reason_top_factors = _compute_reason_top_factors(
             candidate.get("factor_scores") or {}
@@ -1504,9 +1502,51 @@ class PortfolioSelector:
             "target_source": target_source,
             "stop_loss": stop,
             "dcf_mos": candidate.get("dcf_mos"),
+            "data_completeness": candidate.get("data_completeness"),
             "quality_flags_json": candidate.get("quality_flags_json"),
             "reason_top_factors": reason_top_factors,
         }
+
+    def _reference_levels(
+        self, candidate: dict, entry: float, session: Session,
+    ) -> tuple[float | None, str | None, float | None]:
+        target_needs_atr = bool(
+            (self._cfg.get("target_expected_move", {}) or {}).get("enabled")
+        )
+        atr = self._atr_value(candidate["company_id"], session) if target_needs_atr else None
+        target, target_source = self._compute_target_price_with_source(candidate, entry, atr=atr)
+        if atr is not None:
+            stop = self._compute_atr_stop(candidate["company_id"], entry, session, atr=atr)
+        else:
+            stop = self._compute_atr_stop(candidate["company_id"], entry, session)
+        return target, target_source, stop
+
+    def _use_traded_references(self, picks: list[dict], session: Session) -> list[dict]:
+        """Base persisted model levels on the same units as live raw quotes."""
+        priced = []
+        for pick in picks:
+            ref = latest_raw_close(session, pick["company_id"], self.scoring_date)
+            if ref is None:
+                logger.warning("No traded reference close for %s through %s", pick["ticker"], self.scoring_date)
+                return []  # Preserve the prior portfolio if any selected reference is unavailable.
+            price_date, raw_close = ref
+            if raw_close != pick["entry_price"]:
+                target, source, stop = self._reference_levels(pick, raw_close, session)
+                pick.update(entry_price=raw_close, target_price=target, target_source=source, stop_loss=stop)
+            pick["price_basis_date"] = price_date
+            priced.append(pick)
+        return priced
+
+    @staticmethod
+    def _match_position_basis(pick: dict, position: PortfolioSelection, session: Session) -> None:
+        basis = position.split_applied_through
+        if basis is None or basis <= pick["price_basis_date"]:
+            return
+        ratio = split_factor_between(session, position.company_id, pick["price_basis_date"], basis)
+        for key in ("entry_price", "target_price", "stop_loss"):
+            if pick[key] is not None:
+                pick[key] /= ratio
+        pick["price_basis_date"] = basis
 
     def _get_latest_price(
         self, company_id: int, session: Session

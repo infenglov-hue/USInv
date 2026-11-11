@@ -383,6 +383,17 @@ class ModelPerformance(Base):
     alpha: Optional[float] = Column(Float)
 
 
+class ForwardObservation(Base):
+    """Private record of the model decisions visible during a real feed run."""
+
+    __tablename__ = "forward_observations"
+
+    observation_id: str = Column(String(64), primary_key=True)
+    price_date: date = Column(Date, nullable=False, index=True)
+    captured_at: str = Column(String(32), nullable=False)
+    payload_json: str = Column(Text, nullable=False)
+
+
 class SectorBenchmark(Base):
     """Aggregate financial benchmarks per custom sector."""
 

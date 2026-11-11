@@ -1,6 +1,6 @@
 """Canonical cohort/cycle-mark live NAV regression tests."""
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -14,7 +14,7 @@ from us_picker.db.schema import (
     PortfolioSelection,
 )
 from us_picker.output.performance import PerformanceTracker
-from us_picker.portfolio.performance_ledger import calculate_live_performance
+from us_picker.portfolio.performance_ledger import _latest_effective_session, calculate_live_performance
 
 
 @pytest.fixture
@@ -125,7 +125,7 @@ def test_legacy_cohorts_compound_period_nav_and_exclude_zero_trade_from_win_rate
     assert result["closed_trade_count"] == 5
     assert result["win_rate"] == pytest.approx(60.0)
     assert result["active_position_count"] == 1
-    assert result["return_basis"] == "gross_recorded_execution"
+    assert result["return_basis"] == "gross_model_reference"
     assert tracker_result == result
 
 
@@ -173,3 +173,48 @@ def test_cycle_marks_replace_continuity_rows_without_double_counting(session):
     assert result["cumulative_return_pct"] == pytest.approx(0.0)
     assert result["active_return_avg"] == pytest.approx(0.0)
     assert result["performance_method"] == "cycle_marks_plus_legacy_gross"
+
+
+@pytest.mark.parametrize("with_marks", [False, True])
+def test_prepared_cycle_does_not_change_prior_model_reference(session, with_marks):
+    cycle = date(2026, 10, 26)
+    last_session = date(2026, 11, 6)
+    next_cycle = date(2026, 11, 9)
+    spy = _company(session, "SPY", "INDEX")
+    held, staged = [_company(session, ticker) for ticker in ("HELD", "STAGED")]
+    _selection(session, held, cycle, 100, exit_date=next_cycle, exit_price=160)
+    _selection(session, staged, next_cycle, 120)
+    _price(session, held, last_session, 110)
+    _price(session, held, next_cycle, 190)
+    _price(session, staged, next_cycle, 120)
+    _price(session, spy, cycle, 100)
+    _price(session, spy, last_session, 105)
+    _price(session, spy, next_cycle, 200)
+    if with_marks:
+        session.add_all([
+            PortfolioCycleMark(portfolio="ALPHA", cycle_date=cycle, company_id=held.id, ref_price=100),
+            PortfolioCycleMark(portfolio="ALPHA", cycle_date=next_cycle, company_id=staged.id, ref_price=120),
+        ])
+    session.commit()
+
+    result = calculate_live_performance(session, "ALPHA", as_of_date=last_session)
+
+    assert result["period_count"] == 1
+    assert result["active_return_avg"] == pytest.approx(10)
+    assert result["cumulative_return_pct"] == pytest.approx(10)
+    assert result["benchmark_cumulative_return_pct"] == pytest.approx(5)
+    assert result["closed_trade_count"] == 0
+    assert result["active_position_count"] == 1
+
+    effective = calculate_live_performance(session, "ALPHA", as_of_date=next_cycle)
+    assert effective["period_count"] == 2
+    assert effective["closed_trade_count"] == 1
+    assert effective["active_position_count"] == 1
+
+
+def test_effective_session_switches_at_nyse_open():
+    before_open = datetime(2026, 11, 9, 14, 29, tzinfo=timezone.utc)
+    market_open = datetime(2026, 11, 9, 14, 30, tzinfo=timezone.utc)
+
+    assert _latest_effective_session(before_open) == date(2026, 11, 6)
+    assert _latest_effective_session(market_open) == date(2026, 11, 9)

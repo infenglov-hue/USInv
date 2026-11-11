@@ -192,6 +192,7 @@ class TestSelectAndStoreEmptyGuard:
         as_of = date(2026, 2, 1)
         old_cid = _add_company(session, "OLD1")
         new_cid = _add_company(session, "NEW1")
+        session.add(DailyPrice(company_id=new_cid, date=as_of, close=100.0))
         session.add(
             DailyPrice(
                 company_id=old_cid,
@@ -296,6 +297,14 @@ class TestPositionContinuity:
         return cid
 
     def _run(self, session, picks):
+        for pick in picks:
+            if not session.query(DailyPrice.id).filter_by(
+                company_id=pick["company_id"], date=self.ROTATION,
+            ).first():
+                session.add(DailyPrice(
+                    company_id=pick["company_id"], date=self.ROTATION, close=pick["entry_price"],
+                ))
+        session.flush()
         selector = PortfolioSelector(
             scoring_date=self.ROTATION, strategy_variant="classic"
         )

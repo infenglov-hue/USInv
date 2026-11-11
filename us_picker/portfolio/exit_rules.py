@@ -110,12 +110,13 @@ class ExitBreakers:
 class ExitRuleChecker:
     """Evaluates exit conditions for open portfolio positions."""
 
-    def __init__(self, session: Session):
+    def __init__(self, session: Session, *, completed_session: date | None = None):
         self.session = session
+        self._completed_session = completed_session
         self._risk_classifier = None  # lazy — only needed for market cap
         self._breakers = ExitBreakers.load()
 
-    def _insider_threshold(self, company_id: int) -> float:
+    def _insider_threshold(self, company_id: int, as_of: date | None = None) -> float:
         """Net-selling threshold scaled by market cap.
 
         max(5M TRY, 0.5% of market cap); falls back to the flat floor
@@ -125,10 +126,26 @@ class ExitRuleChecker:
             from us_picker.classification.risk_classifier import RiskClassifier
 
             self._risk_classifier = RiskClassifier()
-        mcap = self._risk_classifier.compute_market_cap(company_id, self.session)
+        mcap = self._risk_classifier.compute_market_cap(company_id, self.session, scoring_date=as_of)
         if mcap is None or mcap <= 0:
             return _THESIS_INSIDER_SELL_FLOOR
         return max(_THESIS_INSIDER_SELL_FLOOR, mcap * _THESIS_INSIDER_SELL_MCAP_PCT)
+
+    def _position_bar(self, selection: PortfolioSelection) -> DailyPrice | None:
+        """Find the traded close eligible for this position's current rules."""
+        effective_date = max(
+            selection.selection_date,
+            selection.cycle_ref_date or selection.selection_date,
+            selection.split_applied_through or selection.selection_date,
+        )
+        query = self.session.query(DailyPrice).filter(
+            DailyPrice.company_id == selection.company_id,
+            DailyPrice.date >= effective_date,
+            DailyPrice.close > 0,
+        )
+        if self._completed_session is not None:
+            query = query.filter(DailyPrice.date == self._completed_session)
+        return query.order_by(DailyPrice.date.desc()).first()
 
     def update_trailing_stops(self, *, force_enabled: bool | None = None) -> int:
         """Track high-water marks and (if enabled) ratchet trailing stops.
@@ -161,16 +178,8 @@ class ExitRuleChecker:
 
         raised = 0
         for selection in open_positions:
-            latest = (
-                self.session.query(DailyPrice)
-                .filter(
-                    DailyPrice.company_id == selection.company_id,
-                    DailyPrice.close.isnot(None),
-                )
-                .order_by(DailyPrice.date.desc())
-                .first()
-            )
-            if latest is None or not latest.close or latest.close <= 0:
+            latest = self._position_bar(selection)
+            if latest is None:
                 continue
 
             close = float(latest.close)
@@ -239,14 +248,8 @@ class ExitRuleChecker:
         self, selection: PortfolioSelection, company: Company
     ) -> Optional[dict]:
         """Check a single position for any exit trigger."""
-        # Get latest price
-        latest_price_row = (
-            self.session.query(DailyPrice)
-            .filter(DailyPrice.company_id == company.id)
-            .order_by(DailyPrice.date.desc())
-            .first()
-        )
-        if not latest_price_row or not latest_price_row.close:
+        latest_price_row = self._position_bar(selection)
+        if latest_price_row is None:
             return None
 
         current_price = latest_price_row.close
@@ -291,9 +294,9 @@ class ExitRuleChecker:
         # 3. Thesis Breaker (Insider Selling)
         # Check net insider selling since entry date
         insider_net = self._calculate_net_insider_flow(
-            company.id, selection.selection_date
+            company.id, selection.selection_date, price_date
         )
-        if insider_net <= -self._insider_threshold(company.id):
+        if insider_net < 0 and insider_net <= -self._insider_threshold(company.id, price_date):
             return {
                 "company_id": company.id,
                 "ticker": company.ticker,
@@ -364,7 +367,7 @@ class ExitRuleChecker:
         return None, None
 
     def _calculate_net_insider_flow(
-        self, company_id: int, since_date: date
+        self, company_id: int, since_date: date, through_date: date
     ) -> float:
         """Calculate net insider transaction value (BUY - SELL) since a date.
 
@@ -376,6 +379,7 @@ class ExitRuleChecker:
             .filter(
                 InsiderTransaction.company_id == company_id,
                 InsiderTransaction.disclosure_date >= since_date,
+                InsiderTransaction.disclosure_date <= through_date,
             )
             .all()
         )
