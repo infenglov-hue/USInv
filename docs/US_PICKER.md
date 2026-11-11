@@ -95,7 +95,7 @@ Günlük iş son fiyatları ve model durumunu yeniler. Kesinti sonrası GitHub A
 
 Her geçerli feed koşusu, son tamamlanmış NYSE seansının gözlemini özel çalışma veritabanına kaydeder. Kayıt karar ve veri tarihlerini, hazır portföyü, rotasyon referanslarını, çıkışları, stop seviyelerini, nakit sinyalini, uygulanmış model ağırlıklarını, hisselerin ve SPY’ın gözlenen fiyatlarını içerir. GitHub koşu kimliği ve kod sürümü, sonraki incelemede o anda hangi kararın kaydedildiğini gösterir. Bu kayıtlar ilk başarılı koşuyla başlar.
 
-Nakit hedefi tamamlanmış seans başına değerlendirilir. Model pozisyon ağırlıkları rotasyonda belirlenir. Stop denetimi tamamlanmış seansın, pozisyonun yürürlük tarihinden sonraki uygun fiyatını kullanır. PWA’daki model referans getirisi, model fiyatları üzerinden hesaplanır. Kişisel gerçekleşen işlemler ayrı kaydedilir.
+Nakit hedefi tamamlanmış seans başına değerlendirilir. Model pozisyon ağırlıkları rotasyonda belirlenir. Stop denetimi, pozisyonun yürürlük tarihinden itibaren tamamlanmış seansın uygun fiyatını kullanır. Zamanlanmış portföy hazırlığı henüz açılmamış bir NYSE seansını hedefler ve önceki seansın tamamlanmış fiyatlarını bekler. PWA’daki model referans getirisi, model fiyatları üzerinden hesaplanır. Kişisel gerçekleşen işlemler ayrı kaydedilir.
 
 Bir aylık inceleme için özel veritabanını indirdikten sonra `python -m us_picker.forward_observation --export data/forward-observations.jsonl` çalıştırın. Kayıtları tarih sırasıyla inceleyerek stop sonrası fiyatı, hedef nakit ile portföy ağırlıklarını ve aynı günlerin SPY getirisini karşılaştırabilirsiniz. JSONL dosyası özel fiyatlar içerir.
 

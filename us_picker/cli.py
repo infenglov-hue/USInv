@@ -904,7 +904,7 @@ def pick(
 @click.option(
     "--next-rotation",
     is_flag=True,
-    help="Prepare the next configured rotation instead of today's session.",
+    help="Prepare the next configured rotation.",
 )
 @click.option(
     "--max-days-ahead",
@@ -935,15 +935,18 @@ def prepare_portfolio(
     use_regime: bool,
     strategy: str,
 ) -> None:
-    """Score T-1 completed data and prepare a portfolio effective on T."""
+    """Prepare a portfolio for an upcoming opening using the previous session's data."""
     from usinv.calendar import EXCHANGE_TIMEZONE, default_calendar
+    from us_picker.portfolio.execution import upcoming_session_date
 
     if next_rotation and effective_date is not None:
         raise click.UsageError(
             "--next-rotation and --effective-date are mutually exclusive"
         )
 
-    today = datetime.now(EXCHANGE_TIMEZONE).date()
+    now = datetime.now(EXCHANGE_TIMEZONE)
+    today = now.date()
+    calendar = default_calendar()
     if effective_date is not None:
         effective = effective_date.date()
     elif next_rotation:
@@ -962,9 +965,9 @@ def prepare_portfolio(
             )
             return
     else:
-        effective = today
+        effective = upcoming_session_date(now)
 
-    if not default_calendar().is_session(effective):
+    if not calendar.is_session(effective):
         if effective_date is not None:
             raise click.UsageError(f"{effective} is not an XNYS trading session.")
         console.print(f"[yellow]XNYS is closed on {effective}; no portfolio prepared.[/yellow]")
@@ -979,6 +982,9 @@ def prepare_portfolio(
     engine = _get_engine_and_tables()
     with session_scope(engine) as session:
         signal_date = latest_completed_session_date(session, effective)
+        if effective_date is None and signal_date != calendar.previous_session(effective).label:
+            console.print(f"[yellow]Waiting for the completed session before {effective}.[/yellow]")
+            return
         if signal_date is not None:
             selection_count, mark_count = stamp_missing_signal_dates(
                 session,
@@ -1003,6 +1009,9 @@ def prepare_portfolio(
         f"{signal_date} data (T-1 -> T)...[/bold blue]"
     )
     ctx.invoke(score, use_regime=use_regime, as_of_date=signal_dt)
+    if effective_date is None and datetime.now(EXCHANGE_TIMEZONE) >= calendar.session(effective).open_at:
+        console.print(f"[yellow]The {effective} session has opened; no new portfolio was recorded.[/yellow]")
+        return
     ctx.invoke(
         pick,
         force=False,

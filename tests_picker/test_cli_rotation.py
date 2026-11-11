@@ -1,11 +1,16 @@
-from datetime import date
+from contextlib import nullcontext
+from datetime import UTC, date, datetime
 from pathlib import Path
+
+from click.testing import CliRunner
 
 from us_picker.cli import (
     _resolve_backtest_rebalance_weeks,
     _should_skip_portfolio_rotation,
     _week_start_monday,
+    cli,
 )
+from us_picker.portfolio.execution import upcoming_session_date
 from us_picker.portfolio.rotation import (
     load_rotation_config,
     next_rotation_date,
@@ -15,6 +20,30 @@ from us_picker.portfolio.rotation import (
 
 # Production anchor: 2026-06-29 is a rotation Monday (bi-weekly cadence).
 ANCHOR = date(2026, 6, 29)
+
+
+def test_automatic_selection_targets_an_opening_that_is_still_ahead():
+    assert upcoming_session_date(datetime(2026, 11, 16, 14, 29, tzinfo=UTC)) == date(2026, 11, 16)
+    assert upcoming_session_date(datetime(2026, 11, 16, 14, 30, tzinfo=UTC)) == date(2026, 11, 17)
+    assert upcoming_session_date(datetime(2026, 9, 7, 12, tzinfo=UTC)) == date(2026, 9, 8)
+
+
+def test_delayed_automatic_selection_waits_for_previous_session_data(monkeypatch):
+    class AfterOpen(datetime):
+        @classmethod
+        def now(cls, tz):
+            return datetime(2026, 11, 16, 15, tzinfo=UTC).astimezone(tz)
+
+    monkeypatch.setattr("us_picker.cli.datetime", AfterOpen)
+    monkeypatch.setattr("us_picker.cli._get_engine_and_tables", lambda: object())
+    monkeypatch.setattr("us_picker.db.connection.session_scope", lambda engine: nullcontext(object()))
+    monkeypatch.setattr(
+        "us_picker.portfolio.execution.latest_completed_session_date",
+        lambda session, effective: date(2026, 11, 13),
+    )
+    result = CliRunner().invoke(cli, ["prepare-portfolio"])
+    assert result.exit_code == 0, result.output
+    assert "Waiting for the completed session before 2026-11-17" in result.output
 
 
 def test_week_start_monday_returns_current_week_monday():
