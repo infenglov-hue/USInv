@@ -8,7 +8,7 @@ coverage already present in the runtime database.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
@@ -24,6 +24,18 @@ from us_picker.db.schema import (
 SIGNAL_LOOKBACK_CALENDAR_DAYS = 14
 MIN_BROAD_COVERAGE_RATIO = 0.50
 TRADABLE_PRICE_LOOKBACK_DAYS = 45
+
+
+def upcoming_session_date(now: datetime) -> date:
+    """Return the session whose official opening is still ahead."""
+    from usinv.calendar import EXCHANGE_TIMEZONE, default_calendar
+
+    local_now = now.astimezone(EXCHANGE_TIMEZONE)
+    today = local_now.date()
+    calendar = default_calendar()
+    if calendar.is_session(today) and local_now < calendar.session(today).open_at:
+        return today
+    return calendar.next_session(today).label
 
 
 def stamp_missing_signal_dates(

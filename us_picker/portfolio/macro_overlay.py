@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # a starting point, not validated on US data yet.
 _CDS_RISK_OFF = 260.0
 _CDS_RISK_ON = 190.0
-_REAL_RATE_RISK_OFF = -5.0  # Real rate < -5% is very loose/inflationary -> risk off for currency
+_REAL_RATE_RISK_OFF = -0.05  # Fed funds and CPI are stored as fractions, so this is -5 percentage points.
 _REAL_RATE_RISK_ON = 0.0    # Positive real rates -> stability -> risk on
 
 class MacroRegimeClassifier:
@@ -66,16 +66,13 @@ class MacroRegimeClassifier:
             elif row.turkey_cds_5y < _CDS_RISK_ON:
                 score += 1
 
-        # Real Rate Check
-        # Approximate Real Rate = Policy Rate - CPI / 2 (simple heuristic)
-        # or just check CPI trend. 
-        # Here we use policy_rate and cpi_yoy if available.
+        # Real rate approximation: policy rate minus year-over-year CPI inflation.
         if row.policy_rate_pct is not None and row.cpi_yoy_pct is not None:
-             real_rate = row.policy_rate_pct - row.cpi_yoy_pct
-             if real_rate < _REAL_RATE_RISK_OFF:
-                 score -= 1 # Deep negative rates = inflationary instability
-             elif real_rate > _REAL_RATE_RISK_ON:
-                 score += 1 # Positive real rates = stability
+            real_rate = row.policy_rate_pct - row.cpi_yoy_pct
+            if real_rate < _REAL_RATE_RISK_OFF:
+                score -= 1
+            elif real_rate > _REAL_RATE_RISK_ON:
+                score += 1
 
         if score <= -2:
             return "RISK_OFF"

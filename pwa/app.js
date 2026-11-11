@@ -23,6 +23,9 @@ const USABLE_QUOTE_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 const MARKET_DATE = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit'
 });
+const MARKET_TIME = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+});
 
 // --- Global Chart Instances ---
 let priceChartInstance = null;
@@ -757,9 +760,21 @@ function modelCyclePositionResult({
 // portfolio_cycle_marks (one ref price per position per rotation), period
 // records are built mark-to-mark; legacy snapshots fall back to the old
 // cohort logic below.
-function buildWeeklyPerformanceRecords(dbPositions, livePrices) {
+function buildWeeklyPerformanceRecords(dbPositions, livePrices, now = new Date()) {
   let marks = [];
-  const todayDate = marketIsoDate();
+  const todayDate = latestEffectiveHistoryDate(now);
+  const effectivePositions = new Map(dbPositions
+    .filter(row => !row.selection_date || row.selection_date <= todayDate)
+    .map(row => [row.ticker, row]));
+  const pendingExitRows = queryAll(`
+    SELECT * FROM portfolio_history
+    WHERE selection_date <= :todayDate AND exit_date > :todayDate
+    ORDER BY selection_date DESC, sort_order ASC
+  `, { ':todayDate': todayDate });
+  pendingExitRows.forEach(row => {
+    if (!effectivePositions.has(row.ticker)) effectivePositions.set(row.ticker, row);
+  });
+  const positions = [...effectivePositions.values()];
   try {
     marks = queryAll(`
       SELECT * FROM portfolio_cycle_marks
@@ -775,17 +790,16 @@ function buildWeeklyPerformanceRecords(dbPositions, livePrices) {
     // Marks start at the first post-B1 rotation; earlier periods still come
     // from the legacy cohort reconstruction so history doesn't lose them.
     const firstMarkDate = marks[0].cycle_date;
-    const markRecords = buildCycleMarkRecords(marks, dbPositions, livePrices);
-    const legacyRecords = buildLegacyCohortRecords(dbPositions, livePrices)
+    const markRecords = buildCycleMarkRecords(marks, positions, livePrices, todayDate);
+    const legacyRecords = buildLegacyCohortRecords(positions, livePrices, todayDate)
       .filter(rec => rec.weekStartDate < firstMarkDate && rec.isCompleted);
     return [...legacyRecords, ...markRecords]
       .sort((a, b) => a.weekStartDate.localeCompare(b.weekStartDate));
   }
-  return buildLegacyCohortRecords(dbPositions, livePrices);
+  return buildLegacyCohortRecords(positions, livePrices, todayDate);
 }
 
-function buildCycleMarkRecords(marks, dbPositions, livePrices) {
-  const todayDate = marketIsoDate();
+function buildCycleMarkRecords(marks, dbPositions, livePrices, todayDate) {
   const exitRows = queryAll(`
     SELECT * FROM portfolio_history
     WHERE exit_date IS NOT NULL AND exit_date > :startDate
@@ -795,12 +809,6 @@ function buildCycleMarkRecords(marks, dbPositions, livePrices) {
     ':startDate': LIVE_TRACKING_START_DATE,
     ':todayDate': todayDate,
   });
-  const pendingExitRows = queryAll(`
-    SELECT * FROM portfolio_history
-    WHERE exit_date > :todayDate
-    ORDER BY exit_date ASC, sort_order ASC
-  `, { ':todayDate': todayDate });
-
   const byCycle = new Map();
   marks.forEach(mark => {
     if (!byCycle.has(mark.cycle_date)) byCycle.set(mark.cycle_date, []);
@@ -812,7 +820,6 @@ function buildCycleMarkRecords(marks, dbPositions, livePrices) {
   const findExit = (ticker, afterDate, uptoDate) => exitRows.find(row =>
     row.ticker === ticker && row.exit_date > afterDate
     && (!uptoDate || row.exit_date <= uptoDate));
-  const findPendingExit = ticker => pendingExitRows.find(row => row.ticker === ticker);
   const selectionDateFor = (ticker, cycleDate) => {
     const candidates = [
       ...dbPositions.filter(row => row.ticker === ticker),
@@ -876,8 +883,8 @@ function buildCycleMarkRecords(marks, dbPositions, livePrices) {
     const ref = finiteNumber(mark.ref_price);
     if (!(ref > 0)) return;
     const pos = posByTicker.get(mark.ticker);
-    if (pos && (!pos.selection_date || pos.selection_date <= todayDate)) {
-      const latest = finiteNumber(livePrices[mark.ticker] ?? pos.current_price, null);
+    if (pos) {
+      const latest = getHistoryMarkPrice(mark.ticker, livePrices, todayDate);
       if (latest != null && latest > 0) {
         activeStocks.push(modelCyclePositionResult({
           ticker: mark.ticker,
@@ -888,18 +895,6 @@ function buildCycleMarkRecords(marks, dbPositions, livePrices) {
           includeSellCost: true,
         }));
       }
-      return;
-    }
-    const pendingExit = findPendingExit(mark.ticker);
-    if (pendingExit && finiteNumber(pendingExit.exit_price, null) > 0) {
-      activeStocks.push(modelCyclePositionResult({
-        ticker: mark.ticker,
-        selectionDate: pendingExit.selection_date || cLast,
-        cycleStart: cLast,
-        modelEntryPrice: ref,
-        modelExitPrice: finiteNumber(pendingExit.exit_price),
-        includeSellCost: false,
-      }));
       return;
     }
     const exitRow = findExit(mark.ticker, cLast, null);
@@ -917,8 +912,8 @@ function buildCycleMarkRecords(marks, dbPositions, livePrices) {
 
   const bistStart = getPriceOnOrBefore('SPY', cLast);
   const latestPriceDate = getPriceDataState().stockPriceDate;
-  const endDate = latestPriceDate || cLast;
-  const bistEnd = getBenchmarkEndPrice(endDate);
+  const endDate = latestPriceDate >= cLast && latestPriceDate <= todayDate ? latestPriceDate : cLast;
+  const bistEnd = getBenchmarkEndPrice(endDate, todayDate);
   if (activeStocks.length > 0 && bistStart > 0 && bistEnd != null) {
     records.push({
       weekStartDate: cLast,
@@ -935,8 +930,7 @@ function buildCycleMarkRecords(marks, dbPositions, livePrices) {
   return records.sort((a, b) => a.weekStartDate.localeCompare(b.weekStartDate));
 }
 
-function buildLegacyCohortRecords(dbPositions, livePrices) {
-  const todayDate = marketIsoDate();
+function buildLegacyCohortRecords(dbPositions, livePrices, todayDate) {
   const completedRows = queryAll(`
     SELECT * FROM portfolio_history
     WHERE selection_date >= :startDate
@@ -950,7 +944,6 @@ function buildLegacyCohortRecords(dbPositions, livePrices) {
   });
 
   const activeStart = dbPositions
-    .filter(position => !position.selection_date || position.selection_date <= todayDate)
     .map(position => position.selection_date)
     .filter(Boolean)
     .sort()
@@ -1008,8 +1001,7 @@ function buildLegacyCohortRecords(dbPositions, livePrices) {
     const liveStocks = dbPositions
       .filter(position => position.selection_date === activeStart)
       .map(position => {
-        const modelEntry = position.entry_price || position.current_price;
-        const latest = livePrices[position.ticker] || position.current_price || modelEntry;
+        const latest = getHistoryMarkPrice(position.ticker, livePrices, todayDate);
         const result = modelPositionResult(position, latest);
         if (!(result.entryPrice > 0) || result.exitPrice == null || result.returnFraction == null) return null;
         return {
@@ -1041,8 +1033,8 @@ function buildLegacyCohortRecords(dbPositions, livePrices) {
 
     const bistStart = getPriceOnOrBefore('SPY', activeStart);
     const latestPriceDate = getPriceDataState().stockPriceDate;
-    const endDate = latestPriceDate || activeStart;
-    const bistEnd = getBenchmarkEndPrice(endDate);
+    const endDate = latestPriceDate >= activeStart && latestPriceDate <= todayDate ? latestPriceDate : activeStart;
+    const bistEnd = getBenchmarkEndPrice(endDate, todayDate);
 
     if (activeStocks.length > 0 && bistStart > 0 && bistEnd != null) {
       records.push({
@@ -1211,11 +1203,17 @@ function formatQuoteCoverage(summary) {
   return parts.join(' • ');
 }
 
-function getBenchmarkEndPrice(endDate) {
-  const nearLive = getQuoteStatus('SPY').label !== 'SNAPSHOT';
-  const liveBenchmark = finiteNumber(window.livePrices.SPY, 0);
-  if (nearLive && liveBenchmark > 0) return liveBenchmark;
-  return getPriceOnOrBefore('SPY', endDate);
+function getHistoryMarkPrice(ticker, livePrices, asOfDate, snapshotDate = asOfDate) {
+  const timestamp = Date.parse(window.livePriceDetails[ticker]?.quote_time);
+  const live = finiteNumber(livePrices[ticker]);
+  if (live > 0 && Number.isFinite(timestamp) && marketIsoDate(new Date(timestamp)) <= asOfDate) {
+    return live;
+  }
+  return getPriceOnOrBefore(ticker, snapshotDate);
+}
+
+function getBenchmarkEndPrice(endDate, asOfDate) {
+  return getHistoryMarkPrice('SPY', window.livePrices, asOfDate, endDate);
 }
 
 function renderDataHealthCard(positions) {
@@ -1852,7 +1850,7 @@ function renderMarketPage() {
   yieldPinEl.style.left = `${pinPercent}%`;
   yieldPinEl.style.borderColor = isPositive ? 'var(--success)' : 'var(--danger)';
 
-  // Cash allocation split bar
+  // Daily cash target split bar
   const cashState = home.cash_state || 'NORMAL';
   const cashPct = home.cash_pct || 0.0;
   const targetState = home.cash_target_state || 'NORMAL';
@@ -1864,10 +1862,10 @@ function renderMarketPage() {
     RISK_OFF: 'var(--danger)'
   };
   const labelMap = {
-    NORMAL: 'NORMAL (Hisse Ağırlıklı)',
-    CAUTION: 'İHTİYAT (Seçici Nakit)',
-    DEFENSIVE: 'SAVUNMA (Yüksek Nakit)',
-    RISK_OFF: 'RİSK DIŞI (%75 Nakit)'
+    NORMAL: 'NORMAL',
+    CAUTION: 'İHTİYAT',
+    DEFENSIVE: 'SAVUNMA',
+    RISK_OFF: 'RİSK DIŞI'
   };
 
   const cashStateEl = document.getElementById('macro-cash-state');
@@ -1875,7 +1873,7 @@ function renderMarketPage() {
   cashStateEl.style.color = stateColorMap[cashState] || 'var(--text)';
 
   document.getElementById('macro-cash-target').textContent = targetState;
-  document.getElementById('macro-cash-split').textContent = `${(cashPct * 100).toFixed(0)}% Nakit / ${((1 - cashPct) * 100).toFixed(0)}% Hisse`;
+  document.getElementById('macro-cash-split').textContent = `Hedef dağılım %${(cashPct * 100).toFixed(0)} nakit, %${((1 - cashPct) * 100).toFixed(0)} hisse`;
   
   const cashProgress = document.getElementById('macro-cash-progress');
   cashProgress.style.width = `${cashPct * 100}%`;
@@ -1887,13 +1885,13 @@ function renderMarketPage() {
     steady: 'Sinyal sabit; kademe değişikliği beklenmiyor.',
     cooldown: 'Geçiş sonrası bekleme süresi aktif; kademe kilitli.',
     confirming_up: 'Stres sinyali doğrulanıyor; nakit kademesi yükselebilir.',
-    confirming_down: 'Rahatlama sinyali doğrulanıyor; hisse ağırlığı artabilir.',
+    confirming_down: 'Rahatlama sinyali doğrulanıyor. Nakit hedefi düşebilir.',
   };
   const notesEl = document.getElementById('macro-cash-notes');
   const rawNote = String(home.cash_notes || '').trim();
   const rawSignal = finiteNumber(home.cash_raw_signal, null);
   const rawSignalText = rawSignal !== null ? `Ham stres sinyali ${rawSignal}/4. ` : '';
-  const thresholdText = 'Nakit artışı için sinyalin en az 2/4 seviyesinde 5 iş günü kalması gerekir; sonraki kademeler 20 günlük bekleme sonrası tek tek yükselir.';
+  const thresholdText = 'Nakit hedefinin yükselmesi için sinyalin en az 2/4 seviyesinde 5 iş günü kalması gerekir. Sonraki kademeler 20 günlük bekleme sonrası tek tek yükselir.';
   if (rawNote || rawSignal !== null) {
     notesEl.textContent = `${rawSignalText}${cashNoteMap[rawNote.toLowerCase()] || rawNote || 'Nakit sinyali okunuyor.'} ${thresholdText}`;
     notesEl.style.display = 'block';
@@ -1929,21 +1927,21 @@ function renderHistoryPage() {
   const totalBist = (cumBist - 1.0) * 100;
   const alpha = totalPort - totalBist;
 
-  const startDate = records[0]?.weekStartDate || "2026-05-18";
+  const startDate = records[0]?.weekStartDate;
   document.getElementById('history-start-date').textContent = `Başlangıç: ${formatDateToTurkish(startDate)}`;
 
   const portEl = document.getElementById('history-total-port');
-  portEl.textContent = `${totalPort >= 0 ? '+' : ''}${totalPort.toFixed(2)}%`;
-  portEl.className = `value ${totalPort >= 0 ? 'pos-text' : 'neg-text'}`;
+  portEl.textContent = records.length ? formatPercent(totalPort, 2) : '—';
+  portEl.className = records.length ? `value ${totalPort >= 0 ? 'pos-text' : 'neg-text'}` : 'value';
 
   const bistEl = document.getElementById('history-total-bist');
-  bistEl.textContent = `${totalBist >= 0 ? '+' : ''}${totalBist.toFixed(2)}%`;
-  bistEl.className = `value ${totalBist >= 0 ? 'pos-text' : 'neg-text'}`;
+  bistEl.textContent = records.length ? formatPercent(totalBist, 2) : '—';
+  bistEl.className = records.length ? `value ${totalBist >= 0 ? 'pos-text' : 'neg-text'}` : 'value';
 
   const alphaEl = document.getElementById('history-total-alpha');
-  alphaEl.textContent = `Endekse Karşı Fark: ${alpha >= 0 ? '+' : ''}${alpha.toFixed(2)}%`;
-  alphaEl.style.backgroundColor = alpha >= 0 ? 'rgba(34, 197, 94, 0.08)' : 'rgba(239, 68, 68, 0.08)';
-  alphaEl.style.color = alpha >= 0 ? 'var(--success)' : 'var(--danger)';
+  alphaEl.textContent = `Endekse karşı fark ${records.length ? formatPercent(alpha, 2) : '—'}`;
+  alphaEl.style.backgroundColor = records.length ? (alpha >= 0 ? 'rgba(34, 197, 94, 0.08)' : 'rgba(239, 68, 68, 0.08)') : '';
+  alphaEl.style.color = records.length ? (alpha >= 0 ? 'var(--success)' : 'var(--danger)') : '';
 
   const hasActive = records.some(r => !r.isCompleted);
   const trackingBadge = document.getElementById('live-tracking-badge');
@@ -1984,7 +1982,7 @@ function renderHistoryPage() {
       <div class="collapsible-body">
         <div class="collapsible-body-metrics">
           <div>
-            <span style="color:var(--text-muted);">Portföy Getirisi:</span>
+            <span style="color:var(--text-muted);">Model Referans Getirisi</span>
             <strong class="${portfolioReturn >= 0 ? 'pos-text' : 'neg-text'}">${(portfolioReturn * 100).toFixed(2)}%</strong>
           </div>
           <div>
@@ -2059,6 +2057,14 @@ function daysBetweenIsoDates(startDate, endDate) {
 function marketIsoDate(value = new Date()) {
   const parts = Object.fromEntries(MARKET_DATE.formatToParts(value).map(({ type, value }) => [type, value]));
   return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function latestEffectiveHistoryDate(now) {
+  const today = marketIsoDate(now);
+  if (MARKET_TIME.format(now) >= '09:30') return today;
+  const upperBound = new Date(`${today}T00:00:00Z`);
+  upperBound.setUTCDate(upperBound.getUTCDate() - 1);
+  return upperBound.toISOString().slice(0, 10);
 }
 
 function formatPercent(value, digits = 1) {
@@ -2154,18 +2160,9 @@ function renderDecisionSummary(home, positions) {
     : 'Fiyat kaynağı: portföy boş';
 
   const { target, weeks } = getPortfolioSettings();
-  let weeklyRule = `AL/SAT/TUT sinyallerine göre ${target} hisse hedefini koru ve aldığını sonraki rotasyona kadar (${weeks} hafta) tut.`;
-  if (positions.length === 0) {
-    weeklyRule = 'Bu snapshotta açık model pozisyonu bulunmuyor.';
-  } else if (cashState === 'RISK_OFF') {
-    weeklyRule = 'RISK_OFF aktif; model hisselerini izle ama pozisyonu korumacı tut.';
-  } else if (cashState === 'DEFENSIVE') {
-    weeklyRule = 'DEFENSIVE mod; hisse ağırlığını yarıya yakın tut.';
-  } else if (cashState === 'CAUTION') {
-    weeklyRule = 'CAUTION mod; yeni alımlarda nakit tamponunu koru.';
-  }
-
-  setTextById('decision-weekly-rule', weeklyRule);
+  setTextById('decision-weekly-rule', positions.length
+    ? `${target} hisse hedefli model portföyü ${weeks} haftada bir rotasyona girer.`
+    : 'Bu snapshotta açık model pozisyonu bulunmuyor.');
 
   // Countdown to the next rotation — the single question the user asks most.
   const countdownEl = document.getElementById('decision-countdown');
@@ -2792,7 +2789,7 @@ function openBacktestingSheet() {
     ORDER BY exit_date DESC, sort_order ASC
   `, {
     ':startDate': LIVE_TRACKING_START_DATE,
-    ':todayDate': marketIsoDate(),
+    ':todayDate': latestEffectiveHistoryDate(new Date()),
   });
   const closedListEl = document.getElementById('bt-transactions-list');
   closedListEl.innerHTML = '';
@@ -2980,7 +2977,7 @@ async function initApp() {
     progressFill.style.width = '90%';
     
     const SQL = await initSqlJs({
-      locateFile: filename => `./vendor/${filename}?v=us2`
+      locateFile: filename => `./vendor/${filename}?v=us3`
     });
 
     try {

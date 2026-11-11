@@ -87,7 +87,17 @@ python -m http.server 8765 --bind 127.0.0.1 --directory $site
 
 Uygulamayı [yerel US Picker](http://127.0.0.1:8765/) adresinde açın. Yerel canlı fiyatları yenilemek için Alpaca anahtarlarını işlem ortamına yükleyip `python -m us_picker export-live-prices --tickers-file site/live_tickers.json --output site/live_prices.json` çalıştırın.
 
+GitHub Actions, başarılı günlük koşudan sonra doğrulanmış PWA paketini özel `feed-current` taslağına da yükler. Yetkili GitHub CLI oturumuyla yerel uygulama klasörünü otomatik yenilemek için ikinci terminalde `python -m scripts_picker.sync_private_feed --site site --interval 300` çalıştırılır. Yerel sunucu bilgisayar açıkken son doğrulanmış paketi sunar. GitHub’daki işler bağımsız yürür.
+
 Günlük iş son fiyatları ve model durumunu yeniler. Kesinti sonrası GitHub Actions üzerinden `price_days` ile eksik fiyat aralığını ve `financial_days` ile kaçırılan SEC dosyalamalarını kapsayın. SEC mali tablo taraması son yayımlanmış New York gününe kadar bakar. Günlük SEC indeksine erişim engellenirse resmi çeyrek indeksi kullanılır. Bu kaynak da istenen aralığı karşılamazsa etkin şirketlerin resmi `data.sec.gov` dosyalama geçmişi taranır. [SEC EDGAR endeksleri](https://www.sec.gov/search-filings/edgar-search-assistance/accessing-edgar-data)
+
+### İleriye dönük model izlemesi
+
+Her geçerli feed koşusu, son tamamlanmış NYSE seansının gözlemini özel çalışma veritabanına kaydeder. Kayıt karar ve veri tarihlerini, hazır portföyü, rotasyon referanslarını, çıkışları, stop seviyelerini, nakit sinyalini, uygulanmış model ağırlıklarını, hisselerin ve SPY’ın gözlenen fiyatlarını içerir. GitHub koşu kimliği ve kod sürümü, sonraki incelemede o anda hangi kararın kaydedildiğini gösterir. Bu kayıtlar ilk başarılı koşuyla başlar.
+
+Nakit hedefi tamamlanmış seans başına değerlendirilir. Model pozisyon ağırlıkları rotasyonda belirlenir. Stop denetimi, pozisyonun yürürlük tarihinden itibaren tamamlanmış seansın uygun fiyatını kullanır. Zamanlanmış portföy hazırlığı henüz açılmamış bir NYSE seansını hedefler ve önceki seansın tamamlanmış fiyatlarını bekler. PWA’daki model referans getirisi, model fiyatları üzerinden hesaplanır. Kişisel gerçekleşen işlemler ayrı kaydedilir.
+
+Bir aylık inceleme için özel veritabanını indirdikten sonra `python -m us_picker.forward_observation --export data/forward-observations.jsonl` çalıştırın. Kayıtları tarih sırasıyla inceleyerek stop sonrası fiyatı, hedef nakit ile portföy ağırlıklarını ve aynı günlerin SPY getirisini karşılaştırabilirsiniz. JSONL dosyası özel fiyatlar içerir.
 
 ### V2 araştırma koşusu
 

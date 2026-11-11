@@ -31,11 +31,14 @@ from pathlib import Path
 from typing import Optional
 
 import yaml
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from us_picker.db.schema import CashAllocationState
+from us_picker.db.schema import CashAllocationState, Company, DailyPrice
+from us_picker.portfolio.execution import latest_completed_session_date
 from us_picker.portfolio.macro_overlay import MacroRegimeClassifier
 from us_picker.portfolio.regime_classifier import MarketRegimeClassifier
+from usinv.calendar import default_calendar
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +172,26 @@ class CashSignalCalculator:
         self._cfg = config or CashSignalConfig.load()
 
     # ── Public API ────────────────────────────────────────────────────────
+
+    def observe_completed_session(self, session: Session, session_date: date) -> Optional[CashSignalResult]:
+        """Persist a cash observation once a completed session has usable coverage."""
+        if not default_calendar().is_session(session_date):
+            return None
+        if latest_completed_session_date(session, session_date + timedelta(days=1)) != session_date:
+            return None
+        benchmark = (
+            session.query(DailyPrice.company_id)
+            .join(Company, Company.id == DailyPrice.company_id)
+            .filter(
+                Company.ticker == "SPY",
+                DailyPrice.date == session_date,
+                or_(DailyPrice.adjusted_close > 0, DailyPrice.close > 0),
+            )
+            .first()
+        )
+        if benchmark is None:
+            return None
+        return self.compute(session, session_date)
 
     def compute(
         self,

@@ -33,9 +33,9 @@ for (const file of requiredFiles) {
 }
 
 for (const localRuntime of [
-  "./vendor/pako.min.js?v=us2",
-  "./vendor/sql-wasm.js?v=us2",
-  "./vendor/apexcharts.min.js?v=us2",
+  "./vendor/pako.min.js?v=us3",
+  "./vendor/sql-wasm.js?v=us3",
+  "./vendor/apexcharts.min.js?v=us3",
 ]) {
   if (!indexHtml.includes(localRuntime)) {
     throw new Error(`index.html does not reference local runtime: ${localRuntime}`);
@@ -46,8 +46,8 @@ if (/cdnjs\.cloudflare\.com\/ajax\/libs\/(?:pako|sql\.js)|cdn\.jsdelivr\.net\/np
   throw new Error("Core PWA runtime still depends on an external CDN.");
 }
 
-if (!serviceWorker.includes("us-picker-shell-v2")) {
-  throw new Error("Service worker cache version was not bumped to us2.");
+if (!serviceWorker.includes("us-picker-shell-v3")) {
+  throw new Error("Service worker cache version was not bumped to us3.");
 }
 
 if (!appJs.includes("Snapshot bütünlük kontrolü başarısız")) {
@@ -62,11 +62,11 @@ if (!appJs.includes("infenglov-hue/USInv/live-data/live_prices.json")) {
   throw new Error("PWA near-live price feed URL is missing.");
 }
 
-if (!appJs.includes("./vendor/${filename}?v=us2")) {
-  throw new Error("sql.js WASM locateFile cache version was not bumped to us2.");
+if (!appJs.includes("./vendor/${filename}?v=us3")) {
+  throw new Error("sql.js WASM locateFile cache version was not bumped to us3.");
 }
 
-if (!indexHtml.includes("./portfolio-costs.js?v=us2")) {
+if (!indexHtml.includes("./portfolio-costs.js?v=us3")) {
   throw new Error("Portfolio cost profile runtime is missing.");
 }
 
@@ -131,7 +131,9 @@ if (!appJs.includes("summarizeQuoteCoverage")
 
 if (!appJs.includes("Ham stres sinyali")
   || !appJs.includes("en az 2/4 seviyesinde 5 iş günü")
-  || !appJs.includes("RİSK DIŞI (%75 Nakit)")) {
+  || !appJs.includes("Hedef dağılım")
+  || !indexHtml.includes("Nakit hedefi")
+  || !indexHtml.includes("Pozisyon ağırlıkları rotasyonda belirlenir.")) {
   throw new Error("PWA cash-allocation explanation is missing or misleading.");
 }
 
@@ -160,7 +162,11 @@ if (manifest.start_url !== "./" || manifest.scope !== "./" || manifest.display !
 }
 
 const window = { addEventListener() {}, location: { hostname: 'localhost' } };
-const context = createContext({ window, navigator: {}, PortfolioCosts: { normalizeSettings: () => ({}) } });
+const PortfolioCosts = {
+  normalizeSettings: () => ({}),
+  calculateTradeReturn: ({ entryPrice, exitPrice }) => exitPrice / entryPrice - 1,
+};
+const context = createContext({ window, navigator: {}, PortfolioCosts });
 runInContext(appJs, context, { filename: 'app.js' });
 assert.equal(context.getPortfolioSettings().target, 5);
 assert.equal(context.getPortfolioSettings().weeks, 2);
@@ -172,6 +178,32 @@ assert.equal(context.daysBetweenIsoDates('2026-11-10', '2026-11-09'), -1);
 assert.equal(context.daysBetweenIsoDates('2026-11-10', null), null);
 window.feedBacktestAudit = { cases: [], gates: [] };
 assert.equal(context.getInvestorAuditSummary().hasWarnings, true);
+
+const stagedOpen = [{ ticker: 'NEW', selection_date: '2026-11-09', entry_price: 120 }];
+const scheduledExit = { ticker: 'HELD', selection_date: '2026-10-26', exit_date: '2026-11-09', entry_price: 100, exit_price: 160 };
+const cycleMarks = [
+  { ticker: 'HELD', cycle_date: '2026-10-26', ref_price: 100 },
+  { ticker: 'NEW', cycle_date: '2026-11-09', ref_price: 120 },
+];
+const beforeOpen = new Date('2026-11-09T14:29:00Z');
+const atOpen = new Date('2026-11-09T14:30:00Z');
+context.getPriceOnOrBefore = (ticker, date) => ticker === 'SPY' && date === '2026-10-26' ? 100 : ticker === 'SPY' ? 105 : 110;
+context.getPriceDataState = () => ({ stockPriceDate: '2026-11-06' });
+window.livePriceDetails = { HELD: { quote_time: '2026-11-09T14:25:00Z' } };
+for (const withMarks of [false, true]) {
+  context.queryAll = (sql, params) => {
+    const cutoff = params[':todayDate'];
+    if (sql.includes('FROM portfolio_cycle_marks')) return withMarks ? cycleMarks.filter(mark => mark.cycle_date <= cutoff) : [];
+    return sql.includes('exit_date > :todayDate') && scheduledExit.exit_date > cutoff ? [scheduledExit] : [];
+  };
+  const records = context.buildWeeklyPerformanceRecords(stagedOpen, { HELD: 190 }, beforeOpen);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].weekStartDate, '2026-10-26');
+  assert.equal(records[0].isCompleted, false);
+  assert.equal(records[0].positions[0].ticker, 'HELD');
+  assert.equal(records[0].positions[0].exitPrice, 110);
+}
+assert.equal(context.latestEffectiveHistoryDate(atOpen), '2026-11-09');
 
 if (!process.argv.includes('--shell-only')) {
   const snapshotManifest = JSON.parse(read("manifest.json"));

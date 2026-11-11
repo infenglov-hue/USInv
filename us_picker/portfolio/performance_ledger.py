@@ -1,4 +1,4 @@
-"""Canonical live portfolio performance ledger.
+"""Canonical model-reference performance ledger.
 
 The old home KPI averaged every ``PortfolioSelection`` row. That is neither a
 portfolio return nor a NAV: duplicate/zero legacy rows diluted win rate and a
@@ -13,20 +13,19 @@ This module mirrors the PWA History contract:
   in cash for the remainder of the period;
 * equal-weight period returns compound into one live-tracking NAV.
 
-The result is explicitly gross of fees/slippage because live selections do not
-yet persist those amounts. The field is labelled so it cannot be mistaken for
-a net investor return.
+The ledger uses model reference prices and is gross of fees and slippage.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from usinv.calendar import EXCHANGE_TIMEZONE, default_calendar
 from us_picker.db.schema import (
     Company,
     DailyPrice,
@@ -73,7 +72,9 @@ def _position_return(
     return PositionReturn(company_id, end / entry - 1.0)
 
 
-def _latest_prices(session: Session, company_ids: list[int]) -> dict[int, float]:
+def _latest_prices(
+    session: Session, company_ids: list[int], as_of_date: date
+) -> dict[int, float]:
     ids = sorted(set(company_ids))
     if not ids:
         return {}
@@ -84,6 +85,7 @@ def _latest_prices(session: Session, company_ids: list[int]) -> dict[int, float]
         )
         .filter(
             DailyPrice.company_id.in_(ids),
+            DailyPrice.date <= as_of_date,
             DailyPrice.close.isnot(None),
         )
         .group_by(DailyPrice.company_id)
@@ -109,13 +111,16 @@ def _latest_prices(session: Session, company_ids: list[int]) -> dict[int, float]
     }
 
 
-def _latest_price_date(session: Session, company_ids: list[int]) -> Optional[date]:
+def _latest_price_date(
+    session: Session, company_ids: list[int], as_of_date: date
+) -> Optional[date]:
     if not company_ids:
         return None
     return (
         session.query(func.max(DailyPrice.date))
         .filter(
             DailyPrice.company_id.in_(sorted(set(company_ids))),
+            DailyPrice.date <= as_of_date,
             DailyPrice.close.isnot(None),
         )
         .scalar()
@@ -169,6 +174,7 @@ def _legacy_periods(
     benchmark_id: Optional[int],
     open_rows: list[PortfolioSelection],
     completed_rows: list[PortfolioSelection],
+    as_of_date: date,
 ) -> list[PeriodReturn]:
     active_start = max(
         (row.selection_date for row in open_rows if row.selection_date),
@@ -213,8 +219,8 @@ def _legacy_periods(
         )
 
     if active_start is not None and active_start >= start_date:
-        active_ids = [row.company_id for row in open_rows]
-        latest_prices = _latest_prices(session, active_ids)
+        active_ids = [row.company_id for row in open_rows if row.selection_date == active_start]
+        latest_prices = _latest_prices(session, active_ids, as_of_date)
         positions_list: list[PositionReturn] = []
         for row in open_rows:
             if row.selection_date != active_start:
@@ -236,7 +242,11 @@ def _legacy_periods(
                 positions_list.append(position)
 
         if positions_list:
-            latest_date = _latest_price_date(session, active_ids) or active_start
+            latest_date = max(
+                active_start,
+                _latest_price_date(session, active_ids, as_of_date) or active_start,
+                *(row.exit_date for row in completed_rows if row.selection_date == active_start),
+            )
             periods.append(
                 PeriodReturn(
                     start_date=active_start,
@@ -262,6 +272,7 @@ def _cycle_mark_periods(
     marks: list[PortfolioCycleMark],
     open_rows: list[PortfolioSelection],
     completed_rows: list[PortfolioSelection],
+    as_of_date: date,
 ) -> list[PeriodReturn]:
     by_cycle: dict[date, list[PortfolioCycleMark]] = {}
     for mark in marks:
@@ -316,7 +327,7 @@ def _cycle_mark_periods(
 
     latest_cycle = cycle_dates[-1]
     open_by_company = {row.company_id: row for row in open_rows}
-    latest_prices = _latest_prices(session, list(open_by_company))
+    latest_prices = _latest_prices(session, list(open_by_company), as_of_date)
     active_positions: list[PositionReturn] = []
     for mark in by_cycle[latest_cycle]:
         if mark.company_id in open_by_company:
@@ -329,9 +340,13 @@ def _cycle_mark_periods(
             active_positions.append(position)
 
     if active_positions:
-        latest_date = _latest_price_date(
-            session, [position.company_id for position in active_positions]
-        ) or latest_cycle
+        latest_date = max(
+            latest_cycle,
+            _latest_price_date(
+                session, [position.company_id for position in active_positions], as_of_date
+            ) or latest_cycle,
+            *(row.exit_date for row in completed_rows if row.exit_date > latest_cycle),
+        )
         periods.append(
             PeriodReturn(
                 start_date=latest_cycle,
@@ -349,17 +364,31 @@ def _cycle_mark_periods(
     return periods
 
 
+def _latest_effective_session(now: datetime) -> date:
+    calendar = default_calendar()
+    today = now.astimezone(EXCHANGE_TIMEZONE).date()
+    if calendar.is_session(today) and now >= calendar.session(today).open_at:
+        return today
+    return calendar.previous_session(today).label
+
+
 def calculate_live_performance(
     session: Session,
     portfolio_name: str,
     tracking_start: date = LIVE_TRACKING_START_DATE,
+    *,
+    as_of_date: date | None = None,
 ) -> dict:
-    """Build canonical gross live NAV metrics for one portfolio."""
+    """Build gross model-reference NAV through the latest effective session."""
 
     portfolio = portfolio_name.upper()
+    cutoff = as_of_date or _latest_effective_session(datetime.now(EXCHANGE_TIMEZONE))
     rows = (
         session.query(PortfolioSelection)
-        .filter(PortfolioSelection.portfolio == portfolio)
+        .filter(
+            PortfolioSelection.portfolio == portfolio,
+            PortfolioSelection.selection_date <= cutoff,
+        )
         .order_by(PortfolioSelection.selection_date, PortfolioSelection.id)
         .all()
     )
@@ -372,17 +401,19 @@ def calculate_live_performance(
             "benchmark_cumulative_return_pct": None,
             "alpha_pct": None,
             "performance_method": "cohort_nav_gross",
-            "return_basis": "gross_recorded_execution",
+            "return_basis": "gross_model_reference",
             "period_count": 0,
             "closed_trade_count": 0,
             "active_position_count": 0,
         }
 
-    open_rows = [row for row in rows if row.exit_date is None]
+    open_rows = [row for row in rows if row.exit_date is None or row.exit_date > cutoff]
     completed_rows = [
         row
         for row in rows
-        if row.exit_date is not None and row.selection_date >= tracking_start
+        if row.exit_date is not None
+        and row.exit_date <= cutoff
+        and row.selection_date >= tracking_start
     ]
     benchmark_id = _benchmark_company_id(session)
     marks = (
@@ -390,6 +421,7 @@ def calculate_live_performance(
         .filter(
             PortfolioCycleMark.portfolio == portfolio,
             PortfolioCycleMark.cycle_date >= tracking_start,
+            PortfolioCycleMark.cycle_date <= cutoff,
         )
         .order_by(PortfolioCycleMark.cycle_date, PortfolioCycleMark.id)
         .all()
@@ -404,6 +436,7 @@ def calculate_live_performance(
             benchmark_id,
             open_rows,
             completed_rows,
+            cutoff,
         )
         periods = [
             period
@@ -419,6 +452,7 @@ def calculate_live_performance(
                 marks,
                 open_rows,
                 completed_rows,
+                cutoff,
             )
         )
         method = "cycle_marks_plus_legacy_gross"
@@ -430,6 +464,7 @@ def calculate_live_performance(
             benchmark_id,
             open_rows,
             completed_rows,
+            cutoff,
         )
         method = "legacy_cohort_nav_gross"
 
@@ -487,7 +522,7 @@ def calculate_live_performance(
             else None
         ),
         "performance_method": method,
-        "return_basis": "gross_recorded_execution",
+        "return_basis": "gross_model_reference",
         "period_count": len(periods),
         "closed_trade_count": len(decisive_closed_returns),
         "active_position_count": len(open_rows),

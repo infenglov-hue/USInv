@@ -106,6 +106,45 @@ def test_fundamental_breaker_uses_latest_available_raw_score(session):
     assert ExitRuleChecker(session).check_exits() == []
 
 
+def test_completed_session_exit_check_ignores_staged_and_stale_positions(session):
+    day = date(2026, 7, 2)
+    staged = _add_position(session, ticker="STAGED", current_price=150, stop_loss_price=85)
+    continued = _add_position(session, ticker="CONTINUED", current_price=75, stop_loss_price=85)
+    stale = _add_position(session, ticker="STALE", current_price=75, stop_loss_price=85)
+    current = _add_position(session, ticker="CURRENT", current_price=95, stop_loss_price=85)
+    staged_row = session.query(PortfolioSelection).filter_by(company_id=staged.id).one()
+    staged_row.selection_date = date(2026, 7, 6)
+    continued_row = session.query(PortfolioSelection).filter_by(company_id=continued.id).one()
+    continued_row.cycle_ref_date = date(2026, 7, 6)
+    session.add_all([
+        DailyPrice(company_id=staged.id, date=day, close=150),
+        DailyPrice(company_id=continued.id, date=day, close=75),
+        DailyPrice(company_id=stale.id, date=date(2026, 7, 6), close=70),
+        DailyPrice(company_id=current.id, date=day, close=80),
+    ])
+    session.flush()
+
+    checker = ExitRuleChecker(session, completed_session=day)
+    assert checker.update_trailing_stops(force_enabled=True) == 0
+    assert staged_row.highest_close is None
+    assert continued_row.highest_close is None
+    assert [(signal["ticker"], signal["price_date"]) for signal in checker.check_exits()] == [
+        ("CURRENT", day),
+    ]
+
+
+def test_exit_checks_do_not_use_insider_disclosure_after_the_completed_close(session):
+    company = _add_position(session, current_price=95)
+    session.add(InsiderTransaction(
+        company_id=company.id,
+        disclosure_date=date(2026, 7, 2),
+        transaction_type="SELL",
+        total_value_try=7_000_000,
+    ))
+    session.flush()
+    assert ExitRuleChecker(session, completed_session=date(2026, 7, 1)).check_exits() == []
+
+
 class TestInsiderThreshold:
     """Thesis-breaker threshold = max(5M TRY, 0.5% of market cap)."""
 

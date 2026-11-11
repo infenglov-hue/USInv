@@ -12,6 +12,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from us_picker.db.schema import (
@@ -20,6 +21,7 @@ from us_picker.db.schema import (
     PortfolioCycleMark,
     PortfolioSelection,
 )
+from us_picker.utils.splits import latest_raw_close
 
 _PRICE_FIELDS = (
     "entry_price",
@@ -37,10 +39,14 @@ def apply_splits_to_open_positions(
     events: list[dict] = []
     positions = (
         session.query(PortfolioSelection)
-        .filter(PortfolioSelection.exit_date.is_(None))
+        .filter(PortfolioSelection.exit_date.is_(None), PortfolioSelection.selection_date <= today)
         .all()
     )
     for position in positions:
+        quote = latest_raw_close(session, position.company_id, today)
+        if quote is None or quote[0] < position.selection_date:
+            continue
+        price_date, _ = quote
         basis = position.split_applied_through or position.selection_date
         splits = (
             session.query(CorporateAction)
@@ -48,7 +54,7 @@ def apply_splits_to_open_positions(
                 CorporateAction.company_id == position.company_id,
                 CorporateAction.action_type == "SPLIT",
                 CorporateAction.action_date > basis,
-                CorporateAction.action_date <= today,
+                CorporateAction.action_date <= price_date,
             )
             .order_by(CorporateAction.action_date)
             .all()
@@ -66,7 +72,13 @@ def apply_splits_to_open_positions(
                 .filter(
                     PortfolioCycleMark.company_id == position.company_id,
                     PortfolioCycleMark.portfolio == position.portfolio,
-                    PortfolioCycleMark.cycle_date < split.action_date,
+                    or_(
+                        PortfolioCycleMark.cycle_date < split.action_date,
+                        and_(
+                            PortfolioCycleMark.cycle_date == split.action_date,
+                            PortfolioCycleMark.signal_date < split.action_date,
+                        ),
+                    ),
                     PortfolioCycleMark.cycle_date >= position.selection_date,
                 )
                 .all()

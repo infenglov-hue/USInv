@@ -19,7 +19,7 @@
 
   <!-- Icons for PWA -->
   <link rel="apple-touch-icon" href="./icons/icon-192.png">
-  <link rel="manifest" href="./manifest.webmanifest?v=us2">
+  <link rel="manifest" href="./manifest.webmanifest?v=us3">
 
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,16 +30,16 @@
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
 
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="./index.css?v=us2">
+  <link rel="stylesheet" href="./index.css?v=us3">
 
   <!-- Local runtime dependencies: first launch must not depend on a CDN. -->
-  <script src="./vendor/pako.min.js?v=us2"></script>
-  <script src="./vendor/sql-wasm.js?v=us2"></script>
-  <script src="./vendor/apexcharts.min.js?v=us2"></script>
-  <script src="./portfolio-costs.js?v=us2"></script>
+  <script src="./vendor/pako.min.js?v=us3"></script>
+  <script src="./vendor/sql-wasm.js?v=us3"></script>
+  <script src="./vendor/apexcharts.min.js?v=us3"></script>
+  <script src="./portfolio-costs.js?v=us3"></script>
 
   <!-- Main Application Logic (deferred) -->
-  <script src="./app.js?v=us2" defer></script>
+  <script src="./app.js?v=us3" defer></script>
 </head>
 <body>
 
@@ -130,7 +130,7 @@
                 <strong id="decision-position-count">—</strong>
               </div>
               <div class="decision-metric">
-                <span class="label">Nakit</span>
+                <span class="label">Nakit hedefi</span>
                 <strong id="decision-cash-state">—</strong>
               </div>
               <div class="decision-metric">
@@ -142,6 +142,7 @@
                 <strong id="decision-stress-return">—</strong>
               </div>
             </div>
+            <p class="decision-note">Nakit hedefi her tamamlanan seansta değerlendirilir. Pozisyon ağırlıkları rotasyonda belirlenir.</p>
 
             <div class="decision-compare-row">
               <span>S&amp;P 500: <strong id="decision-bist-return">—</strong></span>
@@ -266,14 +267,14 @@
 
           <!-- Cash Position Allocation Section -->
           <div class="macro-card">
-            <h2>Portföy Nakit Dengesi</h2>
+            <h2>Nakit hedefi</h2>
             <div class="cash-status-row">
               <div>
-                <span class="label">Nakit Ağırlık Seviyesi</span>
+                <span class="label">Onaylanan kademe</span>
                 <span id="macro-cash-state" class="cash-state-title">NORMAL</span>
               </div>
               <div style="text-align: right;">
-                <span class="label">Hedef Strateji</span>
+                <span class="label">Sinyalin işaret ettiği kademe</span>
                 <span id="macro-cash-target" class="cash-target-title">NORMAL</span>
               </div>
             </div>
@@ -281,7 +282,8 @@
             <div class="progress-bar-track" style="margin: 12px 0;">
               <div id="macro-cash-progress" class="progress-bar-fill" style="width: 0%;"></div>
             </div>
-            <p id="macro-cash-split" class="cash-split-text">0% Nakit / 100% Hisse</p>
+            <p id="macro-cash-split" class="cash-split-text">Hedef dağılım —</p>
+            <p class="macro-desc">Nakit hedefi her tamamlanan seansta değerlendirilir. Pozisyon ağırlıkları rotasyonda belirlenir.</p>
 
             <div id="macro-cash-notes" class="cash-notes-box" style="display: none;"></div>
           </div>
@@ -319,18 +321,18 @@
           <div class="history-hero-card">
             <div class="hero-header">
               <div>
-                <h2>Reel Portföy Performansı</h2>
+                <h2>Model Referans Performansı</h2>
                 <span id="history-start-date" class="label">Başlangıç: —</span>
               </div>
               <div class="history-badges">
-                <span id="history-return-mode" class="badge badge-portfolio">NET · MIDAS</span>
+                <span id="history-return-mode" class="badge badge-portfolio">NET</span>
                 <span id="live-tracking-badge" class="badge badge-live" style="display: none;">SON SNAPSHOT</span>
               </div>
             </div>
 
             <div class="hero-metrics-grid">
               <div class="metric-block">
-                <span class="label">Toplam Getiri</span>
+                <span class="label">Model Getirisi (USD)</span>
                 <span id="history-total-port" class="value">—</span>
               </div>
               <div class="metric-block">
@@ -338,14 +340,14 @@
                 <span id="history-total-bist" class="value">—</span>
               </div>
             </div>
-            <div id="history-total-alpha" class="alpha-banner">Endekse Karşı Fark: +0.00%</div>
+            <div id="history-total-alpha" class="alpha-banner">Endekse karşı fark —</div>
           </div>
 
           <div id="cost-profile-card" class="cost-profile-card" aria-label="History getiri hesabı">
             <div class="cost-profile-copy">
               <span class="label">History Hesabı</span>
               <strong id="cost-profile-label">Aracı kurum · maliyet %0</strong>
-              <span>Brüt maliyetsizdir; Net seçili alış ve satış oranlarını uygular. Fiyat/işlem kaydı tutulmaz.</span>
+              <span>Getiri model fiyatlarıyla hesaplanır. Net görünüm seçtiğin işlem maliyetlerini uygular. Kişisel işlem kaydı tutulmaz.</span>
             </div>
             <div class="cost-profile-actions">
               <div class="return-view-switch" role="group" aria-label="History getiri görünümü">
@@ -441,7 +443,7 @@
               </div>
               <div class="flow-step">
                 <span>3</span>
-                <p><strong>Nakit rejimini pozisyon büyüklüğüne yansıt.</strong> NORMAL = tam hisse. CAUTION %25, DEFENSIVE %50, RISK_OFF %75 nakit önerir; Market sekmesindeki karta bak ve her pozisyonu o oranda küçült. Rejim otomatik satış yapmaz, ağırlık tavsiyesidir.</p>
+                <p><strong>Günlük nakit hedefini izle.</strong> NORMAL %0, CAUTION %25, DEFENSIVE %50 ve RISK_OFF %75 nakit hedefler. Model pozisyon ağırlıklarını rotasyonda belirler.</p>
               </div>
               <div class="flow-step">
                 <span>4</span>
@@ -824,7 +826,7 @@
 
         <!-- Rebalance transaction log list -->
         <div class="detail-card">
-          <h4>Gerçek Portföy Rotasyonları (Backtest Değildir)</h4>
+          <h4>Yayımlanan Model Rotasyonları</h4>
           <div id="bt-transactions-list" class="transactions-log-list">
             <!-- Dynamically populated transaction logs -->
           </div>
