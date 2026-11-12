@@ -206,12 +206,13 @@ def parse_form_index(text: str) -> set[int]:
         form = line[:12].strip()
         if form not in _PERIODIC_FORMS:
             continue
-        # Fixed-width layout: form, company, CIK, date, file name.
-        parts = line.split()
-        for token in reversed(parts):
-            if token.isdigit() and len(token) <= 10:
-                ciks.add(int(token))
-                break
+        # The last three fields are CIK, date and filename. The date can
+        # itself be numeric (YYYYMMDD), and company names can contain spaces.
+        parts = line.rsplit(maxsplit=3)
+        if len(parts) == 4:
+            cik = parts[-3]
+            if cik.isdigit() and len(cik) <= 10:
+                ciks.add(int(cik))
     return ciks
 
 
