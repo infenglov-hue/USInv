@@ -175,6 +175,60 @@ def test_cycle_marks_replace_continuity_rows_without_double_counting(session):
     assert result["performance_method"] == "cycle_marks_plus_legacy_gross"
 
 
+@pytest.mark.parametrize("exit_date", [date(2026, 11, 3), date(2026, 11, 9)])
+def test_cycle_marks_use_realized_exit_before_reentry(session, exit_date):
+    first_cycle = date(2026, 10, 26)
+    second_cycle = date(2026, 11, 9)
+    as_of = date(2026, 11, 10)
+    spy = _company(session, "SPY", "INDEX")
+    reentry, held, carried, day_exit = [
+        _company(session, ticker) for ticker in ("REENTRY", "HELD", "CARRIED", "DAYEXIT")
+    ]
+    for d in (first_cycle, second_cycle, as_of):
+        _price(session, spy, d, 100)
+
+    _selection(session, reentry, first_cycle, 100, exit_date=exit_date, exit_price=90)
+    _selection(session, reentry, second_cycle, 120)
+    _selection(session, held, first_cycle, 100)
+    _selection(
+        session, carried, first_cycle, 100, exit_date=second_cycle, exit_price=90,
+    )
+    _selection(
+        session, day_exit, second_cycle, 100, exit_date=second_cycle, exit_price=80,
+    )
+    _price(session, reentry, as_of, 126)
+    _price(session, held, as_of, 121)
+    _price(session, day_exit, as_of, 900)
+    session.add_all([
+        PortfolioCycleMark(
+            portfolio="ALPHA", cycle_date=cycle, company_id=company.id, ref_price=ref,
+        )
+        for cycle, company, ref in [
+            (first_cycle, reentry, 100),
+            (first_cycle, held, 100),
+            (first_cycle, carried, 100),
+            (second_cycle, reentry, 120),
+            (second_cycle, held, 110),
+            (second_cycle, carried, 120),
+            (second_cycle, day_exit, 100),
+        ]
+    ])
+    session.commit()
+
+    result = calculate_live_performance(session, "ALPHA", as_of_date=as_of)
+
+    # First period: exit -10%, continuous holding +10%, carried to second mark +20%.
+    first_return = (-0.10 + 0.10 + 0.20) / 3
+    # Second period: new lot +5%, continuous +10%, carried exit -25%, new exit -20%.
+    second_return = (0.05 + 0.10 - 0.25 - 0.20) / 4
+    assert result["period_count"] == 2
+    assert result["closed_trade_count"] == 3
+    assert result["active_return_avg"] == pytest.approx(second_return * 100)
+    assert result["cumulative_return_pct"] == pytest.approx(
+        ((1 + first_return) * (1 + second_return) - 1) * 100
+    )
+
+
 @pytest.mark.parametrize("with_marks", [False, True])
 def test_prepared_cycle_does_not_change_prior_model_reference(session, with_marks):
     cycle = date(2026, 10, 26)

@@ -34,9 +34,9 @@ for (const file of requiredFiles) {
 }
 
 for (const localRuntime of [
-  "./vendor/pako.min.js?v=us4",
-  "./vendor/sql-wasm.js?v=us4",
-  "./vendor/apexcharts.min.js?v=us4",
+  "./vendor/pako.min.js?v=us5",
+  "./vendor/sql-wasm.js?v=us5",
+  "./vendor/apexcharts.min.js?v=us5",
 ]) {
   if (!indexHtml.includes(localRuntime)) {
     throw new Error(`index.html does not reference local runtime: ${localRuntime}`);
@@ -47,8 +47,8 @@ if (/cdnjs\.cloudflare\.com\/ajax\/libs\/(?:pako|sql\.js)|cdn\.jsdelivr\.net\/np
   throw new Error("Core PWA runtime still depends on an external CDN.");
 }
 
-if (!serviceWorker.includes("us-picker-shell-v4")) {
-  throw new Error("Service worker cache version was not bumped to us4.");
+if (!serviceWorker.includes("us-picker-shell-v5")) {
+  throw new Error("Service worker cache version was not bumped to us5.");
 }
 
 if (!appJs.includes("Snapshot bütünlük kontrolü başarısız")) {
@@ -63,11 +63,11 @@ if (!appJs.includes("infenglov-hue/USInv/live-data/live_prices.json")) {
   throw new Error("PWA near-live price feed URL is missing.");
 }
 
-if (!appJs.includes("./vendor/${filename}?v=us4")) {
-  throw new Error("sql.js WASM locateFile cache version was not bumped to us4.");
+if (!appJs.includes("./vendor/${filename}?v=us5")) {
+  throw new Error("sql.js WASM locateFile cache version was not bumped to us5.");
 }
 
-if (!indexHtml.includes("./portfolio-costs.js?v=us4")) {
+if (!indexHtml.includes("./portfolio-costs.js?v=us5")) {
   throw new Error("Portfolio cost profile runtime is missing.");
 }
 
@@ -163,15 +163,12 @@ if (manifest.start_url !== "./" || manifest.scope !== "./" || manifest.display !
 }
 
 const window = { addEventListener() {}, location: { hostname: 'localhost' } };
-const PortfolioCosts = {
-  normalizeSettings: () => ({}),
-  calculateTradeReturn: ({ entryPrice, exitPrice }) => exitPrice / entryPrice - 1,
-};
 const context = createContext({
-  window, navigator: {}, PortfolioCosts,
+  window, navigator: {},
   crypto: webcrypto, atob, TextDecoder, URLSearchParams, DataView, Uint8Array,
   pako: { ungzip: gunzipSync },
 });
+runInContext(read('portfolio-costs.js'), context, { filename: 'portfolio-costs.js' });
 runInContext(appJs, context, { filename: 'app.js' });
 assert.equal(context.getPortfolioSettings().target, 5);
 assert.equal(context.getPortfolioSettings().weeks, 2);
@@ -209,6 +206,54 @@ for (const withMarks of [false, true]) {
   assert.equal(records[0].positions[0].exitPrice, 110);
 }
 assert.equal(context.latestEffectiveHistoryDate(atOpen), '2026-11-09');
+
+const firstCycle = '2026-10-26';
+const secondCycle = '2026-11-09';
+const asOfDate = '2026-11-10';
+const historyMarks = [
+  { ticker: 'REENTRY', cycle_date: firstCycle, ref_price: 100 },
+  { ticker: 'HELD', cycle_date: firstCycle, ref_price: 100 },
+  { ticker: 'CARRIED', cycle_date: firstCycle, ref_price: 100 },
+  { ticker: 'REENTRY', cycle_date: secondCycle, ref_price: 120 },
+  { ticker: 'HELD', cycle_date: secondCycle, ref_price: 110 },
+  { ticker: 'CARRIED', cycle_date: secondCycle, ref_price: 120 },
+  { ticker: 'DAYEXIT', cycle_date: secondCycle, ref_price: 100 },
+];
+const historyOpen = [
+  { ticker: 'REENTRY', selection_date: secondCycle },
+  { ticker: 'HELD', selection_date: firstCycle },
+];
+const historyPrices = { REENTRY: 126, HELD: 121, DAYEXIT: 900 };
+context.getPriceDataState = () => ({ stockPriceDate: asOfDate });
+context.getHistoryMarkPrice = (ticker, prices) => ticker === 'SPY' ? 105 : prices[ticker];
+context.saveReturnCostSettings({ buyCostPct: 1, sellCostPct: 2 });
+for (const exitDate of ['2026-11-03', secondCycle]) {
+  context.queryAll = () => [
+    { ticker: 'REENTRY', selection_date: firstCycle, exit_date: exitDate, exit_price: 90 },
+    { ticker: 'CARRIED', selection_date: firstCycle, exit_date: secondCycle, exit_price: 90 },
+    { ticker: 'DAYEXIT', selection_date: secondCycle, exit_date: secondCycle, exit_price: 80 },
+  ];
+  const records = context.buildCycleMarkRecords(historyMarks, historyOpen, historyPrices, asOfDate);
+  assert.equal(records.length, 2);
+  const [closed, active] = records;
+  const position = (period, ticker) => period.positions.find(row => row.ticker === ticker);
+
+  assert.equal(position(closed, 'REENTRY').exitPrice, 90);
+  assert.equal(position(closed, 'REENTRY').returnPct, (90 * .98) / (100 * 1.01) - 1);
+  assert.equal(position(closed, 'HELD').exitPrice, 110);
+  assert.equal(position(closed, 'HELD').returnPct, 110 / (100 * 1.01) - 1);
+  assert.equal(position(closed, 'CARRIED').exitPrice, 120);
+  assert.equal(position(closed, 'CARRIED').returnPct, 120 / (100 * 1.01) - 1);
+
+  assert.equal(position(active, 'REENTRY').entryPrice, 120);
+  assert.equal(position(active, 'REENTRY').exitPrice, 126);
+  assert.equal(position(active, 'REENTRY').returnPct, (126 * .98) / (120 * 1.01) - 1);
+  assert.equal(position(active, 'HELD').returnPct, (121 * .98) / 110 - 1);
+  assert.equal(position(active, 'CARRIED').exitPrice, 90);
+  assert.equal(position(active, 'CARRIED').returnPct, (90 * .98) / 120 - 1);
+  assert.equal(position(active, 'DAYEXIT').exitPrice, 80);
+  assert.equal(position(active, 'DAYEXIT').returnPct, (80 * .98) / (100 * 1.01) - 1);
+}
 
 const privateKey = Buffer.alloc(32, 1);
 const nonce = Buffer.alloc(12, 2);

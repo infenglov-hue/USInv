@@ -1,0 +1,63 @@
+name: US Picker Feed Recovery
+
+on:
+  workflow_run:
+    workflows: [US Picker Feed]
+    types: [completed]
+
+permissions:
+  actions: write
+
+jobs:
+  retry:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'schedule' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.head_branch == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: us-picker-feed-recovery-${{ github.event.workflow_run.id }}
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+    steps:
+      - name: Retry a failed scheduled feed once
+        run: |
+          set -euo pipefail
+          run_path="repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"
+
+          if ! current=$(gh api "${run_path}" --jq '[.status, .conclusion, .run_attempt] | join(" ")'); then
+            echo "::error::Could not check the current feed attempt. Review ${run_url}."
+            exit 1
+          fi
+          if [[ "${current}" != "completed failure ${RUN_ATTEMPT}" ]]; then
+            echo 'The triggering feed attempt is no longer the latest failed attempt.'
+            exit 0
+          fi
+          if [[ "${RUN_ATTEMPT}" != 1 ]]; then
+            echo "::error::Scheduled feed still failed after a retry. Review the failed step at ${run_url} and run US Picker Feed after correcting it."
+            exit 1
+          fi
+
+          if ! permanent=$(gh api "${run_path}/attempts/${RUN_ATTEMPT}/jobs" --paginate --jq '
+            .jobs[].steps[]? | select(.conclusion == "failure") |
+            select(.name == "Validate required configuration" or .name == "Check Alpaca authentication") | .name
+          '); then
+            echo "::error::Could not classify the scheduled feed failure. Review ${run_url}."
+            exit 1
+          fi
+          if [[ -n "${permanent}" ]]; then
+            echo "::error::Scheduled feed configuration failed. Review the failed step at ${run_url}, correct the Actions secrets or Alpaca permissions, then run US Picker Feed again."
+            exit 1
+          fi
+
+          if ! gh api --method POST "${run_path}/rerun-failed-jobs"; then
+            echo "::error::Could not request a retry for the scheduled feed. Review ${run_url} and re-run the failed jobs if needed."
+            exit 1
+          fi
+          echo "Requested one retry for the scheduled feed at ${run_url}."

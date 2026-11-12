@@ -142,6 +142,7 @@ class ExitRuleChecker:
             DailyPrice.company_id == selection.company_id,
             DailyPrice.date >= effective_date,
             DailyPrice.close > 0,
+            DailyPrice.close < float("inf"),
         )
         if self._completed_session is not None:
             query = query.filter(DailyPrice.date == self._completed_session)

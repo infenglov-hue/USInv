@@ -43,6 +43,10 @@ def _chunks(items: list[str], size: int) -> Iterable[list[str]]:
         yield items[i : i + size]
 
 
+class AlpacaAuthenticationError(RuntimeError):
+    """Neither Alpaca trading host accepted the credentials."""
+
+
 class AlpacaClient:
     """Minimal REST client over Alpaca's market-data and assets endpoints."""
 
@@ -249,7 +253,9 @@ class AlpacaClient:
                     continue
                 raise
             return list(payload) if isinstance(payload, list) else []
-        raise RuntimeError(f"Alpaca rejected the credentials on every trading host: {last_error}")
+        raise AlpacaAuthenticationError(
+            "Alpaca rejected the credentials on both trading hosts."
+        ) from last_error
 
     def fetch_snapshots(self, symbols: list[str], feed: str = "iex") -> dict[str, dict]:
         result: dict[str, dict] = {}

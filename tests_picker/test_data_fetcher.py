@@ -196,6 +196,19 @@ def test_cpi_yoy_becomes_visible_mid_next_month():
     assert min(yoy.index) == date(2025, 2, 15)
 
 
+def _cpi_history_with_gap():
+    months = pd.date_range("2024-01-01", "2025-04-01", freq="MS").date
+    cpi = pd.Series([100.0 + i for i in range(len(months))], index=months)
+    return cpi.drop(date(2024, 2, 1))
+
+
+def test_cpi_yoy_uses_the_same_month_a_year_earlier():
+    yoy = _cpi_yoy_by_availability(_cpi_history_with_gap())
+    assert yoy[date(2025, 2, 15)] == pytest.approx(112 / 100 - 1)
+    assert date(2025, 3, 15) not in yoy.index
+    assert yoy[date(2025, 4, 15)] == pytest.approx(114 / 102 - 1)
+
+
 class _StubFRED:
     def fetch_series(self, series_id, start, end=None):
         values = {
@@ -223,6 +236,35 @@ def test_fetch_macro_maps_fred_series_to_bist_columns(session, monkeypatch):
     assert row.inflation_expectation_24m_pct == pytest.approx(0.023)
     assert row.turkey_cds_5y == pytest.approx(310.0)  # Baa-10y spread in bps
     assert row.cpi_yoy_pct == pytest.approx(0.03)
+
+
+@pytest.mark.parametrize("cpi_available", [True, False])
+def test_fetch_macro_repairs_previously_stored_cpi_on_a_successful_refresh(
+    session, monkeypatch, cpi_available,
+):
+    class GapFRED(_StubFRED):
+        def fetch_series(self, series_id, start, end=None):
+            if series_id != "CPIAUCSL":
+                return super().fetch_series(series_id, start, end)
+            if not cpi_available:
+                raise RuntimeError("CPI temporarily unavailable")
+            return _cpi_history_with_gap()
+
+    monkeypatch.setattr("us_picker.data.sources.damodaran.fetch_us_erp", lambda: None)
+    missing_prior_month = MacroRegime(date=date(2025, 3, 15), cpi_yoy_pct=0.13, policy_rate_pct=0.05)
+    before_first_yoy = MacroRegime(date=date(2025, 2, 14), cpi_yoy_pct=0.25)
+    session.add_all([missing_prior_month, before_first_yoy])
+    fetcher = DataFetcher(session=session, console=Console(quiet=True), fred_client=GapFRED())
+    fetcher._fetch_settings = {"macro_history_start": "2024-01-01"}
+    fetcher.fetch_macro()
+
+    assert missing_prior_month.policy_rate_pct == pytest.approx(0.05)
+    if cpi_available:
+        assert missing_prior_month.cpi_yoy_pct == pytest.approx(0.12)
+        assert before_first_yoy.cpi_yoy_pct is None
+    else:
+        assert missing_prior_month.cpi_yoy_pct == pytest.approx(0.13)
+        assert before_first_yoy.cpi_yoy_pct == pytest.approx(0.25)
 
 
 class _StubBars:
