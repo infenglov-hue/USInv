@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 import requests
 
-from us_picker.data.sources.sec import SECClient
+from us_picker.data.sources.sec import SECClient, parse_form_index
 
 
 def _master_index(last_received: str, *rows: str) -> str:
@@ -23,6 +23,15 @@ def _denied(url: str) -> requests.HTTPError:
     response.status_code = 403
     response.url = url
     return requests.HTTPError("SEC denied access", response=response)
+
+
+def test_daily_form_index_reads_cik_before_compact_filing_date():
+    rows = [
+        f"{'10-Q':<17}AAON, INC.   824142   20261109   edgar/data/824142/0000824142-26-000088.txt  ",
+        f"{'10-K/A':<17}Company 2026 Name   1234   2026-11-09   edgar/data/1234/amendment.txt",
+        f"{'8-K':<17}Unrelated   4567   20261109   edgar/data/4567/event.txt",
+    ]
+    assert parse_form_index("\n".join(rows)) == {824142, 1234}
 
 
 def test_daily_403_uses_dated_master_indexes_across_quarters(monkeypatch):

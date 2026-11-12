@@ -82,6 +82,40 @@ jobs:
           private_run 'Score-input preparation' clean
           private_run 'Raw statement freshness' check-financial-freshness
           private_run 'Score-input freshness' check-score-input-freshness
+
+      - name: Report financial coverage
+        run: |
+          python - <<'PY'
+          from datetime import date, timedelta
+
+          from sqlalchemy import distinct, func, select
+
+          from us_picker.db.connection import session_scope
+          from us_picker.db.schema import FinancialStatement
+
+          today = date.today()
+          quarter_end = today.replace(
+              month=((today.month - 1) // 3) * 3 + 1, day=1
+          ) - timedelta(days=1)
+          statements = FinancialStatement
+          with session_scope() as session:
+              latest = session.scalar(select(func.max(statements.publication_date)).where(
+                  statements.publication_date <= today
+              ))
+              count = func.count(distinct(statements.company_id))
+              recent = session.scalar(select(count).where(
+                  statements.publication_date.between(today - timedelta(days=30), today)
+              ))
+              quarter = session.scalar(select(count).where(
+                  statements.period_end == quarter_end,
+                  statements.publication_date <= today,
+              ))
+          print(f"Latest SEC publication date: {latest}; issuers in last 30 days: {recent}")
+          print(f"Issuers reporting the {quarter_end} period: {quarter}")
+          if not recent:
+              print("::warning::No SEC statement publications in the last 30 days.")
+          PY
+
       - name: Store runtime database
         if: ${{ !inputs.dry_run }}
         env:
