@@ -21,7 +21,7 @@ import logging
 import os
 import re
 from datetime import date, timedelta
-from itertools import repeat
+from itertools import batched, repeat
 from pathlib import Path
 from typing import Optional
 
@@ -581,21 +581,24 @@ class DataFetcher:
 
                 workers = int(self._fetch_settings.get("sec_workers", 4))
                 with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-                    futures = [executor.submit(fetch_one, cik) for cik in by_cik]
-                    for future in concurrent.futures.as_completed(futures):
-                        cik, payload, error = future.result()
-                        if error or not payload:
-                            if error:
-                                logger.warning("companyfacts failed for CIK %s: %s", cik, error)
-                            stats["failed"].extend(c.ticker for c in by_cik[cik])
-                        else:
-                            stats["statements_inserted"] += self._store_companyfacts(
-                                by_cik[cik], payload
-                            )
-                        stats["tickers_processed"] += 1
-                        progress.advance(task)
-                        if stats["tickers_processed"] % 50 == 0:
-                            self._session.commit()
+                    # Futures retain their parsed companyfacts payload. Bound how
+                    # many accumulate during an outage backfill.
+                    for batch in batched(by_cik, workers * 4):
+                        futures = [executor.submit(fetch_one, cik) for cik in batch]
+                        for future in concurrent.futures.as_completed(futures):
+                            cik, payload, error = future.result()
+                            if error or not payload:
+                                if error:
+                                    logger.warning("companyfacts failed for CIK %s: %s", cik, error)
+                                stats["failed"].extend(c.ticker for c in by_cik[cik])
+                            else:
+                                stats["statements_inserted"] += self._store_companyfacts(
+                                    by_cik[cik], payload
+                                )
+                            stats["tickers_processed"] += 1
+                            progress.advance(task)
+                            if stats["tickers_processed"] % 50 == 0:
+                                self._session.commit()
         self._session.commit()
         self._console.print(
             f"  Financials: {stats['tickers_processed']} filers, "
