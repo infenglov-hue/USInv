@@ -52,6 +52,7 @@ from us_picker.db.schema import (
     FinancialStatement,
     IndexMembership,
     MacroRegime,
+    PortfolioSelection,
 )
 from us_picker.utils.rate_limiter import RateLimiter
 
@@ -361,6 +362,8 @@ class DataFetcher:
         self,
         tickers: Optional[list[str]] = None,
         days_back: int = 1500,
+        *,
+        strict: bool = False,
     ) -> dict:
         """Fetch daily bars into ``daily_prices`` (raw close + total-return
         adjusted close) and refresh corporate actions for the same window.
@@ -371,6 +374,13 @@ class DataFetcher:
         rewritten; raw ``close`` is never modified.
         """
         ticker_list = tickers or self._get_active_tickers()
+        if strict and tickers is None:
+            held = (
+                self._session.query(Company.ticker)
+                .join(PortfolioSelection, PortfolioSelection.company_id == Company.id)
+                .filter(PortfolioSelection.exit_date.is_(None))
+            )
+            ticker_list = sorted(set(ticker_list).union(ticker for (ticker,) in held))
         stats = {"tickers_processed": 0, "rows_inserted": 0, "rows_skipped": 0,
                  "failed": [], "readjusted": 0}
         if not ticker_list:
@@ -430,6 +440,8 @@ class DataFetcher:
                 ticker_list, start=start_date - timedelta(days=7), end=end_date
             )
         except Exception as exc:
+            if strict:
+                raise RuntimeError("Corporate-action refresh failed before exit checks.") from exc
             logger.warning("Corporate action refresh failed: %s", exc)
 
         benchmark_stats = self.fetch_benchmark_prices(days_back=days_back)
@@ -751,13 +763,11 @@ class DataFetcher:
                 "turkey_cds_5y": series["credit_spread"] * 100.0,
             }
         )
-        if not cpi_yoy.empty:
-            frame = frame.join(cpi_yoy.rename("cpi_yoy_pct"), how="outer")
         # Series publish on different calendars (fed funds daily incl.
         # weekends, OAS/10y on trading days, CPI monthly). Carry each last
         # known value forward so every row is complete; only past values move
         # forward, so this stays point-in-time.
-        frame = frame.sort_index().ffill()
+        frame = frame.reindex(frame.index.union(cpi_yoy.index)).sort_index().ffill()
         frame = frame[frame.index >= start]
 
         existing = {row.date: row for row in self._session.query(MacroRegime).filter(MacroRegime.date >= start).all()}
@@ -767,10 +777,17 @@ class DataFetcher:
             if row is None:
                 row = MacroRegime(date=day)
                 self._session.add(row)
+                existing[day] = row
             for column, value in values.items():
                 if pd.notna(value):
                     setattr(row, column, float(value))
             written += 1
+        if not cpi.empty:
+            # Repair CPI on previously stored dates too, including dates only
+            # created by a now-invalid CPI observation. Keep the last valid
+            # YoY value, or leave it unset until an exact comparison exists.
+            for day, value in cpi_yoy.reindex(sorted(existing), method="ffill").items():
+                existing[day].cpi_yoy_pct = _float_or_none(value)
         self._session.flush()
 
         erp = None
@@ -800,7 +817,7 @@ class DataFetcher:
             "fx_points": 0,
             "macro_rows": written,
             "policy_rate": _float_or_none(latest.get("policy_rate_pct")),
-            "inflation_rate": _float_or_none(frame["cpi_yoy_pct"].dropna().iloc[-1]) if "cpi_yoy_pct" in frame and frame["cpi_yoy_pct"].notna().any() else None,
+            "inflation_rate": _float_or_none(cpi_yoy.iloc[-1]) if not cpi_yoy.empty else None,
             "damodaran_erp": erp,
         }
         pr = f"{stats['policy_rate']:.2%}" if stats["policy_rate"] is not None else "N/A"
@@ -1158,16 +1175,15 @@ def _float_or_none(value) -> Optional[float]:
 def _cpi_yoy_by_availability(cpi: pd.Series) -> pd.Series:
     """CPI YoY indexed by the date the print became public.
 
-    BLS publishes month M's CPI around the middle of month M+1; the value is
-    stamped on the 15th of M+1 so no scoring date sees it early.
+    The 15th of the next month is an approximation of the BLS release date.
+    YoY requires both observations exactly twelve calendar months apart.
     """
     if cpi is None or cpi.empty:
         return pd.Series(dtype=float)
     monthly = cpi.copy()
-    monthly.index = pd.to_datetime(monthly.index)
-    yoy = monthly / monthly.shift(12) - 1.0
-    yoy = yoy.dropna()
-    visible = [
-        (ts + pd.offsets.MonthBegin(1) + pd.Timedelta(days=14)).date() for ts in yoy.index
-    ]
+    monthly.index = pd.to_datetime(monthly.index).to_period("M")
+    months = pd.period_range(monthly.index.min(), monthly.index.max(), freq="M")
+    monthly = monthly.reindex(months)
+    yoy = (monthly / monthly.shift(12) - 1.0).dropna()
+    visible = ((yoy.index + 1).to_timestamp() + pd.Timedelta(days=14)).date
     return pd.Series(yoy.values, index=visible, dtype=float)

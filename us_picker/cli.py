@@ -102,6 +102,11 @@ def cli(ctx: click.Context, verbose: bool, dry_run: bool) -> None:
 @click.option("--ticker", multiple=True, help="Fetch specific ticker(s) only.")
 @click.option("--prices-only", is_flag=True, help="Fetch only price data.")
 @click.option(
+    "--strict-price-refresh",
+    is_flag=True,
+    help="Include open positions and require corporate-action data for --prices-only.",
+)
+@click.option(
     "--refresh-universe",
     is_flag=True,
     help="Refresh the company universe before fetching prices. Useful for IPO/new ticker discovery.",
@@ -141,6 +146,7 @@ def fetch(
     financials_only: bool,
     financial_days: int | None,
     macro_only: bool = False,
+    strict_price_refresh: bool = False,
 ) -> None:
     """Stage 1: Download data from all sources (prices + financials + macro)."""
     from us_picker.db.connection import session_scope
@@ -152,6 +158,8 @@ def fetch(
         )
     if financial_days is not None and (not financials_only or history or macro_only):
         raise click.UsageError("--financial-days requires --financials-only.")
+    if strict_price_refresh and (not prices_only or history or macro_only):
+        raise click.UsageError("--strict-price-refresh requires --prices-only.")
 
     dry_run: bool = ctx.obj.get("dry_run", False)
     if dry_run:
@@ -206,7 +214,8 @@ def fetch(
                 for t in tickers:
                     fetcher._get_or_create_company(t)
                 session.commit()
-            fetcher.fetch_prices(tickers=tickers, days_back=price_days or 1500)
+            strict_options = {"strict": True} if strict_price_refresh else {}
+            fetcher.fetch_prices(tickers=tickers, days_back=price_days or 1500, **strict_options)
         elif tickers:
             console.print(
                 f"[bold blue]Fetching data for {', '.join(tickers)}...[/bold blue]"

@@ -14,6 +14,7 @@ This module mirrors the PWA History contract:
 * equal-weight period returns compound into one live-tracking NAV.
 
 The ledger uses model reference prices and is gross of fees and slippage.
+Period weights are equal across selected stocks and exclude the target cash allocation.
 """
 
 from __future__ import annotations
@@ -266,12 +267,9 @@ def _legacy_periods(
 
 def _cycle_mark_periods(
     session: Session,
-    portfolio: str,
-    start_date: date,
     benchmark_id: Optional[int],
     marks: list[PortfolioCycleMark],
-    open_rows: list[PortfolioSelection],
-    completed_rows: list[PortfolioSelection],
+    rows: list[PortfolioSelection],
     as_of_date: date,
 ) -> list[PeriodReturn]:
     by_cycle: dict[date, list[PortfolioCycleMark]] = {}
@@ -280,17 +278,21 @@ def _cycle_mark_periods(
     cycle_dates = sorted(by_cycle)
     periods: list[PeriodReturn] = []
 
-    def find_exit(company_id: int, after: date, upto: Optional[date]):
-        return next(
+    rows_by_company: dict[int, list[PortfolioSelection]] = {}
+    for row in rows:
+        rows_by_company.setdefault(row.company_id, []).append(row)
+
+    def position_at_cycle(company_id: int, cycle_date: date) -> Optional[PortfolioSelection]:
+        # At a shared exit/re-entry date, the new selection owns that day's mark.
+        return max(
             (
                 row
-                for row in completed_rows
-                if row.company_id == company_id
-                and row.exit_date is not None
-                and row.exit_date > after
-                and (upto is None or row.exit_date <= upto)
+                for row in rows_by_company.get(company_id, [])
+                if row.selection_date <= cycle_date
+                and (row.exit_date is None or row.exit_date >= cycle_date)
             ),
-            None,
+            key=lambda row: (row.selection_date, row.id),
+            default=None,
         )
 
     for current_date, next_date in zip(cycle_dates, cycle_dates[1:]):
@@ -303,9 +305,17 @@ def _cycle_mark_periods(
                 continue
             next_mark = next_by_company.get(mark.company_id)
             end_price = next_mark.ref_price if next_mark else None
-            if end_price is None:
-                exit_row = find_exit(mark.company_id, current_date, next_date)
-                end_price = exit_row.exit_price if exit_row else None
+            row = position_at_cycle(mark.company_id, current_date)
+            if row is not None and row.exit_date is not None and row.exit_date <= next_date:
+                # An incumbent can receive the new mark before it closes that day.
+                carries_to_next_mark = (
+                    end_price is not None
+                    and end_price > 0
+                    and row.exit_date == next_date
+                    and row is position_at_cycle(mark.company_id, next_date)
+                )
+                if not carries_to_next_mark:
+                    end_price = row.exit_price
             position = _position_return(mark.company_id, mark.ref_price, end_price)
             if position is not None:
                 positions.append(position)
@@ -326,15 +336,29 @@ def _cycle_mark_periods(
             )
 
     latest_cycle = cycle_dates[-1]
-    open_by_company = {row.company_id: row for row in open_rows}
-    latest_prices = _latest_prices(session, list(open_by_company), as_of_date)
+    active_rows = [
+        (mark, position_at_cycle(mark.company_id, latest_cycle))
+        for mark in by_cycle[latest_cycle]
+    ]
+    latest_prices = _latest_prices(
+        session,
+        [
+            mark.company_id
+            for mark, row in active_rows
+            if row is not None and (row.exit_date is None or row.exit_date > as_of_date)
+        ],
+        as_of_date,
+    )
     active_positions: list[PositionReturn] = []
-    for mark in by_cycle[latest_cycle]:
-        if mark.company_id in open_by_company:
-            end_price = latest_prices.get(mark.company_id)
+    active_exit_dates: list[date] = []
+    for mark, row in active_rows:
+        if row is None:
+            continue
+        if row.exit_date is not None and row.exit_date <= as_of_date:
+            end_price = row.exit_price
+            active_exit_dates.append(row.exit_date)
         else:
-            exit_row = find_exit(mark.company_id, latest_cycle, None)
-            end_price = exit_row.exit_price if exit_row else None
+            end_price = latest_prices.get(mark.company_id)
         position = _position_return(mark.company_id, mark.ref_price, end_price)
         if position is not None:
             active_positions.append(position)
@@ -345,7 +369,7 @@ def _cycle_mark_periods(
             _latest_price_date(
                 session, [position.company_id for position in active_positions], as_of_date
             ) or latest_cycle,
-            *(row.exit_date for row in completed_rows if row.exit_date > latest_cycle),
+            *active_exit_dates,
         )
         periods.append(
             PeriodReturn(
@@ -446,12 +470,9 @@ def calculate_live_performance(
         periods.extend(
             _cycle_mark_periods(
                 session,
-                portfolio,
-                tracking_start,
                 benchmark_id,
                 marks,
-                open_rows,
-                completed_rows,
+                rows,
                 cutoff,
             )
         )

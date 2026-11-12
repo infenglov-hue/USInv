@@ -926,9 +926,9 @@ function buildWeeklyPerformanceRecords(dbPositions, livePrices, now = new Date()
 function buildCycleMarkRecords(marks, dbPositions, livePrices, todayDate) {
   const exitRows = queryAll(`
     SELECT * FROM portfolio_history
-    WHERE exit_date IS NOT NULL AND exit_date > :startDate
+    WHERE exit_date IS NOT NULL AND exit_date >= :startDate
       AND exit_date <= :todayDate
-    ORDER BY exit_date ASC, sort_order ASC
+    ORDER BY exit_date DESC, sort_order DESC
   `, {
     ':startDate': LIVE_TRACKING_START_DATE,
     ':todayDate': todayDate,
@@ -941,21 +941,14 @@ function buildCycleMarkRecords(marks, dbPositions, livePrices, todayDate) {
   const cycleDates = [...byCycle.keys()].sort();
   const records = [];
 
-  const findExit = (ticker, afterDate, uptoDate) => exitRows.find(row =>
-    row.ticker === ticker && row.exit_date > afterDate
-    && (!uptoDate || row.exit_date <= uptoDate));
-  const selectionDateFor = (ticker, cycleDate) => {
-    const candidates = [
-      ...dbPositions.filter(row => row.ticker === ticker),
-      ...exitRows.filter(row => row.ticker === ticker),
-    ]
-      .filter(row => row.selection_date && row.selection_date <= cycleDate)
-      .sort((a, b) => b.selection_date.localeCompare(a.selection_date));
-    return candidates[0]?.selection_date || cycleDate;
-  };
+  const positionRows = [...dbPositions, ...exitRows]
+    .sort((a, b) => (b.selection_date || '').localeCompare(a.selection_date || ''));
+  // The most recent selection owns the mark when an exit and re-entry share a date.
+  const positionAtCycle = (ticker, cycleDate) => positionRows.find(row =>
+    row.ticker === ticker && (!row.selection_date || row.selection_date <= cycleDate)
+    && (!row.exit_date || row.exit_date >= cycleDate));
 
-  // Completed periods: consecutive mark dates C1 -> C2. Per stock the period
-  // return is (next mark ref | realized exit) / this mark ref.
+  // The next mark belongs to an incumbent or a new lot with the same ticker.
   for (let i = 0; i < cycleDates.length - 1; i++) {
     const c1 = cycleDates[i];
     const c2 = cycleDates[i + 1];
@@ -964,21 +957,21 @@ function buildCycleMarkRecords(marks, dbPositions, livePrices, todayDate) {
     byCycle.get(c1).forEach(mark => {
       const ref = finiteNumber(mark.ref_price);
       if (!(ref > 0)) return;
-      const nextMark = nextByTicker.get(mark.ticker);
-      let endPrice = nextMark ? finiteNumber(nextMark.ref_price, null) : null;
-      let exitRow = null;
-      if (endPrice == null) {
-        exitRow = findExit(mark.ticker, c1, c2);
-        if (exitRow && exitRow.exit_price != null) endPrice = finiteNumber(exitRow.exit_price, null);
-      }
-      if (endPrice == null || !(endPrice > 0)) return;
+      const pos = positionAtCycle(mark.ticker, c1);
+      const nextRef = finiteNumber(nextByTicker.get(mark.ticker)?.ref_price);
+      // A position can carry into the next rotation and close later that day.
+      const carriesToNextMark = nextRef > 0 && pos?.exit_date === c2
+        && pos === positionAtCycle(mark.ticker, c2);
+      const closed = Boolean(pos?.exit_date && pos.exit_date <= c2 && !carriesToNextMark);
+      const endPrice = closed ? finiteNumber(pos.exit_price) : nextRef;
+      if (!(endPrice > 0)) return;
       stockRecords.push(modelCyclePositionResult({
         ticker: mark.ticker,
-        selectionDate: exitRow?.selection_date || selectionDateFor(mark.ticker, c1),
+        selectionDate: pos?.selection_date || c1,
         cycleStart: c1,
         modelEntryPrice: ref,
         modelExitPrice: endPrice,
-        includeSellCost: !nextMark,
+        includeSellCost: closed,
       }));
     });
     if (stockRecords.length === 0) continue;
@@ -1001,37 +994,24 @@ function buildCycleMarkRecords(marks, dbPositions, livePrices, todayDate) {
   // Active period: latest marks vs live/current prices, plus positions the
   // pipeline already closed after that rotation (realized returns).
   const cLast = cycleDates[cycleDates.length - 1];
-  const posByTicker = new Map(dbPositions.map(p => [p.ticker, p]));
   const activeStocks = [];
   byCycle.get(cLast).forEach(mark => {
     const ref = finiteNumber(mark.ref_price);
-    if (!(ref > 0)) return;
-    const pos = posByTicker.get(mark.ticker);
-    if (pos) {
-      const latest = getHistoryMarkPrice(mark.ticker, livePrices, todayDate);
-      if (latest != null && latest > 0) {
-        activeStocks.push(modelCyclePositionResult({
-          ticker: mark.ticker,
-          selectionDate: pos.selection_date || cLast,
-          cycleStart: cLast,
-          modelEntryPrice: ref,
-          modelExitPrice: latest,
-          includeSellCost: true,
-        }));
-      }
-      return;
-    }
-    const exitRow = findExit(mark.ticker, cLast, null);
-    if (exitRow && exitRow.exit_price != null && finiteNumber(exitRow.exit_price) > 0) {
-      activeStocks.push(modelCyclePositionResult({
-        ticker: mark.ticker,
-        selectionDate: exitRow.selection_date || cLast,
-        cycleStart: cLast,
-        modelEntryPrice: ref,
-        modelExitPrice: finiteNumber(exitRow.exit_price),
-        includeSellCost: true,
-      }));
-    }
+    const pos = positionAtCycle(mark.ticker, cLast);
+    if (!(ref > 0) || !pos) return;
+    const closed = pos.exit_date && pos.exit_date <= todayDate;
+    const endPrice = closed
+      ? finiteNumber(pos.exit_price)
+      : getHistoryMarkPrice(mark.ticker, livePrices, todayDate);
+    if (!(endPrice > 0)) return;
+    activeStocks.push(modelCyclePositionResult({
+      ticker: mark.ticker,
+      selectionDate: pos.selection_date || cLast,
+      cycleStart: cLast,
+      modelEntryPrice: ref,
+      modelExitPrice: endPrice,
+      includeSellCost: true,
+    }));
   });
 
   const bistStart = getPriceOnOrBefore('SPY', cLast);
@@ -1077,8 +1057,7 @@ function buildLegacyCohortRecords(dbPositions, livePrices, todayDate) {
   // `selection|exit` pair key split a cohort into two pseudo-weeks when
   // the pipeline stop-exited one name midweek (auto exits are live since
   // 2026-07-02), double-counting that week in the cumulative product.
-  // A stopped position keeps its own realized exit; the freed slot sits
-  // in cash, so the equal-weight mean of per-position returns is exact.
+  // The equal-weight basket keeps the realized return of each stopped position.
   // The still-active cohort is excluded here — it's rendered by the live
   // block below together with its already-realized exits.
   const cohorts = new Map();
@@ -2106,7 +2085,7 @@ function renderHistoryPage() {
       <div class="collapsible-body">
         <div class="collapsible-body-metrics">
           <div>
-            <span style="color:var(--text-muted);">Model Referans Getirisi</span>
+            <span style="color:var(--text-muted);">Hisse Sepeti Getirisi</span>
             <strong class="${portfolioReturn >= 0 ? 'pos-text' : 'neg-text'}">${(portfolioReturn * 100).toFixed(2)}%</strong>
           </div>
           <div>
@@ -3119,7 +3098,7 @@ async function initApp() {
     progressFill.style.width = '90%';
     
     const SQL = await initSqlJs({
-      locateFile: filename => `./vendor/${filename}?v=us4`
+      locateFile: filename => `./vendor/${filename}?v=us5`
     });
 
     try {

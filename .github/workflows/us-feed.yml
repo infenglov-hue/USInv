@@ -13,7 +13,7 @@ on:
         default: true
         type: boolean
       price_days:
-        description: "Calendar days of prices to refresh (1–120)"
+        description: "Minimum calendar days of prices to refresh (1–120)"
         default: 15
         type: number
       prepare_next_rotation:
@@ -80,6 +80,9 @@ jobs:
       - name: Install
         run: python -m pip install --disable-pip-version-check -e ".[dev,enhanced]"
 
+      - name: Check Alpaca authentication
+        run: python -m scripts_picker.feed_health auth
+
       - name: Quality gate (manual runs)
         if: github.event_name != 'schedule'
         run: python -m pytest -q us_picker/tests tests_picker
@@ -119,29 +122,11 @@ jobs:
               exit 1
             fi
           }
-          private_run 'Alpaca/SEC universe and price refresh' fetch --prices-only --refresh-universe --price-days "${PRICE_DAYS}"
-          python - <<'PY'
-          from datetime import timedelta
-
-          from sqlalchemy import or_
-
-          from us_picker.data.fetcher import _last_complete_session_day
-          from us_picker.db.connection import get_engine, session_scope
-          from us_picker.db.schema import Company, DailyPrice
-          from us_picker.portfolio.execution import latest_completed_session_date
-
-          expected = _last_complete_session_day()
-          with session_scope(get_engine()) as session:
-              observed = latest_completed_session_date(session, expected + timedelta(days=1))
-              prices = session.query(Company.ticker).join(DailyPrice).filter(
-                  DailyPrice.date == expected, DailyPrice.adjusted_close > 0,
-                  or_(Company.ticker == "SPY", Company.is_active.is_(True)),
-                  or_(Company.ticker == "SPY", Company.company_type.is_(None), Company.company_type != "INDEX"),
-              )
-              tickers = {ticker for (ticker,) in prices}
-          if observed != expected or "SPY" not in tickers or len(tickers) < 2:
-              raise SystemExit("::error::Price refresh lacks a broadly covered completed XNYS session or its SPY benchmark.")
-          PY
+          price_days=$(python -m scripts_picker.feed_health window "${PRICE_DAYS}")
+          echo "Refreshing up to ${price_days} calendar days of market data"
+          private_run 'Alpaca/SEC universe, prices and corporate actions' fetch \
+            --prices-only --strict-price-refresh --refresh-universe --price-days "${price_days}"
+          python -m scripts_picker.feed_health verify
           private_run 'Score-input preparation' clean
           private_run 'Exit checks' check-exits --apply --yes
           weekday_ny=$(date +%u)
