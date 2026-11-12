@@ -19,7 +19,7 @@
 
   <!-- Icons for PWA -->
   <link rel="apple-touch-icon" href="./icons/icon-192.png">
-  <link rel="manifest" href="./manifest.webmanifest?v=us3">
+  <link rel="manifest" href="./manifest.webmanifest?v=us4">
 
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,16 +30,16 @@
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
 
   <!-- Stylesheet -->
-  <link rel="stylesheet" href="./index.css?v=us3">
+  <link rel="stylesheet" href="./index.css?v=us4">
 
   <!-- Local runtime dependencies: first launch must not depend on a CDN. -->
-  <script src="./vendor/pako.min.js?v=us3"></script>
-  <script src="./vendor/sql-wasm.js?v=us3"></script>
-  <script src="./vendor/apexcharts.min.js?v=us3"></script>
-  <script src="./portfolio-costs.js?v=us3"></script>
+  <script src="./vendor/pako.min.js?v=us4"></script>
+  <script src="./vendor/sql-wasm.js?v=us4"></script>
+  <script src="./vendor/apexcharts.min.js?v=us4"></script>
+  <script src="./portfolio-costs.js?v=us4"></script>
 
   <!-- Main Application Logic (deferred) -->
-  <script src="./app.js?v=us3" defer></script>
+  <script src="./app.js?v=us4" defer></script>
 </head>
 <body>
 
@@ -62,6 +62,11 @@
         <p id="splash-no-feed" class="loading-status" hidden>
           Özel verinle çalıştırmak için <a class="splash-help-link" href="https://github.com/infenglov-hue/USInv/blob/main/docs/US_PICKER.md">yerel kurulum adımlarına</a> bak.
         </p>
+        <form id="private-feed-unlock" class="private-feed-unlock" hidden>
+          <label for="private-feed-key">Erişim anahtarı</label>
+          <input id="private-feed-key" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+          <button type="submit">Portföyü aç</button>
+        </form>
       </div>
 
       <button type="button" id="splash-retry-btn" class="retry-btn" style="display: none;">🔄 Yeniden Dene</button>
@@ -372,6 +377,10 @@
 
         <!-- PAGE 5: ABOUT (HAKKINDA) -->
         <section id="page-about" class="tab-page">
+          <div id="private-feed-access" class="about-card" hidden>
+            <h2>Özel portföy erişimi</h2>
+            <button type="button" id="forget-private-feed-key" class="icon-text-btn">Bu cihazdaki erişimi kaldır</button>
+          </div>
           <div class="about-card">
             <h2>US Picker Hakkında</h2>
             <p>US Picker, BIST Picker'ın ABD borsaları (NYSE / Nasdaq) için uyarlanmış sürümüdür: aynı değer yatırımı disiplinlerini (Graham, Buffett, Piotroski, Magic Formula vb.) ve momentum filtrelerini SEC bilançoları ve ABD fiyatları üzerinde çalıştıran, serverless bir karar destek modelidir.</p>

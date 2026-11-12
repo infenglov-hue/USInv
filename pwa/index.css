@@ -239,6 +239,47 @@ body {
   color: var(--primary);
 }
 
+.private-feed-locked .splash-brand {
+  margin-top: 28px;
+}
+
+.private-feed-locked .loading-wrapper {
+  margin-bottom: 24px;
+}
+
+.private-feed-unlock:not([hidden]) {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+  text-align: left;
+}
+
+.private-feed-unlock label {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.private-feed-unlock input,
+.private-feed-unlock button {
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--outline-variant);
+  border-radius: 8px;
+  font-size: 16px;
+}
+
+.private-feed-unlock input {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.private-feed-unlock button {
+  background: var(--primary-container);
+  color: var(--primary);
+  cursor: pointer;
+}
+
 .retry-btn {
   background: var(--primary-container);
   color: var(--primary);

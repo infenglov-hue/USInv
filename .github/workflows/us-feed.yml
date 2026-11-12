@@ -94,7 +94,7 @@ jobs:
             --repository "${STATE_REPOSITORY}" --target data/us_picker.db
 
       - name: Restore published snapshot for regression check
-        if: vars.US_PICKER_PUBLIC_MARKET_DATA == 'true' && !inputs.dry_run
+        if: vars.US_PICKER_PUBLIC_MARKET_DATA == 'true' && vars.US_PICKER_ENCRYPTED_MOBILE != 'true' && !inputs.dry_run
         run: |
           set -euo pipefail
           mkdir -p mobile-feed-dist
@@ -162,10 +162,10 @@ jobs:
       - name: Verify mobile snapshot
         run: |
           set -euo pipefail
-          cp -r pwa site
-          cp mobile-feed-dist/{manifest.json,mobile_snapshot.db.gz,live_tickers.json} site/
-          (cd site && node --check app.js && node --check sw.js && node tests/pwa-static-check.mjs)
-          rm -r site/tests
+          verification="${RUNNER_TEMP}/verified-mobile-feed"
+          cp -r pwa "${verification}"
+          cp mobile-feed-dist/{manifest.json,mobile_snapshot.db.gz,live_tickers.json} "${verification}/"
+          (cd "${verification}" && node --check app.js && node --check sw.js && node tests/pwa-static-check.mjs)
 
       - name: Store runtime database
         if: ${{ !inputs.dry_run }}
@@ -183,15 +183,35 @@ jobs:
           python -m scripts_picker.mobile_feed_artifact push \
             --source-dir mobile-feed-dist --repository "${STATE_REPOSITORY}"
 
-      - name: Stage authorized public feed for Pages
-        if: vars.US_PICKER_PUBLIC_MARKET_DATA == 'true' && !inputs.dry_run
+      - name: Assemble encrypted personal feed for Pages
+        if: vars.US_PICKER_ENCRYPTED_MOBILE == 'true' && !inputs.dry_run
+        env:
+          PUBLIC_MARKET_DATA: ${{ vars.US_PICKER_PUBLIC_MARKET_DATA }}
+          US_PICKER_MOBILE_KEY: ${{ secrets.US_PICKER_MOBILE_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ "${PUBLIC_MARKET_DATA}" == 'true' ]]; then
+            echo '::error::Encrypted mobile and public market data modes are mutually exclusive.'
+            exit 1
+          fi
+          node scripts_picker/encrypt_mobile_feed.mjs mobile-feed-dist site
+
+      - name: Assemble authorized public market feed for Pages
+        if: vars.US_PICKER_PUBLIC_MARKET_DATA == 'true' && vars.US_PICKER_ENCRYPTED_MOBILE != 'true' && !inputs.dry_run
+        run: |
+          set -euo pipefail
+          cp -r "${RUNNER_TEMP}/verified-mobile-feed" site
+          rm -r site/tests
+
+      - name: Stage Pages artifact
+        if: (vars.US_PICKER_ENCRYPTED_MOBILE == 'true' || vars.US_PICKER_PUBLIC_MARKET_DATA == 'true') && !inputs.dry_run
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
   deploy:
     needs: refresh
-    if: vars.US_PICKER_PUBLIC_MARKET_DATA == 'true' && !inputs.dry_run
+    if: (vars.US_PICKER_ENCRYPTED_MOBILE == 'true' || vars.US_PICKER_PUBLIC_MARKET_DATA == 'true') && !inputs.dry_run
     runs-on: ubuntu-latest
     concurrency:
       group: us-picker-pages

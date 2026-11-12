@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   live:
-    if: vars.US_PICKER_PUBLIC_MARKET_DATA == 'true' && github.ref_name == github.event.repository.default_branch
+    if: vars.US_PICKER_PUBLIC_MARKET_DATA == 'true' && vars.US_PICKER_ENCRYPTED_MOBILE != 'true' && github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createCipheriv, createHash, webcrypto } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createContext, runInContext } from "node:vm";
+import { gzipSync, gunzipSync } from "node:zlib";
 
 const root = resolve(import.meta.dirname, "..");
 const read = (path) => readFileSync(resolve(root, path), "utf8");
@@ -33,9 +34,9 @@ for (const file of requiredFiles) {
 }
 
 for (const localRuntime of [
-  "./vendor/pako.min.js?v=us3",
-  "./vendor/sql-wasm.js?v=us3",
-  "./vendor/apexcharts.min.js?v=us3",
+  "./vendor/pako.min.js?v=us4",
+  "./vendor/sql-wasm.js?v=us4",
+  "./vendor/apexcharts.min.js?v=us4",
 ]) {
   if (!indexHtml.includes(localRuntime)) {
     throw new Error(`index.html does not reference local runtime: ${localRuntime}`);
@@ -46,8 +47,8 @@ if (/cdnjs\.cloudflare\.com\/ajax\/libs\/(?:pako|sql\.js)|cdn\.jsdelivr\.net\/np
   throw new Error("Core PWA runtime still depends on an external CDN.");
 }
 
-if (!serviceWorker.includes("us-picker-shell-v3")) {
-  throw new Error("Service worker cache version was not bumped to us3.");
+if (!serviceWorker.includes("us-picker-shell-v4")) {
+  throw new Error("Service worker cache version was not bumped to us4.");
 }
 
 if (!appJs.includes("Snapshot bütünlük kontrolü başarısız")) {
@@ -62,11 +63,11 @@ if (!appJs.includes("infenglov-hue/USInv/live-data/live_prices.json")) {
   throw new Error("PWA near-live price feed URL is missing.");
 }
 
-if (!appJs.includes("./vendor/${filename}?v=us3")) {
-  throw new Error("sql.js WASM locateFile cache version was not bumped to us3.");
+if (!appJs.includes("./vendor/${filename}?v=us4")) {
+  throw new Error("sql.js WASM locateFile cache version was not bumped to us4.");
 }
 
-if (!indexHtml.includes("./portfolio-costs.js?v=us3")) {
+if (!indexHtml.includes("./portfolio-costs.js?v=us4")) {
   throw new Error("Portfolio cost profile runtime is missing.");
 }
 
@@ -166,7 +167,11 @@ const PortfolioCosts = {
   normalizeSettings: () => ({}),
   calculateTradeReturn: ({ entryPrice, exitPrice }) => exitPrice / entryPrice - 1,
 };
-const context = createContext({ window, navigator: {}, PortfolioCosts });
+const context = createContext({
+  window, navigator: {}, PortfolioCosts,
+  crypto: webcrypto, atob, TextDecoder, URLSearchParams, DataView, Uint8Array,
+  pako: { ungzip: gunzipSync },
+});
 runInContext(appJs, context, { filename: 'app.js' });
 assert.equal(context.getPortfolioSettings().target, 5);
 assert.equal(context.getPortfolioSettings().weeks, 2);
@@ -205,15 +210,54 @@ for (const withMarks of [false, true]) {
 }
 assert.equal(context.latestEffectiveHistoryDate(atOpen), '2026-11-09');
 
+const privateKey = Buffer.alloc(32, 1);
+const nonce = Buffer.alloc(12, 2);
+const snapshotBytes = gzipSync('synthetic snapshot payload');
+const privateManifest = {
+  snapshot: {
+    filename: 'mobile_snapshot.db.gz',
+    sha256: createHash('sha256').update(snapshotBytes).digest('hex'),
+    size_bytes: snapshotBytes.length,
+  },
+};
+const encodedManifest = Buffer.from(JSON.stringify(privateManifest));
+const header = Buffer.alloc(4);
+header.writeUInt32BE(encodedManifest.length);
+const cipher = createCipheriv('aes-256-gcm', privateKey, nonce);
+const encryptedBytes = Buffer.concat([
+  cipher.update(Buffer.concat([header, encodedManifest, snapshotBytes])), cipher.final(), cipher.getAuthTag(),
+]);
+const envelope = {
+  version: 1, filename: 'mobile_snapshot.db.gz.enc', nonce: nonce.toString('base64url'),
+  size_bytes: encryptedBytes.length, sha256: createHash('sha256').update(encryptedBytes).digest('hex'),
+};
+const cryptoKey = await webcrypto.subtle.importKey('raw', privateKey, 'AES-GCM', false, ['decrypt']);
+const opened = await context.decryptPrivateSnapshot(envelope, encryptedBytes, cryptoKey);
+assert.equal(opened.rawBytes.toString(), 'synthetic snapshot payload');
+assert.equal(opened.manifest.snapshot.sha256, privateManifest.snapshot.sha256);
+const wrongKey = await webcrypto.subtle.importKey('raw', Buffer.alloc(32, 3), 'AES-GCM', false, ['decrypt']);
+await assert.rejects(context.decryptPrivateSnapshot(envelope, encryptedBytes, wrongKey), /Erişim anahtarı bu paketi açamadı/);
+const corrupted = Buffer.from(encryptedBytes);
+corrupted[0] ^= 1;
+await assert.rejects(context.decryptPrivateSnapshot(envelope, corrupted, cryptoKey), /bütünlük kontrolü başarısız/);
+assert.throws(() => context.validateEncryptedFeed({ ...envelope, filename: '../private.enc' }));
+window.location = { pathname: '/USInv/index.html', hash: `#feed=${privateKey.toString('base64url')}`, search: '' };
+context.history = { replaceState: (_state, _title, url) => assert.equal(url, '/USInv/index.html') };
+assert.equal(context.takePrivateFeedKeyFromFragment(), privateKey.toString('base64url'));
+assert.equal(context.privateFeedStorageId(), 'us-picker-private-feed:/USInv/');
+
 if (!process.argv.includes('--shell-only')) {
-  const snapshotManifest = JSON.parse(read("manifest.json"));
-  const snapshotPath = resolve(root, snapshotManifest.snapshot.filename);
+  const publication = JSON.parse(read("manifest.json"));
+  const snapshotManifest = Object.hasOwn(publication, 'encrypted_feed')
+    ? context.validateEncryptedFeed(publication.encrypted_feed)
+    : context.validateSnapshotManifest(publication).snapshot;
+  const snapshotPath = resolve(root, snapshotManifest.filename);
   const snapshotBytes = readFileSync(snapshotPath);
   const actualHash = createHash("sha256").update(snapshotBytes).digest("hex");
-  if (actualHash !== snapshotManifest.snapshot.sha256) {
+  if (actualHash !== snapshotManifest.sha256) {
     throw new Error("Published snapshot SHA-256 does not match manifest.json.");
   }
-  if (statSync(snapshotPath).size !== snapshotManifest.snapshot.size_bytes) {
+  if (statSync(snapshotPath).size !== snapshotManifest.size_bytes) {
     throw new Error("Published snapshot size does not match manifest.json.");
   }
 }

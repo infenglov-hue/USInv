@@ -69,9 +69,15 @@ python -m us_picker backtest --start-date 2017-01-09 --rebalance-weeks 2 --execu
 python -m us_picker export-mobile-feed --feed-dir mobile-feed-dist
 ```
 
-### Özel veriyle PWA
+### Telefonda US Picker
 
-GitHub Pages herkese açıktır ve varsayılan olarak yalnız uygulama kabuğunu yayınlar. Alpaca fiyatları içeren çalışma veritabanı, snapshot ve canlı fiyat dosyaları özel kullanım içindir. [Alpaca veri dağıtım koşulları](https://alpaca.markets/support/redistribute-alpaca-api)
+Kişisel kurulum QR kodunu telefon kamerasıyla bir kez okutun. Tarayıcı portföyü açar ve erişimi cihazda hatırlar. Daha sonra [US Picker web adresinden](https://infenglov-hue.github.io/USInv/) açabilirsiniz. GitHub Actions şifreli paketi günceller. Uygulama, portföyü ve son kapanış verisini telefonda çözer.
+
+İlk şifreli yayın için GitHub Actions `US Picker PWA` işini ana dalda elle çalıştırın. İş, özel `feed-current` taslağındaki doğrulanmış paketi kullanır. Şifreli yayın için `US_PICKER_ENCRYPTED_MOBILE` değişkeni ve 32 baytlık base64url `US_PICKER_MOBILE_KEY` Actions secret’ı kullanılır. Kişisel QR erişim anahtarını içerir. Anahtarı yenilerseniz telefonları yeni kişisel bağlantıyla kurun. [Alpaca veri dağıtım koşulları](https://alpaca.markets/support/redistribute-alpaca-api)
+
+### Özel veriyle yerel PWA
+
+Alpaca fiyatları içeren çalışma veritabanı, snapshot ve canlı fiyat dosyaları özel kullanım içindir.
 
 Repo erişimi olan bir makinede `gh auth login` ile oturum açın. Aşağıdaki PowerShell komutları özel taslak release'deki çalışma veritabanını yerel bir kopyaya indirir ve PWA'yı yalnız bu makinede açar.
 

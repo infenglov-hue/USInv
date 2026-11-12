@@ -8,7 +8,7 @@ US Picker, [MobileInv BIST Picker](https://github.com/Somethinglikeu-hub/MobileI
 
 Aktif uygulama `us_picker/` ve `pwa/` dizinlerindedir. ABD stratejisi için V1 canlı varsayılanları korunur. BIST V2 kuralları ABD verisinde ayrı bir araştırma adayı olarak ölçülür. Performans iddiaları ancak doğrulanabilir koşu çıktısına dayanır.
 
-Herkese açık Pages kurulumu varsayılan olarak yalnız uygulama dosyalarını sunar. Alpaca fiyatlarıyla üretilen akış ve çalışma veritabanı özel kalır. [Alpaca veri dağıtım koşulları](https://alpaca.markets/support/redistribute-alpaca-api)
+Telefondaki kişisel kurulum bağlantısı, portföy ve kapanış verisini tarayıcıda açar. GitHub Pages şifreli paketi sunar. Çalışma veritabanı özel taslakta kalır. [Telefon kurulumu](docs/US_PICKER.md#telefonda-us-picker)
 
 ## Geliştirme
 
