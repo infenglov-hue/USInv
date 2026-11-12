@@ -35,6 +35,7 @@ jobs:
         run: pytest -q
       - name: PWA syntax
         run: |
+          node --test scripts_picker/encrypt_mobile_feed.test.mjs
           cd pwa
           node --check app.js
           node --check sw.js

@@ -12,6 +12,7 @@ let dbInstance = null;
 let activeDetailTicker = null;
 let livePriceRefreshTimer = null;
 let returnCostSettings = PortfolioCosts.normalizeSettings();
+let privateFeedKey = takePrivateFeedKeyFromFragment();
 
 const LIVE_PRICE_FEED_URL = window.location.hostname === 'infenglov-hue.github.io'
   ? 'https://raw.githubusercontent.com/infenglov-hue/USInv/live-data/live_prices.json'
@@ -303,13 +304,13 @@ function openIDB() {
   });
 }
 
-async function getCachedSnapshot() {
+async function getCachedSnapshot(id = 1) {
   try {
     const db = await openIDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readonly');
       const store = tx.objectStore(STORE_NAME);
-      const req = store.get(1);
+      const req = store.get(id);
       req.onsuccess = () => resolve(req.result || null);
       req.onerror = () => reject(req.error);
     });
@@ -319,13 +320,13 @@ async function getCachedSnapshot() {
   }
 }
 
-async function setCachedSnapshot(data) {
+async function setCachedSnapshot(data, id = 1) {
   try {
     const db = await openIDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
       const store = tx.objectStore(STORE_NAME);
-      const req = store.put({ id: 1, ...data });
+      const req = store.put({ id, ...data });
       req.onsuccess = () => resolve(true);
       req.onerror = () => reject(req.error);
     });
@@ -335,12 +336,12 @@ async function setCachedSnapshot(data) {
   }
 }
 
-async function deleteCachedSnapshot() {
+async function deleteCachedSnapshot(id = 1) {
   try {
     const db = await openIDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(STORE_NAME, 'readwrite');
-      const req = tx.objectStore(STORE_NAME).delete(1);
+      const req = tx.objectStore(STORE_NAME).delete(id);
       req.onsuccess = () => resolve(true);
       req.onerror = () => reject(req.error);
     });
@@ -470,6 +471,56 @@ function validateSnapshotManifest(value) {
   return value;
 }
 
+const PRIVATE_FEED_FILENAME = 'mobile_snapshot.db.gz.enc';
+
+class PrivateFeedKeyError extends Error {}
+
+function takePrivateFeedKeyFromFragment() {
+  if (!window.location.hash) return null;
+  const fragment = new URLSearchParams(window.location.hash.slice(1));
+  if (!fragment.has('feed')) return null;
+
+  const key = fragment.get('feed');
+  fragment.delete('feed');
+  const remainder = fragment.toString();
+  history.replaceState(history.state, '', window.location.pathname + window.location.search + (remainder ? `#${remainder}` : ''));
+  return key;
+}
+
+function privateFeedStorageId() {
+  const scope = window.location.pathname.replace(/[^/]*$/, '');
+  return `us-picker-private-feed:${scope}`;
+}
+
+function loadPrivateFeedKey() {
+  try {
+    return localStorage.getItem(privateFeedStorageId());
+  } catch {
+    return null;
+  }
+}
+
+function savePrivateFeedKey(key) {
+  try {
+    localStorage.setItem(privateFeedStorageId(), key);
+  } catch { /* private mode / quota */ }
+}
+
+function decodeBase64Url(value) {
+  const base64 = value.replaceAll('-', '+').replaceAll('_', '/');
+  return Uint8Array.from(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')), char => char.charCodeAt(0));
+}
+
+function validateEncryptedFeed(value) {
+  if (value?.version !== 1 || value.filename !== PRIVATE_FEED_FILENAME
+    || typeof value.nonce !== 'string' || !/^[A-Za-z0-9_-]{16}$/.test(value.nonce)
+    || !Number.isSafeInteger(value.size_bytes) || value.size_bytes <= 20
+    || typeof value.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(value.sha256)) {
+    throw new Error('Şifreli portföy paketi bilgileri geçersiz.');
+  }
+  return value;
+}
+
 async function sha256Hex(arrayBuffer) {
   if (!globalThis.crypto?.subtle) {
     console.warn('[DB] Web Crypto unavailable; snapshot hash validation skipped.');
@@ -537,22 +588,95 @@ async function fetchWithProgress(url, onProgress, options = {}) {
   }
 }
 
-async function downloadSnapshot(manifest, onProgress) {
-  const downloadUrl = `./${manifest.snapshot.filename}?t=${Date.now()}`;
-  const arrayBuffer = await fetchWithProgress(downloadUrl, onProgress);
-
-  if (arrayBuffer.byteLength !== manifest.snapshot.size_bytes) {
+async function verifyAndInflateSnapshot(bytes, manifest) {
+  if (bytes.byteLength !== manifest.snapshot.size_bytes) {
     throw new Error(
-      `Snapshot boyutu uyuşmuyor (${arrayBuffer.byteLength}/${manifest.snapshot.size_bytes}).`
+      `Snapshot boyutu uyuşmuyor (${bytes.byteLength}/${manifest.snapshot.size_bytes}).`
     );
   }
 
-  const actualHash = await sha256Hex(arrayBuffer);
+  const actualHash = await sha256Hex(bytes);
   if (actualHash && actualHash !== manifest.snapshot.sha256) {
     throw new Error('Snapshot bütünlük kontrolü başarısız (SHA-256 uyuşmuyor).');
   }
 
-  return pako.ungzip(new Uint8Array(arrayBuffer));
+  return pako.ungzip(bytes);
+}
+
+async function downloadSnapshot(manifest, onProgress) {
+  const downloadUrl = `./${manifest.snapshot.filename}?t=${Date.now()}`;
+  const bytes = new Uint8Array(await fetchWithProgress(downloadUrl, onProgress));
+  return verifyAndInflateSnapshot(bytes, manifest);
+}
+
+async function decryptPrivateSnapshot(envelope, encryptedBytes, cryptoKey) {
+  validateEncryptedFeed(envelope);
+  if (encryptedBytes.byteLength !== envelope.size_bytes || await sha256Hex(encryptedBytes) !== envelope.sha256) {
+    throw new Error('Şifreli portföy paketinin bütünlük kontrolü başarısız.');
+  }
+
+  let plaintext;
+  try {
+    plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: decodeBase64Url(envelope.nonce) }, cryptoKey, encryptedBytes);
+  } catch {
+    throw new PrivateFeedKeyError('Erişim anahtarı bu paketi açamadı. Özel bağlantını yeniden aç veya anahtarı gir.');
+  }
+
+  if (plaintext.byteLength < 5) throw new Error('Şifreli portföy paketi eksik.');
+  const manifestSize = new DataView(plaintext).getUint32(0, false);
+  const snapshotOffset = 4 + manifestSize;
+  if (!manifestSize || snapshotOffset >= plaintext.byteLength) {
+    throw new Error('Şifreli portföy paketinin başlığı geçersiz.');
+  }
+  const manifestBytes = new Uint8Array(plaintext, 4, manifestSize);
+  const manifest = validateSnapshotManifest(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(manifestBytes)));
+  const rawBytes = await verifyAndInflateSnapshot(new Uint8Array(plaintext, snapshotOffset), manifest);
+  return { manifest, rawBytes };
+}
+
+async function openPrivateFeed(envelope, cached, onProgress) {
+  const key = privateFeedKey ?? loadPrivateFeedKey();
+  if (!key) throw new PrivateFeedKeyError('Portföyü açmak için özel bağlantını kullan veya erişim anahtarını gir.');
+  if (!/^[A-Za-z0-9_-]{43}$/.test(key)) {
+    throw new PrivateFeedKeyError('Erişim anahtarı 43 karakter olmalı.');
+  }
+  if (!globalThis.crypto?.subtle) throw new Error('Özel portföyü açmak için HTTPS destekli bir tarayıcı kullan.');
+
+  const cryptoKey = await crypto.subtle.importKey('raw', decodeBase64Url(key), 'AES-GCM', false, ['decrypt']);
+  const useCache = async snapshotSource => {
+    const snapshot = await decryptPrivateSnapshot(cached.encryptedFeed, cached.encryptedBytes, cryptoKey);
+    savePrivateFeedKey(key);
+    return { ...snapshot, snapshotSource };
+  };
+
+  if (!envelope) return useCache('cache-offline');
+  if (cached?.encryptedBytes && cached.encryptedFeed?.sha256 === envelope.sha256) {
+    try {
+      const snapshot = await decryptPrivateSnapshot(envelope, cached.encryptedBytes, cryptoKey);
+      savePrivateFeedKey(key);
+      return { ...snapshot, snapshotSource: 'cache-current' };
+    } catch (error) {
+      if (error instanceof PrivateFeedKeyError) throw error;
+      cached = null;
+    }
+  }
+
+  try {
+    const encryptedBytes = await fetchWithProgress(`./${envelope.filename}?t=${Date.now()}`, onProgress, { cache: 'no-store' });
+    const snapshot = await decryptPrivateSnapshot(envelope, encryptedBytes, cryptoKey);
+    savePrivateFeedKey(key);
+    try {
+      await setCachedSnapshot({ encryptedFeed: envelope, encryptedBytes }, privateFeedStorageId());
+    } catch { /* the decrypted snapshot can still be displayed */ }
+    return { ...snapshot, snapshotSource: 'download' };
+  } catch (error) {
+    if (error instanceof PrivateFeedKeyError || !cached?.encryptedBytes) throw error;
+    try {
+      return await useCache('cache-stale');
+    } catch {
+      throw error;
+    }
+  }
 }
 
 // ==========================================================================
@@ -2884,6 +3008,11 @@ async function initApp() {
   const progressFill = document.getElementById('splash-progress');
   const retryBtn = document.getElementById('splash-retry-btn');
   const noFeedHelp = document.getElementById('splash-no-feed');
+  const unlock = document.getElementById('private-feed-unlock');
+  unlock.hidden = true;
+  progressFill.parentElement.hidden = false;
+  statusEl.style.color = '';
+  document.getElementById('splash-screen').classList.remove('private-feed-locked');
   
   // First launch downloads and opens a ~10 MB compressed snapshot. Slow
   // mobile connections can legitimately take longer than 15 seconds.
@@ -2899,12 +3028,18 @@ async function initApp() {
     progressFill.style.width = '10%';
     
     let manifest = null;
+    let encryptedPublication = null;
     let feedMissing = false;
     try {
       const res = await fetch('./manifest.json?t=' + Date.now(), { cache: 'no-store' });
       if (res.ok) {
-        manifest = validateSnapshotManifest(await res.json());
-        console.log('[DB] Live manifest found:', manifest.snapshot_version);
+        const publication = await res.json();
+        if (publication && Object.hasOwn(publication, 'encrypted_feed')) {
+          encryptedPublication = publication;
+        } else {
+          manifest = validateSnapshotManifest(publication);
+          console.log('[DB] Live manifest found:', manifest.snapshot_version);
+        }
       } else {
         feedMissing = res.status === 404 || res.status === 410;
         console.warn('[DB] Live manifest request failed with HTTP', res.status);
@@ -2915,7 +3050,10 @@ async function initApp() {
 
     statusEl.textContent = '🗃️ Önbellek kontrol ediliyor...';
     progressFill.style.width = '20%';
-    const cached = await getCachedSnapshot();
+    const envelope = encryptedPublication ? validateEncryptedFeed(encryptedPublication.encrypted_feed) : null;
+    const privateCache = !manifest ? await getCachedSnapshot(privateFeedStorageId()) : null;
+    const privateMode = Boolean(envelope || privateCache?.encryptedBytes);
+    const cached = privateMode ? privateCache : await getCachedSnapshot();
     let rawBytes = null;
     let snapshotSource = "";
     const showDownloadProgress = (percent) => {
@@ -2936,7 +3074,11 @@ async function initApp() {
       }
     };
 
-    if (cached && manifest && cached.sha256 === manifest.snapshot.sha256) {
+    if (privateMode) {
+      statusEl.textContent = 'Şifreli portföy verileri açılıyor...';
+      ({ manifest, rawBytes, snapshotSource } = await openPrivateFeed(envelope, privateCache, showDownloadProgress));
+      document.getElementById('private-feed-access').hidden = false;
+    } else if (cached && manifest && cached.sha256 === manifest.snapshot.sha256) {
       statusEl.textContent = '📦 Önbellekteki veriler yükleniyor...';
       progressFill.style.width = '50%';
       rawBytes = cached.db_blob;
@@ -2977,13 +3119,13 @@ async function initApp() {
     progressFill.style.width = '90%';
     
     const SQL = await initSqlJs({
-      locateFile: filename => `./vendor/${filename}?v=us3`
+      locateFile: filename => `./vendor/${filename}?v=us4`
     });
 
     try {
       dbInstance = new SQL.Database(rawBytes);
     } catch (databaseError) {
-      const canRecoverFromNetwork = manifest && snapshotSource.startsWith('cache');
+      const canRecoverFromNetwork = !privateMode && manifest && snapshotSource.startsWith('cache');
       if (!canRecoverFromNetwork) throw databaseError;
 
       console.warn('[DB] Cached snapshot is invalid; downloading a clean copy.', databaseError);
@@ -2995,7 +3137,7 @@ async function initApp() {
       dbInstance = new SQL.Database(rawBytes);
     }
     const usingOlderCache = snapshotSource === 'cache-offline' || snapshotSource === 'cache-stale';
-    window.feedManifest = usingOlderCache ? cached.manifest ?? null : manifest;
+    window.feedManifest = !privateMode && usingOlderCache ? cached.manifest ?? null : manifest;
     window.feedBacktestAudit = window.feedManifest?.backtest_audit
       ?? (usingOlderCache ? cached.backtest_audit ?? null : null);
     progressFill.style.width = '100%';
@@ -3021,7 +3163,7 @@ async function initApp() {
     // Render Home tab initially
     renderPortfolioSettings();
     renderPage('picks');
-    startLivePriceRefresh();
+    if (!privateMode) startLivePriceRefresh();
 
     // Dismiss splash screen with minor timeout to ensure UI elements settled
     setTimeout(() => {
@@ -3031,6 +3173,13 @@ async function initApp() {
 
   } catch(err) {
     clearTimeout(slowLoadTimer);
+    if (err instanceof PrivateFeedKeyError) {
+      progressFill.parentElement.hidden = true;
+      statusEl.textContent = err.message;
+      unlock.hidden = false;
+      document.getElementById('splash-screen').classList.add('private-feed-locked');
+      return;
+    }
     console.error('[Launch] App start failed:', err);
     statusEl.textContent = `❌ Hata: ${err?.message || 'Uygulama başlatılamadı.'}`;
     statusEl.style.color = 'var(--danger)';
@@ -3085,6 +3234,26 @@ window.addEventListener('load', () => {
   
   document.getElementById('splash-retry-btn').addEventListener('click', () => {
     window.location.reload();
+  });
+
+  document.getElementById('private-feed-unlock').addEventListener('submit', event => {
+    event.preventDefault();
+    const input = document.getElementById('private-feed-key');
+    privateFeedKey = input.value.trim();
+    input.value = '';
+    initApp();
+  });
+
+  document.getElementById('forget-private-feed-key').addEventListener('click', async () => {
+    privateFeedKey = null;
+    try {
+      localStorage.removeItem(privateFeedStorageId());
+    } catch { /* private mode / quota */ }
+    try {
+      await deleteCachedSnapshot(privateFeedStorageId());
+    } finally {
+      window.location.reload();
+    }
   });
 
   // Collapsible toggle on details

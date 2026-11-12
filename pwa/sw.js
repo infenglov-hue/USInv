@@ -1,17 +1,17 @@
-const CACHE_NAME = 'us-picker-shell-v3';
+const CACHE_NAME = 'us-picker-shell-v4';
 const APP_SHELL = [
   './',
   './index.html',
-  './index.css?v=us3',
-  './app.js?v=us3',
-  './portfolio-costs.js?v=us3',
-  './manifest.webmanifest?v=us3',
+  './index.css?v=us4',
+  './app.js?v=us4',
+  './portfolio-costs.js?v=us4',
+  './manifest.webmanifest?v=us4',
   './icons/icon-192.png',
   './icons/icon-512.png',
-  './vendor/pako.min.js?v=us3',
-  './vendor/sql-wasm.js?v=us3',
-  './vendor/sql-wasm.wasm?v=us3',
-  './vendor/apexcharts.min.js?v=us3'
+  './vendor/pako.min.js?v=us4',
+  './vendor/sql-wasm.js?v=us4',
+  './vendor/sql-wasm.wasm?v=us4',
+  './vendor/apexcharts.min.js?v=us4'
 ];
 
 self.addEventListener('install', (e) => {
@@ -32,7 +32,7 @@ self.addEventListener('activate', (e) => {
     caches.keys().then((keys) => {
       return Promise.all(
         keys.map((key) => {
-          if (key !== CACHE_NAME) {
+          if (key.startsWith('us-picker-shell-') && key !== CACHE_NAME) {
             console.log('[Service Worker] Removing old cache:', key);
             return caches.delete(key);
           }
