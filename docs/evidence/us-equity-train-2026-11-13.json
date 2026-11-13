@@ -1,0 +1,185 @@
+{
+  "scope": "TRAIN diagnostic from a survivor-tilted universe; no deployable evidence",
+  "window": [
+    "2017-01-09",
+    "2021-12-27"
+  ],
+  "holdings": 15,
+  "max_per_sic_group": 4,
+  "min_20_session_mean_dollar_volume": 20000000,
+  "min_raw_close": 5,
+  "execution": "prior close signal, next XNYS open proxy, costs per side on trades",
+  "factors": [
+    "TTM ROA",
+    "TTM earnings yield in split-consistent units",
+    "252-to-21 session total return"
+  ],
+  "rotations": 60,
+  "eligible_count_min_max": [
+    246,
+    334
+  ],
+  "membership_tickers_mapped_total": [
+    499,
+    652
+  ],
+  "spy_total_return": {
+    "total_return": 1.2629218596296292,
+    "cagr": 0.1788330949740211,
+    "max_drawdown_open_marks": -0.3204923308878844
+  },
+  "variants": {
+    "equal_weight_eligible_10bps_per_side": {
+      "total_return": 1.1332443818722155,
+      "cagr": 0.16490113791347794,
+      "max_drawdown_open_marks": -0.36469238855601893,
+      "annualized_one_way_turnover": 0.5836905462961443,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    },
+    "equal_weight_eligible_20bps_per_side": {
+      "total_return": 1.120011012634734,
+      "cagr": 0.1634416864380297,
+      "max_drawdown_open_marks": -0.36474948044761357,
+      "annualized_one_way_turnover": 0.5839918087140038,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    },
+    "equal_weight_eligible_40bps_per_side": {
+      "total_return": 1.0937952046111623,
+      "cagr": 0.16052884327518568,
+      "max_drawdown_open_marks": -0.36486380905867977,
+      "annualized_one_way_turnover": 0.5845971077002677,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    },
+    "composite_10bps_per_side": {
+      "total_return": 1.0355422781228056,
+      "cagr": 0.15395058745790058,
+      "max_drawdown_open_marks": -0.3712665104775068,
+      "annualized_one_way_turnover": 3.705153846910751,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    },
+    "composite_20bps_per_side": {
+      "total_return": 0.9601417290769834,
+      "cagr": 0.14520891840715655,
+      "max_drawdown_open_marks": -0.3717103311394804,
+      "annualized_one_way_turnover": 3.709128857878214,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    },
+    "composite_40bps_per_side": {
+      "total_return": 0.8176223603006607,
+      "cagr": 0.12792452271936106,
+      "max_drawdown_open_marks": -0.3725970860040506,
+      "annualized_one_way_turnover": 3.7170766344224964,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    },
+    "quality_10bps_per_side": {
+      "total_return": 1.623055831939622,
+      "cagr": 0.21443328995901134,
+      "max_drawdown_open_marks": -0.3294067476503282,
+      "annualized_one_way_turnover": 1.6105571808693155,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    },
+    "quality_20bps_per_side": {
+      "total_return": 1.5807084673463523,
+      "cagr": 0.21045769064015474,
+      "max_drawdown_open_marks": -0.32978162517370757,
+      "annualized_one_way_turnover": 1.6110877756239244,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    },
+    "quality_40bps_per_side": {
+      "total_return": 1.4980367624962496,
+      "cagr": 0.20254385015837473,
+      "max_drawdown_open_marks": -0.33053091122291156,
+      "annualized_one_way_turnover": 1.6121786410079255,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    },
+    "value_10bps_per_side": {
+      "total_return": 0.3684580259924939,
+      "cagr": 0.06523498444986275,
+      "max_drawdown_open_marks": -0.5662606048309871,
+      "annualized_one_way_turnover": 2.602300106162676,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    },
+    "value_20bps_per_side": {
+      "total_return": 0.333235844630539,
+      "cagr": 0.05965372349528009,
+      "max_drawdown_open_marks": -0.5666565119682978,
+      "annualized_one_way_turnover": 2.6031757371608353,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    },
+    "value_40bps_per_side": {
+      "total_return": 0.2654977102981133,
+      "cagr": 0.04858042179595912,
+      "max_drawdown_open_marks": -0.5674469892308914,
+      "annualized_one_way_turnover": 2.604916923712312,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    },
+    "momentum_10bps_per_side": {
+      "total_return": 0.6317468753546673,
+      "cagr": 0.10367545755367114,
+      "max_drawdown_open_marks": -0.3753290362419437,
+      "annualized_one_way_turnover": 4.225258362451356,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    },
+    "momentum_20bps_per_side": {
+      "total_return": 0.5648236450612247,
+      "cagr": 0.0944031222377355,
+      "max_drawdown_open_marks": -0.37575978130558574,
+      "annualized_one_way_turnover": 4.223942837309552,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    },
+    "momentum_40bps_per_side": {
+      "total_return": 0.4390867503898588,
+      "cagr": 0.07608967712621495,
+      "max_drawdown_open_marks": -0.376620754951978,
+      "annualized_one_way_turnover": 4.221296380653233,
+      "missing_open_position_days": 0,
+      "missing_open_orders": 0,
+      "large_open_moves_in_held_positions": 0,
+      "greatest_mark_staleness_sessions": 0
+    }
+  },
+  "input_sha256": "15a832da49df574b709787eb567f0ac4b1c63f8cf96d4aa7fadf1abfe076c0bd",
+  "script_sha256": "56d7792fd82d0902b3333bcbfccdbc00280dc4abbcf1b62d8ea5714fd05623b6"
+}

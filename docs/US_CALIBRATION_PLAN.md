@@ -72,3 +72,46 @@ Sekiz pozisyon, en az altı S&P 500 üyesi, dört haftalık rotasyon, V2 baz ağ
 65 NAV noktası 23 Ocak 2017 ile 20 Aralık 2021 arasındadır. Eski skor cache'i kalan tarih sayısı sıfırdır. Aday daha küçük düşüş yaşadı, ancak maliyet sonrası getiri farkı −82,58 yüzde puan oldu. TRAIN kapısı geçilmedi. Bu aday için VALIDATE ve saklı TEST çalıştırılmadı. Canlı V1 ayarları korundu.
 
 Koşu girdilerinin ve çıktılarının sağlama toplamları [kanıt kaydında](evidence/us-picker-v2-train-2026-11-10.json), tekrar çalıştırma komutu [US Picker kılavuzunda](US_PICKER.md#v2-araştırma-koşusu) bulunur. Çalışma verisindeki bugün listelenen şirketlere bağlı evren sınırlaması bu koşuda da geçerlidir.
+
+### 13 Kasım 2026 — ABD hisse seçimi, TRAIN
+
+2017-01-09 ile 2021-12-27 arasında 60 rotasyon. Aylık seçim sinyali önceki
+XNYS kapanışından, portföy değerlendirmesi açılıştan açılışa. Alpaca'nın
+temettü ve bölünme düzeltme oranı ham açılışa uygulanır. SPY aynı fiyat
+verisi ve tarihlerle ölçülür. Strateji maliyeti, alınıp satılan tutarın
+her yönü için ayrı uygulanır. SPY al-tut kıyasında ek gider kesintisi yoktur.
+
+Sinyal tarihinde S&P 500 üyesi olan işletme şirketleri, iki haneli SIC
+başına en fazla dört hisse, 20 seans ortalama günlük en az 20 milyon USD
+işlem hacmi, en az 5 USD kapanış fiyatı ve şirket başına tek hisse sınıfı.
+15 hisse eşit ağırlıkla alınır. Kalite için son 12 aylık aktif kârlılığı, değer
+için split uyumlu son 12 aylık kazanç/fiyat oranı, momentum için son 21 seans dışarıda
+bırakılarak 252 seanslık geçmiş getiri kullanılır. SEC yayın tarihi sinyal
+tarihini aşamaz. Kalite, değer ve momentumun ayrı koşuları aynı evreni ve
+kuralları kullanır. Fiyat stopu ve nakit zamanlaması bu deneyde kapalıdır.
+[Fama–French kârlılık araştırması](https://www.sciencedirect.com/science/article/pii/S0304405X14002323) · [Kenneth French momentum tanımı](https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/Data_Library/det_mom_factor.html)
+
+| Aday | Toplam getiri | Yıllık bileşik | Maks. düşüş |
+|---|---:|---:|---:|
+| SPY toplam getiri | %126,29 | %17,88 | −%32,05 |
+| Uygun evren, eşit ağırlık | %112,00 | %16,34 | −%36,47 |
+| Kalite + değer + momentum | %96,01 | %14,52 | −%37,17 |
+| Kalite | %158,07 | %21,05 | −%32,98 |
+| Değer | %33,32 | %5,97 | −%56,67 |
+| Momentum | %56,48 | %9,44 | −%37,58 |
+
+Tabloda her alım ve satış yönü için 20 baz puan maliyet ve açılış
+değerlerinden hesaplanan maksimum düşüş kullanılır. Kalite adayının
+getirisi 40 baz puan/yön ile %149,80. Daha yüksek getiri görülen kalite
+adayının maksimum düşüşü de SPY'dan yüksek. Evrene giren 652 farklı
+tarihsel sembolden 499'u veri tabanında eşleşti. Her rotasyonda faktör
+hesabı yapılabilen şirket sayısı 246–334. Tarihsel sembol eşleşmesi ve
+kottan çıkan şirketlerin fiyatları eksik. Güncel SIC sınıfları kullanıldı.
+Kesirli pozisyon ve tek açılış fiyatı yaklaşımı gerçek emirleri veya
+nakit takasını modellemez. VALIDATE ve TEST çalıştırılmadı.
+
+```powershell
+python -m scripts_picker.us_equity_train <detached-us-picker-db> train-result.json
+```
+
+Özel veri tabanı sağlama toplamı ve maliyet senaryoları [koşu çıktısında](evidence/us-equity-train-2026-11-13.json).
